@@ -88,11 +88,16 @@ public struct AppTests {
             testDefaults.removePersistentDomain(forName: testSuiteName)
         }
 
-        testRunner("AppSettings - Resolved Directory URL") {
+        testRunner("AppSettings - Resolved Directory URL and Auto-Creation") {
             let settings = AppSettings.shared
             let dirURL = settings.resolvedSaveDirectoryURL
             assert(!dirURL.path.contains("~"), "Resolved URL path should expand tilde")
             assert(dirURL.isFileURL, "Resolved URL should be a file URL")
+            assert(FileManager.default.fileExists(atPath: dirURL.path), "Resolved save directory must exist on disk")
+
+            let defaultLoc = AppSettings.defaultSaveLocation()
+            assert(!defaultLoc.isEmpty, "Default save location must not be empty")
+            assert(!defaultLoc.contains("~"), "Default save location must have tilde expanded")
         }
 
         // MARK: - Image & Lossless PNG Encoding Suite

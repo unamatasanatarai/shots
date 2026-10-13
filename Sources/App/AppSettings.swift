@@ -84,16 +84,41 @@ public final class AppSettings: ObservableObject {
 
         self.saveToDisk = defaults.object(forKey: Keys.saveToDisk) as? Bool ?? true
 
-        let defaultFolder = (FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Screenshots").path)
-            ?? ("~/Pictures/Screenshots" as NSString).expandingTildeInPath
-        self.saveDirectoryPath = defaults.string(forKey: Keys.saveDirectoryPath) ?? defaultFolder
+        let resolvedDefaultFolder = AppSettings.defaultSaveLocation()
+        let configuredPath = defaults.string(forKey: Keys.saveDirectoryPath)
+        let finalPath = (configuredPath != nil && !configuredPath!.isEmpty) ? configuredPath! : resolvedDefaultFolder
+        self.saveDirectoryPath = finalPath
 
         self.copyToClipboard = defaults.object(forKey: Keys.copyToClipboard) as? Bool ?? true
         defaults.removeObject(forKey: Keys.freezeScreenOnCapture)
+
+        // Ensure default directory is created immediately if missing
+        _ = self.resolvedSaveDirectoryURL
     }
 
     // MARK: - Helpers
+
+    /// Resolves default save location: queries system screencapture preferences if available, otherwise ~/Pictures/shots.
+    public static func defaultSaveLocation() -> String {
+        // 1. Try reading system preferences from com.apple.screencapture
+        if let systemLoc = CFPreferencesCopyAppValue("location" as CFString, "com.apple.screencapture" as CFString) as? String,
+           !systemLoc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let expanded = (systemLoc as NSString).expandingTildeInPath
+            return expanded
+        }
+        if let screencaptureDefaults = UserDefaults(suiteName: "com.apple.screencapture"),
+           let systemLoc = screencaptureDefaults.string(forKey: "location"),
+           !systemLoc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let expanded = (systemLoc as NSString).expandingTildeInPath
+            return expanded
+        }
+
+        // 2. Otherwise default to ~/Pictures/shots
+        if let picturesURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first {
+            return picturesURL.appendingPathComponent("shots").path
+        }
+        return ("~/Pictures/shots" as NSString).expandingTildeInPath
+    }
 
     public var hotkeyDisplayString: String {
         KeyCodes.shortcutString(keyCode: hotkeyKeyCode, carbonMods: hotkeyModifiers)
@@ -102,7 +127,9 @@ public final class AppSettings: ObservableObject {
     public var resolvedSaveDirectoryURL: URL {
         let path = (saveDirectoryPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path, isDirectory: true)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+        }
         return url
     }
 

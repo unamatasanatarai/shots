@@ -7,7 +7,7 @@ Build in dependency order: establish the capture and saving pipeline first, then
 The first milestone is a working app that captures screenshots and saves them reliably.
 
 - [x] 1\. PNG Support — Establish the image output pipeline.
-- 2\. Default Save Location — Read system preferences where available; otherwise use `~/Pictures/shots`. Create the directory if missing.
+- [x] 2\. Default Save Location — Read system preferences where available; otherwise use `~/Pictures/shots`. Create the directory if missing.
 - 3\. Timestamp Filenames — Use `shot_YYYYMMDD_HHMMSS.png` naming.
 - 4\. Fullscreen Screenshot — Capture the entire active display.
 - 5\. Area Screenshot — Let users select a screen region.
