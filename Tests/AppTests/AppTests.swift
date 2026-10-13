@@ -67,8 +67,8 @@ public struct AppTests {
 
             let settings = AppSettings(defaults: testDefaults)
 
-            // Verify default hotkey: Cmd + Shift + 1
-            assert(settings.hotkeyKeyCode == UInt16(kVK_ANSI_1), "Default keyCode must be 18 (ANSI 1)")
+            // Verify default hotkey: Cmd + Shift + 4
+            assert(settings.hotkeyKeyCode == UInt16(kVK_ANSI_4), "Default keyCode must be 21 (ANSI 4)")
             assert(settings.hotkeyModifiers == UInt32(cmdKey | shiftKey), "Default modifiers must be cmdKey | shiftKey")
             assert(settings.saveToDisk == true, "saveToDisk must default to true")
             assert(settings.copyToClipboard == true, "copyToClipboard must default to true")
@@ -94,7 +94,7 @@ public struct AppTests {
 
             // Test reset
             settings.resetHotkeyToDefault()
-            assert(settings.hotkeyKeyCode == UInt16(kVK_ANSI_1), "Reset must restore default keycode")
+            assert(settings.hotkeyKeyCode == UInt16(kVK_ANSI_4), "Reset must restore default keycode")
             assert(settings.hotkeyModifiers == UInt32(cmdKey | shiftKey), "Reset must restore default modifiers")
 
             // Cleanup
@@ -562,15 +562,16 @@ public struct AppTests {
             let settings = AppSettings(defaults: defaults)
 
             // Verify default shortcut strings
-            assert(settings.areaShortcutDisplayString == "⇧⌘1", "Area shortcut default must be ⇧⌘1 (was \(settings.areaShortcutDisplayString))")
+            assert(settings.areaShortcutDisplayString == "⇧⌘4", "Area shortcut default must be ⇧⌘4 (was \(settings.areaShortcutDisplayString))")
             assert(settings.fullscreenShortcutDisplayString == "⇧⌘2", "Fullscreen shortcut default must be ⇧⌘2 (was \(settings.fullscreenShortcutDisplayString))")
-            assert(settings.repeatShortcutDisplayString == "⇧⌘R", "Repeat shortcut default must be ⇧⌘R (was \(settings.repeatShortcutDisplayString))")
-            assert(settings.ocrShortcutDisplayString == "⇧⌘O", "OCR shortcut default must be ⇧⌘O (was \(settings.ocrShortcutDisplayString))")
+            assert(settings.repeatShortcutDisplayString == "⇧⌘3", "Repeat shortcut default must be ⇧⌘3 (was \(settings.repeatShortcutDisplayString))")
+            assert(settings.ocrShortcutDisplayString == "⇧⌘R", "OCR shortcut default must be ⇧⌘R (was \(settings.ocrShortcutDisplayString))")
+            assert(settings.scrollingShortcutDisplayString == "⇧⌘5", "Scrolling shortcut default must be ⇧⌘5 (was \(settings.scrollingShortcutDisplayString))")
 
             // Test custom assignment
-            settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_3)
-            assert(settings.fullscreenShortcutDisplayString == "⇧⌘3", "Updated shortcut must reflect new keycode")
-            assert(defaults.integer(forKey: AppSettings.Keys.fullscreenShortcutKeyCode) == Int(kVK_ANSI_3), "UserDefaults must store new shortcut")
+            settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_8)
+            assert(settings.fullscreenShortcutDisplayString == "⇧⌘8", "Updated shortcut must reflect new keycode")
+            assert(defaults.integer(forKey: AppSettings.Keys.fullscreenShortcutKeyCode) == Int(kVK_ANSI_8), "UserDefaults must store new shortcut")
 
             // Test conflict detection
             settings.fullscreenShortcutKeyCode = settings.areaShortcutKeyCode
@@ -582,8 +583,11 @@ public struct AppTests {
             // Test reset to defaults
             settings.resetHotkeysToDefault()
             assert(settings.isHotkeyConflict == false, "Reset must resolve shortcut conflict")
-            assert(settings.areaShortcutDisplayString == "⇧⌘1", "Reset must restore Area shortcut")
+            assert(settings.areaShortcutDisplayString == "⇧⌘4", "Reset must restore Area shortcut")
             assert(settings.fullscreenShortcutDisplayString == "⇧⌘2", "Reset must restore Fullscreen shortcut")
+            assert(settings.repeatShortcutDisplayString == "⇧⌘3", "Reset must restore Repeat shortcut")
+            assert(settings.ocrShortcutDisplayString == "⇧⌘R", "Reset must restore OCR shortcut")
+            assert(settings.scrollingShortcutDisplayString == "⇧⌘5", "Reset must restore Scrolling shortcut")
 
             // Test HotKeyManager multi-mode dispatch callbacks
             let manager = HotKeyManager.shared
@@ -591,11 +595,13 @@ public struct AppTests {
             var fsFired = false
             var repeatFired = false
             var ocrFired = false
+            var scrollFired = false
 
             manager.onAreaCaptureTrigger = { areaFired = true }
             manager.onFullscreenCaptureTrigger = { fsFired = true }
             manager.onRepeatCaptureTrigger = { repeatFired = true }
             manager.onOCRCaptureTrigger = { ocrFired = true }
+            manager.onScrollingCaptureTrigger = { scrollFired = true }
 
             // Trigger closures manually to verify wiring
             manager.onAreaCaptureTrigger?()
@@ -609,6 +615,9 @@ public struct AppTests {
 
             manager.onOCRCaptureTrigger?()
             assert(ocrFired, "OCR capture trigger callback must execute")
+
+            manager.onScrollingCaptureTrigger?()
+            assert(scrollFired, "Scrolling capture trigger callback must execute")
 
             defaults.removePersistentDomain(forName: testSuite)
         }
@@ -1280,10 +1289,25 @@ public struct AppTests {
             // 7. Verify StatusBarController menu item presence and action
             let controller = StatusBarController()
             let menu = controller.currentMenu
-            let scrollItem = menu.items.first(where: { $0.title == "Scrolling Capture" })
+            let scrollItem = menu.items.first(where: { $0.title.starts(with: "Scrolling Capture") })
             assert(scrollItem != nil, "Scrolling Capture menu item must exist in status menu")
             assert(scrollItem?.action == #selector(controller.scrollingCaptureAction), "Action must be scrollingCaptureAction")
             assert(scrollItem?.image != nil, "Scrolling Capture must have an icon")
+        }
+
+        // MARK: - OCR Flash Notification HUD
+        testRunner("OCR Notification HUD - Top Center Notification, 250px Width, Snippet Clamping & Dismiss") {
+            let hud = OCRNotificationController.shared
+
+            // Test showing short snippet
+            hud.show(snippet: "Hello World", duration: 6.0)
+
+            // Test showing multi-line snippet
+            let multiLineText = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6"
+            hud.show(snippet: multiLineText, duration: 6.0)
+
+            // Test manual dismiss
+            hud.dismiss()
         }
     }
 }

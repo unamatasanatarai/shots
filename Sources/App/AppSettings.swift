@@ -75,6 +75,8 @@ public final class AppSettings: ObservableObject {
         public static let repeatShortcutModifiers = "repeatShortcutModifiers"
         public static let ocrShortcutKeyCode = "ocrShortcutKeyCode"
         public static let ocrShortcutModifiers = "ocrShortcutModifiers"
+        public static let scrollingShortcutKeyCode = "scrollingShortcutKeyCode"
+        public static let scrollingShortcutModifiers = "scrollingShortcutModifiers"
         public static let saveToDisk = "saveToDisk"
         public static let saveDirectoryPath = "saveDirectoryPath"
         public static let copyToClipboard = "copyToClipboard"
@@ -162,6 +164,22 @@ public final class AppSettings: ObservableObject {
     @Published public var ocrShortcutModifiers: UInt32 {
         didSet {
             defaults.set(Int(ocrShortcutModifiers), forKey: Keys.ocrShortcutModifiers)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var scrollingShortcutKeyCode: UInt16 {
+        didSet {
+            defaults.set(Int(scrollingShortcutKeyCode), forKey: Keys.scrollingShortcutKeyCode)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var scrollingShortcutModifiers: UInt32 {
+        didSet {
+            defaults.set(Int(scrollingShortcutModifiers), forKey: Keys.scrollingShortcutModifiers)
             checkForShortcutConflicts()
             NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
         }
@@ -283,14 +301,18 @@ public final class AppSettings: ObservableObject {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        // Default: Command + Shift + 1 (keyCode 18)
-        let defaultKeyCode = UInt16(kVK_ANSI_1)
+        // Defaults:
+        // Area: Cmd + Shift + 4 (kVK_ANSI_4)
+        // Fullscreen: Cmd + Shift + 2 (kVK_ANSI_2)
+        // Repeat Previous: Cmd + Shift + 3 (kVK_ANSI_3)
+        // OCR: Cmd + Shift + R (kVK_ANSI_R)
+        // Scrolling: Cmd + Shift + 5 (kVK_ANSI_5)
         let defaultModifiers = UInt32(cmdKey | shiftKey)
 
         if defaults.object(forKey: Keys.hotkeyKeyCode) != nil {
             self.hotkeyKeyCode = UInt16(defaults.integer(forKey: Keys.hotkeyKeyCode))
         } else {
-            self.hotkeyKeyCode = defaultKeyCode
+            self.hotkeyKeyCode = UInt16(kVK_ANSI_4)
         }
 
         if defaults.object(forKey: Keys.hotkeyModifiers) != nil {
@@ -314,7 +336,7 @@ public final class AppSettings: ObservableObject {
         if defaults.object(forKey: Keys.repeatShortcutKeyCode) != nil {
             self.repeatShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.repeatShortcutKeyCode))
         } else {
-            self.repeatShortcutKeyCode = UInt16(kVK_ANSI_R)
+            self.repeatShortcutKeyCode = UInt16(kVK_ANSI_3)
         }
 
         if defaults.object(forKey: Keys.repeatShortcutModifiers) != nil {
@@ -326,13 +348,25 @@ public final class AppSettings: ObservableObject {
         if defaults.object(forKey: Keys.ocrShortcutKeyCode) != nil {
             self.ocrShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.ocrShortcutKeyCode))
         } else {
-            self.ocrShortcutKeyCode = UInt16(kVK_ANSI_O)
+            self.ocrShortcutKeyCode = UInt16(kVK_ANSI_R)
         }
 
         if defaults.object(forKey: Keys.ocrShortcutModifiers) != nil {
             self.ocrShortcutModifiers = UInt32(defaults.integer(forKey: Keys.ocrShortcutModifiers))
         } else {
             self.ocrShortcutModifiers = defaultModifiers
+        }
+
+        if defaults.object(forKey: Keys.scrollingShortcutKeyCode) != nil {
+            self.scrollingShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.scrollingShortcutKeyCode))
+        } else {
+            self.scrollingShortcutKeyCode = UInt16(kVK_ANSI_5)
+        }
+
+        if defaults.object(forKey: Keys.scrollingShortcutModifiers) != nil {
+            self.scrollingShortcutModifiers = UInt32(defaults.integer(forKey: Keys.scrollingShortcutModifiers))
+        } else {
+            self.scrollingShortcutModifiers = defaultModifiers
         }
 
         let resolvedDefaultFolder = AppSettings.defaultSaveLocation()
@@ -439,6 +473,10 @@ public final class AppSettings: ObservableObject {
         KeyCodes.shortcutString(keyCode: ocrShortcutKeyCode, carbonMods: ocrShortcutModifiers)
     }
 
+    public var scrollingShortcutDisplayString: String {
+        KeyCodes.shortcutString(keyCode: scrollingShortcutKeyCode, carbonMods: scrollingShortcutModifiers)
+    }
+
     public var hotkeyDisplayString: String {
         areaShortcutDisplayString
     }
@@ -457,7 +495,8 @@ public final class AppSettings: ObservableObject {
             ("Area", hotkeyKeyCode, hotkeyModifiers),
             ("Fullscreen", fullscreenShortcutKeyCode, fullscreenShortcutModifiers),
             ("Repeat", repeatShortcutKeyCode, repeatShortcutModifiers),
-            ("OCR", ocrShortcutKeyCode, ocrShortcutModifiers)
+            ("OCR", ocrShortcutKeyCode, ocrShortcutModifiers),
+            ("Scrolling", scrollingShortcutKeyCode, scrollingShortcutModifiers)
         ]
 
         for i in 0..<shortcuts.count {
@@ -474,14 +513,16 @@ public final class AppSettings: ObservableObject {
     }
 
     public func resetHotkeysToDefault() {
-        hotkeyKeyCode = UInt16(kVK_ANSI_1)
+        hotkeyKeyCode = UInt16(kVK_ANSI_4)
         hotkeyModifiers = UInt32(cmdKey | shiftKey)
         fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
         fullscreenShortcutModifiers = UInt32(cmdKey | shiftKey)
-        repeatShortcutKeyCode = UInt16(kVK_ANSI_R)
+        repeatShortcutKeyCode = UInt16(kVK_ANSI_3)
         repeatShortcutModifiers = UInt32(cmdKey | shiftKey)
-        ocrShortcutKeyCode = UInt16(kVK_ANSI_O)
+        ocrShortcutKeyCode = UInt16(kVK_ANSI_R)
         ocrShortcutModifiers = UInt32(cmdKey | shiftKey)
+        scrollingShortcutKeyCode = UInt16(kVK_ANSI_5)
+        scrollingShortcutModifiers = UInt32(cmdKey | shiftKey)
         checkForShortcutConflicts()
     }
 

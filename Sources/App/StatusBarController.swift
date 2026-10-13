@@ -358,8 +358,10 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         let fsShortcut = settings.fullscreenShortcutDisplayString
         let repShortcut = settings.repeatShortcutDisplayString
         let ocrShortcut = settings.ocrShortcutDisplayString
+        let scrollShortcut = settings.scrollingShortcutDisplayString
         captureRegionMenuItem.title = "Capture Region (\(areaShortcut))"
         captureFullscreenMenuItem.title = "Capture Fullscreen (\(fsShortcut))"
+        scrollingCaptureMenuItem.title = "Scrolling Capture (\(scrollShortcut))"
         repeatScreenshotMenuItem.title = "Repeat Previous Screenshot (\(repShortcut))"
         ocrRecognitionMenuItem.title = "OCR Recognition (\(ocrShortcut))"
         repeatScreenshotMenuItem.isEnabled = (CaptureManager.shared.lastCapture != nil)

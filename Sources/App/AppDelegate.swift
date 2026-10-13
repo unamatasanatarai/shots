@@ -31,6 +31,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeyManager.shared.onOCRCaptureTrigger = {
             CaptureManager.shared.startOCRRecognition()
         }
+        HotKeyManager.shared.onScrollingCaptureTrigger = {
+            CaptureManager.shared.startScrollingCapture()
+        }
         HotKeyManager.shared.onTrigger = {
             CaptureManager.shared.startRegionCapture()
         }

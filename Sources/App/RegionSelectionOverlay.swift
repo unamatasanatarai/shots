@@ -40,8 +40,71 @@ public final class RegionSelectionCoordinator {
     private var liveStartPoint: NSPoint?
     private var liveCurrentPoint: NSPoint?
     private var liveIsDragging = false
+    private var isCursorHidden = false
+    private var cursorHideCount = 0
 
-    private init() {}
+    private init() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.restoreSystemCursor()
+        }
+    }
+
+    deinit {
+        restoreSystemCursor()
+    }
+
+    private func hideSystemCursor() {
+        guard !isCursorHidden else { return }
+        isCursorHidden = true
+
+        hideDisplayCursors()
+        cursorHideCount = 1
+
+        NSCursor.hide()
+        RegionSelectionView.invisibleCursor.push()
+    }
+
+    private func hideDisplayCursors() {
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetActiveDisplayList(count, &displays, &count)
+        for display in displays {
+            CGDisplayHideCursor(display)
+        }
+    }
+
+    private func showDisplayCursors() {
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetActiveDisplayList(count, &displays, &count)
+        for display in displays {
+            CGDisplayShowCursor(display)
+        }
+    }
+
+    private func rehideSystemCursorIfNeeded() {
+        NSCursor.hide()
+        RegionSelectionView.invisibleCursor.set()
+    }
+
+    private func restoreSystemCursor() {
+        guard isCursorHidden else { return }
+        isCursorHidden = false
+
+        NSCursor.pop()
+        NSCursor.unhide()
+
+        while cursorHideCount > 0 {
+            showDisplayCursors()
+            cursorHideCount -= 1
+        }
+    }
 
     // MARK: - Public API
 
@@ -55,6 +118,9 @@ public final class RegionSelectionCoordinator {
         guard !isSelecting else { return }
         isSelecting = true
         completionHandler = completion
+
+        // Hide normal system mouse cursor while taking shots
+        hideSystemCursor()
 
         let screens = NSScreen.screens
         guard !screens.isEmpty else {
@@ -99,8 +165,9 @@ public final class RegionSelectionCoordinator {
             panel.hidesOnDeactivate = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-            // Overlay panel is 100% click-through. All mouse events are handled by the CGEventTap.
-            panel.ignoresMouseEvents = true
+            // Overlay panel captures cursor rects to enforce complete system pointer invisibility.
+            // All mouse clicks/drags are intercepted and consumed by the CGEventTap.
+            panel.ignoresMouseEvents = false
             panel.acceptsMouseMovedEvents = false
 
             let selectionView = RegionSelectionView(
@@ -115,9 +182,24 @@ public final class RegionSelectionCoordinator {
         // Install consuming event tap to intercept and swallow mouse clicks/drags
         installEventTap()
 
+        // Immediately resolve the exact current hardware mouse location from WindowServer
+        let initialCGLocation: CGPoint = {
+            if let event = CGEvent(source: nil) {
+                return event.location
+            }
+            let appKit = NSEvent.mouseLocation
+            let primaryH = NSScreen.screens.first?.frame.height ?? 0
+            return CGPoint(x: appKit.x, y: primaryH - appKit.y)
+        }()
+        liveCurrentPoint = initialCGLocation
+
+        // Immediately position the crosshair reticle center exactly at the hardware mouse cursor
+        updateOverlays(globalCGPoint: initialCGLocation)
+
         // Show transparent overlays without stealing key focus from existing windows or menus
         for panel in overlayPanels {
             panel.orderFrontRegardless()
+            panel.resetCursorRects()
         }
     }
 
@@ -126,6 +208,8 @@ public final class RegionSelectionCoordinator {
     private func finish(with image: CGImage?) {
         guard isSelecting else { return }
         isSelecting = false
+
+        restoreSystemCursor()
 
         removeEscapeHotKey()
         removeEventTap()
@@ -160,15 +244,19 @@ public final class RegionSelectionCoordinator {
     /// mouse-moved, click, drag, and scroll events before they reach underlying apps.
     /// This prevents hover events from opening submenus, changing focus, or activating buttons.
     private func installEventTap() {
+        func eventMask(for type: CGEventType) -> CGEventMask {
+            CGEventMask(1) << type.rawValue
+        }
+
         let eventsOfInterest: CGEventMask =
-            (1 << CGEventType.mouseMoved.rawValue) |
-            (1 << CGEventType.leftMouseDown.rawValue) |
-            (1 << CGEventType.leftMouseDragged.rawValue) |
-            (1 << CGEventType.leftMouseUp.rawValue) |
-            (1 << CGEventType.rightMouseDown.rawValue) |
-            (1 << CGEventType.rightMouseUp.rawValue) |
-            (1 << CGEventType.otherMouseDown.rawValue) |
-            (1 << CGEventType.scrollWheel.rawValue)
+            eventMask(for: .mouseMoved) |
+            eventMask(for: .leftMouseDown) |
+            eventMask(for: .leftMouseDragged) |
+            eventMask(for: .leftMouseUp) |
+            eventMask(for: .rightMouseDown) |
+            eventMask(for: .rightMouseUp) |
+            eventMask(for: .otherMouseDown) |
+            eventMask(for: .scrollWheel)
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
@@ -261,6 +349,7 @@ public final class RegionSelectionCoordinator {
         case .leftMouseDragged:
             if liveIsDragging {
                 liveCurrentPoint = cgPoint
+                rehideSystemCursorIfNeeded()
             }
             updateOverlays(globalCGPoint: cgPoint)
             return true // consume
@@ -269,6 +358,11 @@ public final class RegionSelectionCoordinator {
             liveStartPoint = cgPoint
             liveCurrentPoint = cgPoint
             liveIsDragging = true
+            // macOS unhides cursor upon click at WindowServer level; explicitly re-hide display cursor and Cocoa cursor
+            hideDisplayCursors()
+            cursorHideCount += 1
+            NSCursor.hide()
+            RegionSelectionView.invisibleCursor.set()
             updateOverlays(globalCGPoint: cgPoint)
             return true // consume — prevents menu dismissal & button clicks
 
@@ -302,10 +396,11 @@ public final class RegionSelectionCoordinator {
             guard let view = panel.contentView as? RegionSelectionView else { continue }
             let screenFrame = view.targetScreen.frame
 
-            let localPt = NSPoint(
+            let isOnThisScreen = screenFrame.contains(appKitGlobal)
+            let localPt: NSPoint? = isOnThisScreen ? NSPoint(
                 x: appKitGlobal.x - screenFrame.origin.x,
                 y: appKitGlobal.y - screenFrame.origin.y
-            )
+            ) : nil
 
             var localStart: NSPoint?
             var localCurrent: NSPoint?
@@ -486,14 +581,6 @@ private final class RegionSelectionView: NSView {
         self.targetScreen = screen
         super.init(frame: frameRect)
         wantsLayer = true
-
-        let globalMouse = NSEvent.mouseLocation
-        if screen.frame.contains(globalMouse) {
-            currentMousePoint = NSPoint(
-                x: globalMouse.x - screen.frame.origin.x,
-                y: globalMouse.y - screen.frame.origin.y
-            )
-        }
     }
 
     required init?(coder: NSCoder) {
@@ -503,7 +590,7 @@ private final class RegionSelectionView: NSView {
     // MARK: - External Updates from Event Tap
 
     func externalUpdate(
-        mousePoint: NSPoint,
+        mousePoint: NSPoint?,
         isDragging dragging: Bool,
         selectionStart: NSPoint?,
         selectionCurrent: NSPoint?
@@ -517,146 +604,143 @@ private final class RegionSelectionView: NSView {
 
     override var acceptsFirstResponder: Bool { false }
 
+    // MARK: - Invisible Cursor Enforcer
+
+    static let invisibleCursor: NSCursor = {
+        let image = NSImage(size: NSSize(width: 1, height: 1))
+        return NSCursor(image: image, hotSpot: .zero)
+    }()
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        discardCursorRects()
+        addCursorRect(bounds, cursor: Self.invisibleCursor)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        Self.invisibleCursor.set()
+        NSCursor.hide()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        Self.invisibleCursor.set()
+        NSCursor.hide()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        Self.invisibleCursor.set()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        Self.invisibleCursor.set()
+        NSCursor.hide()
+    }
+
     // MARK: - Drawing & Rendering
 
     override func draw(_ dirtyRect: NSRect) {
+        Self.invisibleCursor.set()
+        if isDragging {
+            NSCursor.hide()
+        }
+
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
-        // 1. Selection Marquee: translucent darken with high-contrast borders
+        // 1. Selection Marquee: bright luminous highlight with high-contrast glowing borders
         if isDragging, let start = startPoint, let current = currentPoint {
             let selRect = normalizedRect(from: start, to: current)
             if selRect.width > 0 && selRect.height > 0 {
                 context.saveGState()
-                context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.18))
+
+                // Bright luminous translucent highlight (brightens content underneath)
+                context.setFillColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.22))
                 context.fill(selRect)
 
-                // 1px white border
-                context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.95))
+                // Vibrant bright macOS accent outer border (1.5pt)
+                context.setStrokeColor(CGColor(red: 0.12, green: 0.58, blue: 1.0, alpha: 0.90))
+                context.setLineWidth(1.5)
+                context.stroke(selRect.insetBy(dx: -0.75, dy: -0.75))
+
+                // Bright pure white inner border (1.0pt)
+                context.setStrokeColor(CGColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0))
                 context.setLineWidth(1.0)
                 context.stroke(selRect)
-
-                // Subtle blue accent ring
-                context.setStrokeColor(CGColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 0.45))
-                context.setLineWidth(0.5)
-                context.stroke(selRect.insetBy(dx: -0.5, dy: -0.5))
                 context.restoreGState()
 
-                // Live dimension badge
-                drawDimensionBadge(for: selRect, in: context)
+                // Live dimension numbers (only set of numbers shown during drag)
+                drawSelectionDimensionsBadge(start: start, current: current, in: context)
             }
         }
 
-        // 2. Crosshair and coordinates badge (rendered only if mouse is within this screen)
+        // 2. Precision reticle crosshair cursor (rendered only if mouse is within this screen)
         let activePoint = currentPoint ?? currentMousePoint
         if let pt = activePoint, bounds.contains(pt) {
-            drawCrosshairs(at: pt, in: context)
-            drawCoordinateBadge(at: pt, in: context)
+            drawPrecisionCrosshair(at: pt, in: context)
+
+            // Cursor coordinates shown ONLY when not dragging
+            if !isDragging {
+                drawCoordinateBadge(at: pt, in: context)
+            }
         }
     }
 
-    // MARK: - 1-Line-Thick Fading Crosshair
+    // MARK: - Precision Minimalist Reticle Crosshair Cursor
+    // Circular reticle with perfectly aligned crosshairs matching technical specification:
+    // - Circle diameter: 46% of overall width
+    // - Horizontal & vertical line length: 100% of overall width/height
+    // - Crosshair strokes: solid charcoal gray, ~3% width (1.0 pt), flat/square terminals
+    // - Circle outline: medium-light gray, ~2% width (0.75 pt)
+    // - Circle fill: pale neutral gray, low opacity
 
-    private func drawCrosshairs(at point: NSPoint, in context: CGContext) {
-        let mx = point.x
-        let my = point.y
-        let w = bounds.width
-        let h = bounds.height
+    private func drawPrecisionCrosshair(at point: NSPoint, in context: CGContext, size: CGFloat = 32.0) {
+        let cx = round(point.x)
+        let cy = round(point.y)
+        let halfSize = size / 2.0
 
-        let gap: CGFloat = 8.0
-        let fadeDist: CGFloat = 80.0
-        let baseAlpha: CGFloat = 0.65
+        let circleDiameter = size * 0.46
+        let circleRadius = circleDiameter / 2.0
+        let circleStrokeWidth = max(0.65, size * 0.02)
+        let crosshairStrokeWidth = max(1.0, size * 0.03)
 
         context.saveGState()
-        context.setShadow(offset: .zero, blur: 1.5, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.75))
 
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let fullColor = CGColor(red: 1, green: 1, blue: 1, alpha: baseAlpha)
-        let zeroColor = CGColor(red: 1, green: 1, blue: 1, alpha: 0.0)
+        let circleRect = CGRect(
+            x: cx - circleRadius,
+            y: cy - circleRadius,
+            width: circleDiameter,
+            height: circleDiameter
+        )
 
-        guard let gradientFadeIn = CGGradient(
-            colorsSpace: colorSpace,
-            colors: [zeroColor, fullColor] as CFArray,
-            locations: [0.0, 1.0]
-        ), let gradientFadeOut = CGGradient(
-            colorsSpace: colorSpace,
-            colors: [fullColor, zeroColor] as CFArray,
-            locations: [0.0, 1.0]
-        ) else {
-            context.restoreGState()
-            return
-        }
+        // 1. Circle interior fill: pale neutral gray, low opacity
+        let circleFillColor = CGColor(red: 0.88, green: 0.88, blue: 0.90, alpha: 0.22)
+        context.setFillColor(circleFillColor)
+        context.fillEllipse(in: circleRect)
 
-        let yPos = floor(my)
-        let xPos = floor(mx)
+        // 2. Circle outline: medium-light gray, approximately 2% of overall width
+        let circleOutlineColor = CGColor(red: 0.70, green: 0.70, blue: 0.72, alpha: 0.95)
+        context.setStrokeColor(circleOutlineColor)
+        context.setLineWidth(circleStrokeWidth)
+        context.strokeEllipse(in: circleRect)
 
-        // Horizontal Left
-        if mx - gap > 0 {
-            let leftEnd = mx - gap
-            let fadeStart = max(0, leftEnd - fadeDist)
+        // 3. Crosshair strokes: solid charcoal gray, approximately 3% of overall width
+        let charcoalColor = CGColor(red: 0.20, green: 0.20, blue: 0.22, alpha: 1.0)
+        context.setStrokeColor(charcoalColor)
+        context.setLineWidth(crosshairStrokeWidth)
+        context.setLineCap(.butt)
 
-            if fadeStart > 0 {
-                context.setFillColor(fullColor)
-                context.fill(CGRect(x: 0, y: yPos, width: fadeStart, height: 1.0))
-            }
+        // Horizontal line: 100% of overall width, extends beyond circumference in both directions
+        context.move(to: CGPoint(x: cx - halfSize, y: cy))
+        context.addLine(to: CGPoint(x: cx + halfSize, y: cy))
 
-            context.saveGState()
-            context.clip(to: CGRect(x: fadeStart, y: yPos, width: leftEnd - fadeStart, height: 1.0))
-            context.drawLinearGradient(gradientFadeOut, start: CGPoint(x: fadeStart, y: yPos), end: CGPoint(x: leftEnd, y: yPos), options: [])
-            context.restoreGState()
-        }
+        // Vertical line: 100% of overall height, extends beyond circumference in both directions
+        context.move(to: CGPoint(x: cx, y: cy - halfSize))
+        context.addLine(to: CGPoint(x: cx, y: cy + halfSize))
 
-        // Horizontal Right
-        if mx + gap < w {
-            let rightStart = mx + gap
-            let fadeEnd = min(w, rightStart + fadeDist)
-
-            context.saveGState()
-            context.clip(to: CGRect(x: rightStart, y: yPos, width: fadeEnd - rightStart, height: 1.0))
-            context.drawLinearGradient(gradientFadeIn, start: CGPoint(x: rightStart, y: yPos), end: CGPoint(x: fadeEnd, y: yPos), options: [])
-            context.restoreGState()
-
-            if fadeEnd < w {
-                context.setFillColor(fullColor)
-                context.fill(CGRect(x: fadeEnd, y: yPos, width: w - fadeEnd, height: 1.0))
-            }
-        }
-
-        // Vertical Bottom
-        if my - gap > 0 {
-            let bottomEnd = my - gap
-            let fadeStart = max(0, bottomEnd - fadeDist)
-
-            if fadeStart > 0 {
-                context.setFillColor(fullColor)
-                context.fill(CGRect(x: xPos, y: 0, width: 1.0, height: fadeStart))
-            }
-
-            context.saveGState()
-            context.clip(to: CGRect(x: xPos, y: fadeStart, width: 1.0, height: bottomEnd - fadeStart))
-            context.drawLinearGradient(gradientFadeOut, start: CGPoint(x: xPos, y: fadeStart), end: CGPoint(x: xPos, y: bottomEnd), options: [])
-            context.restoreGState()
-        }
-
-        // Vertical Top
-        if my + gap < h {
-            let topStart = my + gap
-            let fadeEnd = min(h, topStart + fadeDist)
-
-            context.saveGState()
-            context.clip(to: CGRect(x: xPos, y: topStart, width: 1.0, height: fadeEnd - topStart))
-            context.drawLinearGradient(gradientFadeIn, start: CGPoint(x: xPos, y: topStart), end: CGPoint(x: xPos, y: fadeEnd), options: [])
-            context.restoreGState()
-
-            if fadeEnd < h {
-                context.setFillColor(fullColor)
-                context.fill(CGRect(x: xPos, y: fadeEnd, width: 1.0, height: h - fadeEnd))
-            }
-        }
-
+        context.strokePath()
         context.restoreGState()
     }
 
-    // MARK: - Live Coordinate Badge Next to Cursor
+    // MARK: - Live Coordinate Badge Next to Cursor (Hover Only)
 
     private func drawCoordinateBadge(at point: NSPoint, in context: CGContext) {
         let scaleX = targetScreen.backingScaleFactor
@@ -670,106 +754,118 @@ private final class RegionSelectionView: NSView {
         let text = "x: \(curX)\ny: \(curY)"
 
         let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 2
+        paragraphStyle.lineSpacing = 1.0
         paragraphStyle.alignment = .left
 
+        let textShadow = NSShadow()
+        textShadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
+        textShadow.shadowOffset = NSSize(width: 0.0, height: -1.0)
+        textShadow.shadowBlurRadius = 1.0
+
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.white,
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .medium),
+            .foregroundColor: NSColor(white: 0.98, alpha: 1.0),
+            .shadow: textShadow,
             .paragraphStyle: paragraphStyle
         ]
 
         let attributedText = NSAttributedString(string: text, attributes: attributes)
         let textSize = attributedText.size()
 
-        let padH: CGFloat = 7
-        let padV: CGFloat = 5
-        let badgeW = ceil(textSize.width + (padH * 2))
-        let badgeH = ceil(textSize.height + (padV * 2))
+        let offset: CGFloat = 18.0
+        let margin: CGFloat = 8.0
 
-        var badgeX = point.x + 14
-        var badgeY = point.y - badgeH - 8
+        // Default to bottom-right when hovering
+        var originX = point.x + offset
+        var originY = point.y - textSize.height - offset
 
-        if badgeX + badgeW > bounds.width - 8 {
-            badgeX = point.x - badgeW - 14
+        // second: flip to top if would hide below bottom edge of screen,
+        // flip bottom if top of screen would hide, left if screen right, right if screen left.
+        if originY < margin {
+            originY = point.y + offset
         }
-        if badgeY < 8 {
-            badgeY = point.y + 14
+        if originY + textSize.height > bounds.height - margin {
+            originY = point.y - textSize.height - offset
         }
-        if badgeY + badgeH > bounds.height - 8 {
-            badgeY = point.y - badgeH - 14
+        if originX + textSize.width > bounds.width - margin {
+            originX = point.x - textSize.width - offset
+        }
+        if originX < margin {
+            originX = point.x + offset
         }
 
-        badgeX = max(8, min(badgeX, bounds.width - badgeW - 8))
-        badgeY = max(8, min(badgeY, bounds.height - badgeH - 8))
+        originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
+        originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
 
-        let badgeRect = NSRect(x: badgeX, y: badgeY, width: badgeW, height: badgeH)
-
-        context.saveGState()
-        let badgePath = CGPath(roundedRect: badgeRect, cornerWidth: 5, cornerHeight: 5, transform: nil)
-        context.addPath(badgePath)
-        context.setFillColor(CGColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.90))
-        context.fillPath()
-
-        context.addPath(badgePath)
-        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.22))
-        context.setLineWidth(0.75)
-        context.strokePath()
-        context.restoreGState()
-
-        let textOrigin = NSPoint(x: badgeX + padH, y: badgeY + padV)
-        attributedText.draw(at: textOrigin)
+        attributedText.draw(at: NSPoint(x: originX, y: originY))
     }
 
-    // MARK: - Dimension Badge
+    // MARK: - Live Selection Dimensions Badge (Drag Only)
 
-    private func drawDimensionBadge(for selRect: CGRect, in context: CGContext) {
+    private func drawSelectionDimensionsBadge(start: NSPoint, current: NSPoint, in context: CGContext) {
         let scaleX = targetScreen.backingScaleFactor
         let scaleY = targetScreen.backingScaleFactor
 
-        let pixelWidth = Int(round(selRect.width * scaleX))
-        let pixelHeight = Int(round(selRect.height * scaleY))
+        let pixelWidth = Int(round(abs(current.x - start.x) * scaleX))
+        let pixelHeight = Int(round(abs(current.y - start.y) * scaleY))
 
-        let dimensionText = "\(pixelWidth) × \(pixelHeight)"
+        let dimensionText = "\(pixelWidth)\n\(pixelHeight)"
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 1.0
+        paragraphStyle.alignment = .left
+
+        let textShadow = NSShadow()
+        textShadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
+        textShadow.shadowOffset = NSSize(width: 0.0, height: -1.0)
+        textShadow.shadowBlurRadius = 1.0
+
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.white
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .medium),
+            .foregroundColor: NSColor(white: 0.98, alpha: 1.0),
+            .shadow: textShadow,
+            .paragraphStyle: paragraphStyle
         ]
 
         let attributedString = NSAttributedString(string: dimensionText, attributes: attributes)
         let textSize = attributedString.size()
 
-        let pillPaddingH: CGFloat = 8
-        let pillPaddingV: CGFloat = 4
-        let pillWidth = textSize.width + (pillPaddingH * 2)
-        let pillHeight = textSize.height + (pillPaddingV * 2)
+        let offset: CGFloat = 18.0
+        let margin: CGFloat = 8.0
 
-        var pillOriginY = selRect.minY - pillHeight - 8
-        if pillOriginY < 12 {
-            pillOriginY = min(bounds.height - pillHeight - 12, selRect.maxY + 8)
+        let curX = current.x
+        let curY = current.y
+        let startX = start.x
+        let startY = start.y
+
+        let draggingRight = curX >= startX
+        let draggingTop = curY >= startY
+
+        // first: top left if dragging top left, top right if dragging top right,
+        // bottom right if dragging bottom right, bottom left if dragging bottom left.
+        var originX: CGFloat = draggingRight ? (curX + offset) : (curX - textSize.width - offset)
+        var originY: CGFloat = draggingTop ? (curY + offset) : (curY - textSize.height - offset)
+
+        // second: flip to top if would hide below bottom edge of screen,
+        // flip bottom if top of screen would hide, left if screen right, right if screen left.
+        if originY < margin {
+            originY = curY + offset
         }
-        var pillOriginX = selRect.midX - (pillWidth / 2)
-        pillOriginX = max(10, min(pillOriginX, bounds.width - pillWidth - 10))
+        if originY + textSize.height > bounds.height - margin {
+            originY = curY - textSize.height - offset
+        }
+        if originX + textSize.width > bounds.width - margin {
+            originX = curX - textSize.width - offset
+        }
+        if originX < margin {
+            originX = curX + offset
+        }
 
-        let pillRect = NSRect(x: pillOriginX, y: pillOriginY, width: pillWidth, height: pillHeight)
+        // Clamp to screen bounds as safeguard
+        originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
+        originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
 
-        context.saveGState()
-        let pillPath = CGPath(roundedRect: pillRect, cornerWidth: 5, cornerHeight: 5, transform: nil)
-        context.addPath(pillPath)
-        context.setFillColor(CGColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 0.92))
-        context.fillPath()
-
-        context.addPath(pillPath)
-        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.25))
-        context.setLineWidth(0.75)
-        context.strokePath()
-        context.restoreGState()
-
-        let textPoint = NSPoint(
-            x: pillRect.origin.x + pillPaddingH,
-            y: pillRect.origin.y + pillPaddingV
-        )
-        attributedString.draw(at: textPoint)
+        attributedString.draw(at: NSPoint(x: originX, y: originY))
     }
 
     // MARK: - Geometry Helpers

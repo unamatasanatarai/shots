@@ -65,6 +65,7 @@ public final class CaptureManager {
                 case .success(let item):
                     if let recognized = item {
                         RecognitionService.shared.copyPayloadToPasteboard(recognized)
+                        OCRNotificationController.shared.show(snippet: recognized.payload)
                         NSLog("OCR Recognition succeeded (%@): %@", recognized.type.rawValue, recognized.payload)
                     } else {
                         NSSound.beep()

@@ -3,11 +3,28 @@ import Carbon
 import Cocoa
 
 public struct PreferencesView: View {
+    public enum Tab: String, CaseIterable, Identifiable {
+        case general = "General"
+        case capture = "Capture"
+        case shortcuts = "Shortcuts"
+
+        public var id: String { rawValue }
+
+        public var icon: String {
+            switch self {
+            case .general: return "gearshape"
+            case .capture: return "camera"
+            case .shortcuts: return "keyboard"
+            }
+        }
+    }
+
     enum ShortcutTarget: String, CaseIterable, Identifiable {
         case area = "Area Screenshot"
-        case fullscreen = "Fullscreen Screenshot"
+        case fullscreen = "Fullscreen"
         case repeatCapture = "Repeat Previous"
         case ocr = "OCR Recognition"
+        case scrolling = "Scrolling Capture"
 
         var id: String { rawValue }
 
@@ -17,11 +34,13 @@ public struct PreferencesView: View {
             case .fullscreen: return "display"
             case .repeatCapture: return "arrow.counterclockwise"
             case .ocr: return "text.viewfinder"
+            case .scrolling: return "arrow.up.and.down.circle"
             }
         }
     }
 
     @ObservedObject public var settings = AppSettings.shared
+    @State private var selectedTab: Tab = .general
     @State private var recordingTarget: ShortcutTarget? = nil
     @State private var eventMonitor: Any?
     @State private var screenCaptureGranted: Bool = CGPreflightScreenCaptureAccess()
@@ -33,291 +52,52 @@ public struct PreferencesView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack(spacing: 12) {
-                Image(systemName: "camera.viewfinder")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundColor(.accentColor)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Shots! Preferences")
-                        .font(.system(size: 16, weight: .bold))
-                    Text("Configure global hotkey, destination folder, and capture behavior")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    // Global Shortcuts Box
-                    GroupBox(label: Label("Global Shortcuts", systemImage: "keyboard")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(ShortcutTarget.allCases) { target in
-                                HStack {
-                                    Label(target.rawValue, systemImage: target.icon)
-                                        .font(.system(size: 13, weight: .medium))
-
-                                    Spacer()
-
-                                    // Interactive Hotkey Recorder Button
-                                    Button(action: {
-                                        toggleRecording(for: target)
-                                    }) {
-                                        HStack(spacing: 6) {
-                                            if recordingTarget == target {
-                                                Circle()
-                                                    .fill(Color.red)
-                                                    .frame(width: 8, height: 8)
-                                                Text("Press keys (Esc to cancel)...")
-                                                    .font(.system(size: 12, weight: .medium))
-                                                    .foregroundColor(.primary)
-                                            } else {
-                                                Text(displayString(for: target))
-                                                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                                                    .foregroundColor(.primary)
-                                            }
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(recordingTarget == target ? Color.accentColor.opacity(0.15) : Color(NSColor.controlBackgroundColor))
-                                        .cornerRadius(6)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .stroke(recordingTarget == target ? Color.accentColor : Color(NSColor.separatorColor), lineWidth: 1.5)
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    Button("Reset") {
-                                        stopRecording()
-                                        resetShortcut(for: target)
-                                    }
-                                    .font(.system(size: 11))
-                                    .disabled(isDefault(for: target))
-                                }
-
-                                if target != ShortcutTarget.allCases.last {
-                                    Divider()
-                                }
-                            }
-
-                            if settings.isHotkeyConflict, let msg = settings.hotkeyErrorMessage {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundColor(.orange)
-                                    Text(msg)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.orange)
-                                }
-                                .padding(6)
-                                .background(Color.orange.opacity(0.1))
-                                .cornerRadius(6)
-                            }
-
-                            Text("Trigger screenshots instantly from any application with customizable global shortcuts.")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(10)
-                    }
-
-                    // General Startup Box
-                    GroupBox(label: Label("General", systemImage: "gearshape")) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Toggle("Launch Shots! automatically at login", isOn: Binding(
-                                get: { settings.launchAtLogin },
-                                set: { newValue in
-                                    _ = LaunchAtLoginService.shared.setLaunchAtLogin(enabled: newValue)
-                                }
-                            ))
-                            Text("Starts Shots! quietly in the background when you log into your Mac.")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(10)
-                    }
-
-                    // Storage Box
-                    GroupBox(label: Label("Storage Destination", systemImage: "folder")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(alignment: .center) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Destination Folder:")
-                                        .font(.system(size: 13, weight: .medium))
-                                    Text(settings.saveDirectoryPath)
-                                        .font(.system(size: 11, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                }
-
-                                Spacer()
-
-                                Button("Choose...") {
-                                    chooseFolder()
-                                }
-
-                                Button("Reveal") {
-                                    NSWorkspace.shared.activateFileViewerSelecting([settings.resolvedSaveDirectoryURL])
-                                }
-                            }
-
-                            Text("Screenshots are saved as: shot_YYYYMMDD_HHMMSS.\(settings.imageFormat.fileExtension)")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(10)
-                    }
-
-                    // Behavior Box (Capture Behavior Toggles)
-                    GroupBox(label: Label("Capture Behavior", systemImage: "slider.horizontal.3")) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Post-Capture Action")
-                                .font(.system(size: 13, weight: .medium))
-
-                            Picker("", selection: $settings.postCaptureAction) {
-                                ForEach(PostCaptureAction.allCases) { action in
-                                    Text(action.displayName).tag(action)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-
-                            Text("Configure whether screenshots are saved to disk, copied directly to the clipboard, or both.")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-
-                            Divider()
-
-                            Toggle("Save screenshot to disk", isOn: $settings.saveToDisk)
-                            Toggle("Copy screenshot to clipboard", isOn: $settings.copyToClipboard)
-                        }
-                        .padding(10)
-                    }
-
-                    // Scrolling Capture Box
-                    GroupBox(label: Label("Scrolling Capture", systemImage: "arrow.up.and.down.circle")) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Capture Speed")
-                                        .font(.system(size: 13, weight: .medium))
-                                    Text("Controls scroll step distance and settling delay during automatic scrolling.")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                            }
-
-                            Picker("Scrolling Speed", selection: $settings.scrollingCaptureSpeed) {
-                                ForEach(ScrollingCaptureSpeed.allCases) { speed in
-                                    Text(speed.displayName).tag(speed)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-
-                            Text(settings.scrollingCaptureSpeed.detailDescription)
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(10)
-                    }
-
-                    // System Permissions Box
-                    GroupBox(label: Label("System Permissions", systemImage: "lock.shield")) {
-                        VStack(spacing: 12) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Screen Recording Permission")
-                                        .font(.system(size: 12, weight: .medium))
-                                    Text(screenCaptureGranted ? "Granted — ready to capture all displays" : "Access required for capturing display pixels")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                if screenCaptureGranted {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                        Text("Granted")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundColor(.green)
-                                    }
-                                } else {
-                                    Button("Open Settings") {
-                                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                                            NSWorkspace.shared.open(url)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Divider()
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Accessibility Permission")
-                                        .font(.system(size: 12, weight: .medium))
-                                    Text(accessibilityGranted ? "Granted — menus stay open and videos keep playing" : "Required to prevent clicks from closing menus during selection")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Spacer()
-
-                                if accessibilityGranted {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                        Text("Granted")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .foregroundColor(.green)
-                                    }
-                                } else {
-                                    Button("Open Settings") {
-                                        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-                                        _ = AXIsProcessTrustedWithOptions(options)
-                                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                                            NSWorkspace.shared.open(url)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        .padding(10)
-                    }
-                }
-                .padding(20)
-            }
-
-            Divider()
-
-            // Footer
+            // Minimalistic Tab Switcher
             HStack {
-                Text("Status bar only • Runs quietly in background")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-
-                Spacer()
-
-                Button("Done") {
-                    stopRecording()
-                    NSApp.keyWindow?.close()
+                Picker("", selection: $selectedTab) {
+                    ForEach(Tab.allCases) { tab in
+                        Label(tab.rawValue, systemImage: tab.icon).tag(tab)
+                    }
                 }
-                .keyboardShortcut(.defaultAction)
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 320)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+
+            Divider()
+
+            // Active Tab Content
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 14) {
+                    switch selectedTab {
+                    case .general:
+                        GeneralTab(
+                            settings: settings,
+                            screenCaptureGranted: screenCaptureGranted,
+                            accessibilityGranted: accessibilityGranted,
+                            onChooseFolder: chooseFolder
+                        )
+                    case .capture:
+                        CaptureTab(settings: settings)
+                    case .shortcuts:
+                        ShortcutsTab(
+                            settings: settings,
+                            recordingTarget: recordingTarget,
+                            onToggleRecording: toggleRecording,
+                            onResetShortcut: resetShortcut,
+                            onResetAll: {
+                                stopRecording()
+                                settings.resetHotkeysToDefault()
+                            }
+                        )
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+            }
         }
-        .frame(width: 480, height: 530)
+        .frame(width: 480, height: 410)
         .onDisappear {
             stopRecording()
         }
@@ -370,6 +150,9 @@ public struct PreferencesView: View {
                     case .ocr:
                         self.settings.ocrShortcutKeyCode = event.keyCode
                         self.settings.ocrShortcutModifiers = carbonMods
+                    case .scrolling:
+                        self.settings.scrollingShortcutKeyCode = event.keyCode
+                        self.settings.scrollingShortcutModifiers = carbonMods
                     }
                     self.stopRecording()
                     return nil
@@ -388,41 +171,23 @@ public struct PreferencesView: View {
     }
 
     private func resetShortcut(for target: ShortcutTarget) {
+        let defaultMods = UInt32(cmdKey | shiftKey)
         switch target {
         case .area:
-            settings.hotkeyKeyCode = UInt16(kVK_ANSI_1)
-            settings.hotkeyModifiers = UInt32(cmdKey | shiftKey)
+            settings.hotkeyKeyCode = UInt16(kVK_ANSI_4)
+            settings.hotkeyModifiers = defaultMods
         case .fullscreen:
             settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
-            settings.fullscreenShortcutModifiers = UInt32(cmdKey | shiftKey)
+            settings.fullscreenShortcutModifiers = defaultMods
         case .repeatCapture:
-            settings.repeatShortcutKeyCode = UInt16(kVK_ANSI_R)
-            settings.repeatShortcutModifiers = UInt32(cmdKey | shiftKey)
+            settings.repeatShortcutKeyCode = UInt16(kVK_ANSI_3)
+            settings.repeatShortcutModifiers = defaultMods
         case .ocr:
-            settings.ocrShortcutKeyCode = UInt16(kVK_ANSI_O)
-            settings.ocrShortcutModifiers = UInt32(cmdKey | shiftKey)
-        }
-    }
-
-    private func displayString(for target: ShortcutTarget) -> String {
-        switch target {
-        case .area: return settings.areaShortcutDisplayString
-        case .fullscreen: return settings.fullscreenShortcutDisplayString
-        case .repeatCapture: return settings.repeatShortcutDisplayString
-        case .ocr: return settings.ocrShortcutDisplayString
-        }
-    }
-
-    private func isDefault(for target: ShortcutTarget) -> Bool {
-        switch target {
-        case .area:
-            return settings.hotkeyKeyCode == UInt16(kVK_ANSI_1) && settings.hotkeyModifiers == UInt32(cmdKey | shiftKey)
-        case .fullscreen:
-            return settings.fullscreenShortcutKeyCode == UInt16(kVK_ANSI_2) && settings.fullscreenShortcutModifiers == UInt32(cmdKey | shiftKey)
-        case .repeatCapture:
-            return settings.repeatShortcutKeyCode == UInt16(kVK_ANSI_R) && settings.repeatShortcutModifiers == UInt32(cmdKey | shiftKey)
-        case .ocr:
-            return settings.ocrShortcutKeyCode == UInt16(kVK_ANSI_O) && settings.ocrShortcutModifiers == UInt32(cmdKey | shiftKey)
+            settings.ocrShortcutKeyCode = UInt16(kVK_ANSI_R)
+            settings.ocrShortcutModifiers = defaultMods
+        case .scrolling:
+            settings.scrollingShortcutKeyCode = UInt16(kVK_ANSI_5)
+            settings.scrollingShortcutModifiers = defaultMods
         }
     }
 
@@ -437,6 +202,385 @@ public struct PreferencesView: View {
 
         if panel.runModal() == .OK, let selectedURL = panel.url {
             settings.saveDirectoryPath = selectedURL.path
+        }
+    }
+}
+
+// MARK: - Subviews: General Tab
+
+private struct GeneralTab: View {
+    @ObservedObject var settings: AppSettings
+    let screenCaptureGranted: Bool
+    let accessibilityGranted: Bool
+    let onChooseFolder: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // Startup & Storage Card
+            VStack(spacing: 10) {
+                HStack {
+                    Text("Launch at login")
+                        .font(.system(size: 13, weight: .regular))
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { settings.launchAtLogin },
+                        set: { newValue in
+                            _ = LaunchAtLoginService.shared.setLaunchAtLogin(enabled: newValue)
+                        }
+                    ))
+                    .labelsHidden()
+                }
+
+                Divider()
+
+                HStack {
+                    Text("Save to")
+                        .font(.system(size: 13, weight: .regular))
+                    Spacer()
+                    Text(settings.saveDirectoryPath)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 180, alignment: .trailing)
+
+                    Button("Choose...") {
+                        onChooseFolder()
+                    }
+                    .font(.system(size: 12))
+
+                    Button(action: {
+                        NSWorkspace.shared.activateFileViewerSelecting([settings.resolvedSaveDirectoryURL])
+                    }) {
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reveal in Finder")
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+
+            // Image Format Card
+            VStack(spacing: 10) {
+                HStack {
+                    Text("Image Format")
+                        .font(.system(size: 13, weight: .regular))
+                    Spacer()
+                    Picker("", selection: $settings.imageFormat) {
+                        ForEach(ImageFormat.allCases) { format in
+                            Text(format.displayName).tag(format)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+                }
+
+                if settings.imageFormat == .jpg {
+                    Divider()
+
+                    HStack(spacing: 10) {
+                        Text("JPG Quality")
+                            .font(.system(size: 13, weight: .regular))
+                        Spacer()
+                        Slider(
+                            value: Binding(
+                                get: { Double(settings.jpgQuality) },
+                                set: { settings.jpgQuality = Int($0) }
+                            ),
+                            in: 40...100,
+                            step: 5
+                        )
+                        .frame(width: 130)
+
+                        Text("\(settings.jpgQuality)%")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+
+            // Permissions Card
+            VStack(spacing: 8) {
+                HStack {
+                    Label("Screen Recording", systemImage: "display")
+                        .font(.system(size: 12))
+                    Spacer()
+                    if screenCaptureGranted {
+                        Text("Granted")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.green)
+                    } else {
+                        Button("Grant Access") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .font(.system(size: 11))
+                    }
+                }
+
+                Divider()
+
+                HStack {
+                    Label("Accessibility", systemImage: "hand.tap")
+                        .font(.system(size: 12))
+                    Spacer()
+                    if accessibilityGranted {
+                        Text("Granted")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.green)
+                    } else {
+                        Button("Grant Access") {
+                            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+                            _ = AXIsProcessTrustedWithOptions(options)
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .font(.system(size: 11))
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+        }
+    }
+}
+
+// MARK: - Subviews: Capture Tab
+
+private struct CaptureTab: View {
+    @ObservedObject var settings: AppSettings
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // Post-Capture Action Card
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("After capture")
+                        .font(.system(size: 13, weight: .regular))
+                    Spacer()
+                    Picker("", selection: $settings.postCaptureAction) {
+                        Text("Save Only").tag(PostCaptureAction.saveToDisk)
+                        Text("Copy Only").tag(PostCaptureAction.copyToClipboard)
+                        Text("Save & Copy").tag(PostCaptureAction.both)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 250)
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+
+            // Capture Behavior Card
+            VStack(spacing: 10) {
+                HStack {
+                    Text("Include mouse cursor")
+                        .font(.system(size: 13, weight: .regular))
+                    Spacer()
+                    Toggle("", isOn: $settings.includeCursor)
+                        .labelsHidden()
+                }
+
+                Divider()
+
+                HStack {
+                    Text("Timer delay")
+                        .font(.system(size: 13, weight: .regular))
+                    Spacer()
+                    Picker("", selection: $settings.captureDelaySeconds) {
+                        Text("None").tag(0)
+                        Text("3s").tag(3)
+                        Text("5s").tag(5)
+                        Text("10s").tag(10)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 200)
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+
+            // Scrolling Capture Card
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Scrolling capture speed")
+                        .font(.system(size: 13, weight: .regular))
+                    Spacer()
+                    Picker("", selection: $settings.scrollingCaptureSpeed) {
+                        ForEach(ScrollingCaptureSpeed.allCases) { speed in
+                            Text(speed.displayName).tag(speed)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 200)
+                }
+
+                HStack {
+                    Spacer()
+                    Text(scrollingSpeedNote)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+        }
+    }
+
+    private var scrollingSpeedNote: String {
+        switch settings.scrollingCaptureSpeed {
+        case .slow: return "Step: 45 px • 500 ms pause (Smooth, heavy pages)"
+        case .normal: return "Step: 60 px • 350 ms pause (Recommended)"
+        case .fast: return "Step: 90 px • 200 ms pause (Fast native windows)"
+        }
+    }
+}
+
+// MARK: - Subviews: Shortcuts Tab
+
+private struct ShortcutsTab: View {
+    @ObservedObject var settings: AppSettings
+    let recordingTarget: PreferencesView.ShortcutTarget?
+    let onToggleRecording: (PreferencesView.ShortcutTarget) -> Void
+    let onResetShortcut: (PreferencesView.ShortcutTarget) -> Void
+    let onResetAll: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            // Shortcuts List Card
+            VStack(spacing: 8) {
+                ForEach(PreferencesView.ShortcutTarget.allCases) { target in
+                    HStack {
+                        Label(target.rawValue, systemImage: target.icon)
+                            .font(.system(size: 13, weight: .regular))
+
+                        Spacer()
+
+                        // Interactive Recorder Badge
+                        Button(action: {
+                            onToggleRecording(target)
+                        }) {
+                            HStack(spacing: 5) {
+                                if recordingTarget == target {
+                                    Circle()
+                                        .fill(Color.red)
+                                        .frame(width: 7, height: 7)
+                                    Text("Press keys...")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(.primary)
+                                } else {
+                                    Text(displayString(for: target))
+                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                        .foregroundColor(.primary)
+                                }
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .background(recordingTarget == target ? Color.accentColor.opacity(0.12) : Color(NSColor.controlColor))
+                            .cornerRadius(5)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(recordingTarget == target ? Color.accentColor : Color(NSColor.separatorColor).opacity(0.7), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: {
+                            onResetShortcut(target)
+                        }) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isDefault(for: target))
+                        .opacity(isDefault(for: target) ? 0.3 : 0.8)
+                        .help("Reset to default")
+                    }
+
+                    if target != PreferencesView.ShortcutTarget.allCases.last {
+                        Divider()
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+
+            // Conflict Warning Banner
+            if settings.isHotkeyConflict, let msg = settings.hotkeyErrorMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 12))
+                    Text(msg)
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                    Spacer()
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(6)
+            }
+
+            HStack {
+                Text("Click any shortcut to rebind • Esc to cancel")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button("Reset All") {
+                    onResetAll()
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.link)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func displayString(for target: PreferencesView.ShortcutTarget) -> String {
+        switch target {
+        case .area: return settings.areaShortcutDisplayString
+        case .fullscreen: return settings.fullscreenShortcutDisplayString
+        case .repeatCapture: return settings.repeatShortcutDisplayString
+        case .ocr: return settings.ocrShortcutDisplayString
+        case .scrolling: return settings.scrollingShortcutDisplayString
+        }
+    }
+
+    private func isDefault(for target: PreferencesView.ShortcutTarget) -> Bool {
+        let defaultMods = UInt32(cmdKey | shiftKey)
+        switch target {
+        case .area:
+            return settings.hotkeyKeyCode == UInt16(kVK_ANSI_4) && settings.hotkeyModifiers == defaultMods
+        case .fullscreen:
+            return settings.fullscreenShortcutKeyCode == UInt16(kVK_ANSI_2) && settings.fullscreenShortcutModifiers == defaultMods
+        case .repeatCapture:
+            return settings.repeatShortcutKeyCode == UInt16(kVK_ANSI_3) && settings.repeatShortcutModifiers == defaultMods
+        case .ocr:
+            return settings.ocrShortcutKeyCode == UInt16(kVK_ANSI_R) && settings.ocrShortcutModifiers == defaultMods
+        case .scrolling:
+            return settings.scrollingShortcutKeyCode == UInt16(kVK_ANSI_5) && settings.scrollingShortcutModifiers == defaultMods
         }
     }
 }

@@ -7,8 +7,8 @@ public final class PreferencesWindowController: NSWindowController {
     private init() {
         let hostingController = NSHostingController(rootView: PreferencesView())
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 530),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 410),
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )

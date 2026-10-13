@@ -9,6 +9,7 @@ public final class HotKeyManager {
     private var hotKeyRefFullscreen: EventHotKeyRef?
     private var hotKeyRefRepeat: EventHotKeyRef?
     private var hotKeyRefOCR: EventHotKeyRef?
+    private var hotKeyRefScrolling: EventHotKeyRef?
 
     private let signature: OSType = 0x5343524E /* 'SCRN' */
 
@@ -17,6 +18,7 @@ public final class HotKeyManager {
     public var onFullscreenCaptureTrigger: (() -> Void)?
     public var onRepeatCaptureTrigger: (() -> Void)?
     public var onOCRCaptureTrigger: (() -> Void)?
+    public var onScrollingCaptureTrigger: (() -> Void)?
 
     public init() {
         installCarbonEventHandler()
@@ -143,6 +145,20 @@ public final class HotKeyManager {
             allSucceeded = false
         }
 
+        // 5. Scrolling Capture (id: 5)
+        let scrollStatus = RegisterEventHotKey(
+            UInt32(settings.scrollingShortcutKeyCode),
+            settings.scrollingShortcutModifiers,
+            EventHotKeyID(signature: signature, id: 5),
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRefScrolling
+        )
+        if scrollStatus != noErr {
+            NSLog("Failed to register Scrolling shortcut (%@): %d", settings.scrollingShortcutDisplayString, scrollStatus)
+            allSucceeded = false
+        }
+
         if !allSucceeded {
             settings.isHotkeyConflict = true
             settings.hotkeyErrorMessage = "One or more shortcuts are unavailable (used by macOS or another app)."
@@ -171,6 +187,10 @@ public final class HotKeyManager {
             UnregisterEventHotKey(ref)
             hotKeyRefOCR = nil
         }
+        if let ref = hotKeyRefScrolling {
+            UnregisterEventHotKey(ref)
+            hotKeyRefScrolling = nil
+        }
     }
 
     private func handleHotkeyEvent(id: UInt32) {
@@ -186,6 +206,8 @@ public final class HotKeyManager {
                 self.onRepeatCaptureTrigger?()
             case 4:
                 self.onOCRCaptureTrigger?()
+            case 5:
+                self.onScrollingCaptureTrigger?()
             default:
                 self.onTrigger?()
             }

@@ -1,9 +1,11 @@
 import Cocoa
 import CoreGraphics
 
-public enum ImageFormat: String, CaseIterable {
+public enum ImageFormat: String, CaseIterable, Identifiable {
     case png = "png"
     case jpg = "jpg"
+
+    public var id: String { rawValue }
 
     public var fileExtension: String {
         return self.rawValue
