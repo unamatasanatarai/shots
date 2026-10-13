@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 import Cocoa
 import Carbon
+import Vision
 
 public struct AppTests {
     @MainActor
@@ -946,6 +947,49 @@ public struct AppTests {
             if let copyItem = copyActionItem {
                 controller.copyRecentScreenshotAction(copyItem)
             }
+        }
+
+        // MARK: - Native Recognition Framework Suite
+        testRunner("Native Recognition Framework - Vision Framework On-Device Infrastructure") {
+            let service = RecognitionService.shared
+            assert(service.isVisionSupported == true, "Vision framework must be supported on macOS 12+")
+
+            // Create a test image
+            let size = CGSize(width: 100, height: 100)
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fill(CGRect(origin: .zero, size: size))
+            let testCGImage = ctx.makeImage()!
+
+            // 1. Synchronous request execution
+            var requestCompleted = false
+            let testRequest = VNRecognizeTextRequest { request, error in
+                assert(error == nil, "Vision request execution should not produce error")
+                requestCompleted = true
+            }
+
+            try! service.performRequests([testRequest], on: testCGImage)
+            assert(requestCompleted == true, "Synchronous Vision request must finish execution")
+
+            // 2. Asynchronous request execution
+            var asyncCompleted = false
+            let asyncRequest = VNRecognizeTextRequest { _, _ in }
+            service.performRequestsAsync([asyncRequest], on: testCGImage) { result in
+                switch result {
+                case .success(let reqs):
+                    assert(reqs.count == 1, "Async execution must return requests")
+                    asyncCompleted = true
+                case .failure(let err):
+                    assertionFailure("Async request failed with: \(err.localizedDescription)")
+                }
+            }
+
+            let runLoopDeadline = Date().addingTimeInterval(1.0)
+            while !asyncCompleted && Date() < runLoopDeadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            assert(asyncCompleted == true, "Async Vision request must finish within deadline")
         }
     }
 }

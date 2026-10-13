@@ -47,7 +47,7 @@ Milestone: Users can quickly retrieve and reuse recent captures.
 
 Implement recognition as a separate capability so it doesn't complicate the initial capture pipeline.
 
-- 21\. Native Recognition Framework — Use Apple's Vision framework for on-device recognition.
+- [x] 21\. Native Recognition Framework — Use Apple's Vision framework for on-device recognition.
 - 22\. QR Code Recognition — Detect and decode QR codes.
 - 23\. Barcode Recognition — Detect and decode 1D barcodes.
 - 24\. OCR Text Recognition — Extract text, prioritizing English and Polish.

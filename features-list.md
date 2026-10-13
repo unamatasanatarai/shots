@@ -32,7 +32,7 @@
   - Support multiple languages, prioritizing English and Polish.
 - [ ] **QR Code Recognition** — Detect and decode QR codes.
 - [ ] **Barcode Recognition** — Detect and decode 1D barcodes.
-- [ ] **Native Recognition Framework** — Use Apple's Vision framework (`VNRecognizeBarcodesRequest`) on macOS 12+ for on-device QR and barcode recognition without heavy third-party dependencies.
+- [x] **Native Recognition Framework** — Use Apple's Vision framework (`VNRecognizeBarcodesRequest`) on macOS 12+ for on-device QR and barcode recognition without heavy third-party dependencies.
 
 ## 4. Hotkeys & System Integration
 
