@@ -183,6 +183,20 @@ public struct AppTests {
             try? FileManager.default.removeItem(at: tempDir)
         }
 
+        // MARK: - CaptureService Fullscreen Suite
+        testRunner("CaptureService - Active Screen & Fullscreen Resolution") {
+            let activeScreen = CaptureService.shared.activeScreen()
+            assert(activeScreen != nil, "Active screen should not be nil on macOS system")
+
+            let mainDisplay = CGMainDisplayID()
+            let displayID = (activeScreen.flatMap { CaptureService.shared.displayID(for: $0) }) ?? mainDisplay
+            assert(displayID != 0, "Resolved display ID must be valid non-zero")
+
+            let result = CaptureService.shared.captureActiveFullscreen()
+            assert(result != nil, "CaptureService.captureActiveFullscreen() should return a result")
+            assert(result?.displayID != 0, "Result display ID must be valid")
+        }
+
         // MARK: - Area Selection & Coordinates Suite
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420

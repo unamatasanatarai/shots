@@ -16,30 +16,21 @@ public final class CaptureManager {
     }
 
     public func captureFullscreen(screen: NSScreen? = nil) {
-        let targetScreen: NSScreen
-        if let screen = screen {
-            targetScreen = screen
+        if let explicitScreen = screen {
+            let displayID = CaptureService.shared.displayID(for: explicitScreen) ?? CGMainDisplayID()
+            if let image = CaptureService.shared.captureFullscreen(displayID: displayID) {
+                processCapturedImage(image)
+            } else {
+                captureFallback()
+            }
         } else {
-            let mouseLoc = NSEvent.mouseLocation
-            targetScreen = NSScreen.screens.first { $0.frame.contains(mouseLoc) }
-                ?? NSScreen.main
-                ?? NSScreen.screens.first
-                ?? NSScreen()
+            guard let result = CaptureService.shared.captureActiveFullscreen(),
+                  let image = result.image else {
+                captureFallback()
+                return
+            }
+            processCapturedImage(image)
         }
-
-        guard let screenNumber = targetScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
-            NSLog("Could not obtain display ID for screen; using fallback display ID")
-            captureFallback()
-            return
-        }
-
-        guard let cgImage = CGDisplayCreateImage(screenNumber) else {
-            NSLog("CGDisplayCreateImage failed for display ID %u; falling back", screenNumber)
-            captureFallback()
-            return
-        }
-
-        processCapturedImage(cgImage)
     }
 
     private func captureFallback() {
