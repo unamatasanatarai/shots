@@ -397,6 +397,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 )
                 menuItem.target = self
                 menuItem.representedObject = item.fileURL
+                menuItem.toolTip = "Reveal \(item.filename) in Finder"
                 if let thumb = item.thumbnail {
                     menuItem.image = thumb
                 } else if let fallback = NSImage(systemSymbolName: "photo", accessibilityDescription: nil) {
@@ -408,9 +409,15 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    @objc private func recentScreenshotSelected(_ sender: NSMenuItem) {
-        guard let fileURL = sender.representedObject as? URL else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+    @objc public func recentScreenshotSelected(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else {
+            NSSound.beep()
+            return
+        }
+        if !ScreenshotHistoryService.shared.revealScreenshotInFinder(fileURL: fileURL) {
+            NSSound.beep()
+            updateRecentScreenshotsMenu()
+        }
     }
 
     // MARK: - Actions

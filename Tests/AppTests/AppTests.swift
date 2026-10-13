@@ -839,5 +839,44 @@ public struct AppTests {
             assert(historyMenuItem?.submenu != nil, "Recent Screenshots must have a submenu")
             assert(historyMenuItem?.submenu?.items.count ?? 0 >= 1, "Submenu must contain items")
         }
+
+        // MARK: - Recent Screenshot Selection Suite
+        testRunner("Recent Screenshot Selection - Reveal in Finder and Menu Item Invocation") {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("shots_select_test_\(UUID().uuidString)")
+            try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
+            defer {
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+
+            let validShotURL = tempDir.appendingPathComponent("shot_valid.png")
+            try! "valid_img".write(to: validShotURL, atomically: true, encoding: .utf8)
+            let nonExistentURL = tempDir.appendingPathComponent("shot_missing.png")
+
+            let historyService = ScreenshotHistoryService.shared
+
+            // 1. Verification of revealScreenshotInFinder API
+            assert(historyService.revealScreenshotInFinder(fileURL: validShotURL) == true, "Existing file must reveal successfully")
+            assert(historyService.revealScreenshotInFinder(fileURL: nonExistentURL) == false, "Missing file must fail reveal safely")
+
+            // 2. Verification of StatusBarController selection wiring
+            let controller = StatusBarController()
+            let item = NSMenuItem(title: "shot_valid.png", action: #selector(controller.recentScreenshotSelected(_:)), keyEquivalent: "")
+            item.target = controller
+            item.representedObject = validShotURL
+
+            assert(item.action == #selector(controller.recentScreenshotSelected(_:)), "Action must be recentScreenshotSelected")
+            assert((item.representedObject as? URL)?.lastPathComponent == "shot_valid.png", "Represented object must hold target URL")
+
+            // Execute selection action on valid item
+            controller.recentScreenshotSelected(item)
+
+            // Execute selection action on missing item (must not crash)
+            item.representedObject = nonExistentURL
+            controller.recentScreenshotSelected(item)
+
+            // Execute with nil represented object (must not crash)
+            item.representedObject = nil
+            controller.recentScreenshotSelected(item)
+        }
     }
 }
