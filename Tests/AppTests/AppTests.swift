@@ -513,6 +513,7 @@ public struct AppTests {
 
             assert(titles.contains(where: { $0.contains("Capture Region") }), "Menu must contain Capture Region item")
             assert(titles.contains(where: { $0.contains("Capture Fullscreen") }), "Menu must contain Capture Fullscreen item")
+            assert(titles.contains(where: { $0.contains("Repeat Previous Screenshot") }), "Menu must contain Repeat Previous Screenshot item")
             assert(titles.contains("Save to Folder"), "Menu must contain Save to Folder item")
             assert(titles.contains("Copy to Clipboard"), "Menu must contain Copy to Clipboard item")
             assert(titles.contains("Include Cursor"), "Menu must contain Include Cursor item")
@@ -633,6 +634,50 @@ public struct AppTests {
             assert(AppSettings.shared.launchAtLogin == false, "Service must update AppSettings.shared to false")
 
             defaults.removePersistentDomain(forName: testSuite)
+        }
+
+        // MARK: - Repeat Previous Screenshot Suite
+        testRunner("Repeat Previous Screenshot - Parameters Caching and Dynamic Re-execution") {
+            let manager = CaptureManager.shared
+            let prevCapture = manager.lastCapture
+            defer {
+                manager.lastCapture = prevCapture
+            }
+
+            // 1. Fullscreen mode record caching
+            manager.lastCapture = LastCaptureRecord(mode: .fullscreen)
+            assert(manager.lastCapture?.mode == .fullscreen, "lastCapture must reflect fullscreen mode")
+
+            // 2. Region mode record caching
+            let testRect = NSRect(x: 100, y: 150, width: 400, height: 300)
+            let testFrame = NSRect(x: 0, y: 0, width: 1920, height: 1080)
+            let testDisplayID = CGMainDisplayID()
+            let regionRecord = LastCaptureRecord(mode: .region(rect: testRect, screenFrame: testFrame, displayID: testDisplayID))
+            manager.lastCapture = regionRecord
+
+            guard let cached = manager.lastCapture else {
+                assertionFailure("lastCapture must not be nil")
+                return
+            }
+
+            if case .region(let r, let f, let d) = cached.mode {
+                assert(r == testRect, "Cached rect must match testRect")
+                assert(f == testFrame, "Cached screenFrame must match testFrame")
+                assert(d == testDisplayID, "Cached displayID must match testDisplayID")
+            } else {
+                assertionFailure("Cached mode must be .region")
+            }
+
+            // 3. Status bar menu item state reflects presence of lastCapture
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+            let repeatItem = menu.items.first(where: { $0.title.contains("Repeat Previous Screenshot") })
+            assert(repeatItem != nil, "Repeat item must be present in menu")
+            assert(repeatItem?.isEnabled == true, "Repeat item must be enabled when lastCapture exists")
+
+            manager.lastCapture = nil
+            controller.menuWillOpen(menu)
+            assert(repeatItem?.isEnabled == false, "Repeat item must be disabled when lastCapture is nil")
         }
 
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {

@@ -25,6 +25,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeyManager.shared.onFullscreenCaptureTrigger = {
             CaptureManager.shared.captureFullscreen()
         }
+        HotKeyManager.shared.onRepeatCaptureTrigger = {
+            CaptureManager.shared.repeatPreviousScreenshot()
+        }
         HotKeyManager.shared.onTrigger = {
             CaptureManager.shared.startRegionCapture()
         }

@@ -337,6 +337,9 @@ public final class RegionSelectionCoordinator {
             ?? CGMainDisplayID()
 
         if selRect.width >= 6 && selRect.height >= 6 {
+            CaptureManager.shared.lastCapture = LastCaptureRecord(
+                mode: .region(rect: selRect, screenFrame: screenFrame, displayID: displayID)
+            )
             let fullImage = CGDisplayCreateImage(displayID)
             var cropped = fullImage.flatMap { cropImage($0, to: selRect, in: viewSize) }
             if AppSettings.shared.includeCursor, let validCrop = cropped {
@@ -348,6 +351,7 @@ public final class RegionSelectionCoordinator {
             }
             finish(with: cropped ?? fullImage)
         } else {
+            CaptureManager.shared.lastCapture = LastCaptureRecord(mode: .fullscreen)
             // Click without drag captures full display
             var fullImage = CGDisplayCreateImage(displayID)
             if AppSettings.shared.includeCursor, let validFull = fullImage {

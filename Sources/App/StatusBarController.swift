@@ -6,6 +6,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     private var captureRegionMenuItem: NSMenuItem!
     private var captureFullscreenMenuItem: NSMenuItem!
+    private var repeatScreenshotMenuItem: NSMenuItem!
     private var saveToDiskMenuItem: NSMenuItem!
     private var copyToClipboardMenuItem: NSMenuItem!
     private var postCaptureActionMenuItem: NSMenuItem!
@@ -100,6 +101,20 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             captureFullscreenMenuItem.image = icon
         }
         menu.addItem(captureFullscreenMenuItem)
+
+        // 3. Repeat Previous Screenshot
+        let repeatShortcut = AppSettings.shared.repeatShortcutDisplayString
+        repeatScreenshotMenuItem = NSMenuItem(
+            title: "Repeat Previous Screenshot (\(repeatShortcut))",
+            action: #selector(repeatScreenshotAction),
+            keyEquivalent: ""
+        )
+        repeatScreenshotMenuItem.target = self
+        if let repeatIcon = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: nil) {
+            repeatIcon.isTemplate = true
+            repeatScreenshotMenuItem.image = repeatIcon
+        }
+        menu.addItem(repeatScreenshotMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -285,8 +300,11 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         let settings = AppSettings.shared
         let areaShortcut = settings.areaShortcutDisplayString
         let fsShortcut = settings.fullscreenShortcutDisplayString
+        let repShortcut = settings.repeatShortcutDisplayString
         captureRegionMenuItem.title = "Capture Region (\(areaShortcut))"
         captureFullscreenMenuItem.title = "Capture Fullscreen (\(fsShortcut))"
+        repeatScreenshotMenuItem.title = "Repeat Previous Screenshot (\(repShortcut))"
+        repeatScreenshotMenuItem.isEnabled = (CaptureManager.shared.lastCapture != nil)
 
         if let button = statusItem.button {
             button.toolTip = "Shots! — Click for options or press \(areaShortcut)"
@@ -339,6 +357,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func captureFullscreenAction() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.captureFullscreen()
+        }
+    }
+
+    @objc private func repeatScreenshotAction() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            CaptureManager.shared.repeatPreviousScreenshot()
         }
     }
 

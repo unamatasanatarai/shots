@@ -6,7 +6,7 @@
 - [x] **Fullscreen Screenshot** — Capture the entire active display.
 - [x] **Capture Delay** — Configurable delay before capture, defaulting to 0 seconds.
 - [ ] **Scrolling Capture** — Capture a selected area continuously while scrolling, stopping when scrolling ends or the maximum height of 20,000 px is reached.
-- [ ] **Repeat Previous Screenshot** — Repeat the last capture using the same mode and selection.
+- [x] **Repeat Previous Screenshot** — Repeat the last capture using the same mode and selection.
 - [x] **Multi-Display Support** — Automatically target the active display.
 - [x] **Cursor Capture** — Option to include or exclude the mouse cursor.
 
