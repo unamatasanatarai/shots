@@ -1036,5 +1036,48 @@ public struct AppTests {
             let emptyResults = try! service.recognizeQRCodes(in: plainCGImage)
             assert(emptyResults.isEmpty, "Plain image must yield 0 QR codes")
         }
+
+        // MARK: - Barcode Recognition Suite
+        testRunner("Barcode Recognition - 1D Barcode Detection and Symbology Decoding") {
+            let service = RecognitionService.shared
+
+            // Generate an authentic Code 128 1D barcode image using CoreImage
+            let expectedBarcode = "9876543210"
+            let filter = CIFilter(name: "CICode128BarcodeGenerator")
+            filter?.setValue(expectedBarcode.data(using: .ascii), forKey: "inputMessage")
+
+            guard let ciOutput = filter?.outputImage else {
+                assertionFailure("Failed to generate CICode128BarcodeGenerator output")
+                return
+            }
+
+            // Scale up barcode so bars have sufficient pixel width
+            let transform = CGAffineTransform(scaleX: 8.0, y: 8.0)
+            let scaledImage = ciOutput.transformed(by: transform)
+
+            let ciContext = CIContext()
+            guard let barcodeCGImage = ciContext.createCGImage(scaledImage, from: scaledImage.extent) else {
+                assertionFailure("Failed to render Barcode CGImage")
+                return
+            }
+
+            // 1. Synchronous barcode recognition
+            let recognized = try! service.recognizeBarcodes(in: barcodeCGImage)
+            assert(recognized.count == 1, "Exactly 1 barcode must be detected (found \(recognized.count))")
+            assert(recognized[0].type == .barcode, "Recognition type must be .barcode")
+            assert(recognized[0].payload == expectedBarcode, "Barcode payload must match expected string")
+            assert(recognized[0].symbology == "Code 128", "Symbology must be Code 128 (got \(String(describing: recognized[0].symbology)))")
+
+            // 2. Negative test: Plain white image should produce 0 barcodes
+            let plainSize = CGSize(width: 100, height: 100)
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fill(CGRect(origin: .zero, size: plainSize))
+            let plainCGImage = ctx.makeImage()!
+
+            let emptyResults = try! service.recognizeBarcodes(in: plainCGImage)
+            assert(emptyResults.isEmpty, "Plain image must yield 0 barcodes")
+        }
     }
 }

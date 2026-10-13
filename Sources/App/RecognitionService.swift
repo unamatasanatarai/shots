@@ -78,19 +78,24 @@ public final class RecognitionService {
             return []
         }
 
-        return results.compactMap { observation in
+        var seen = Set<String>()
+        var items: [RecognitionItem] = []
+        for observation in results {
             guard observation.symbology == .qr,
                   let payload = observation.payloadStringValue,
                   !payload.isEmpty else {
-                return nil
+                continue
             }
-            return RecognitionItem(
-                type: .qrCode,
-                payload: payload,
-                confidence: observation.confidence,
-                symbology: "QR"
-            )
+            if seen.insert(payload).inserted {
+                items.append(RecognitionItem(
+                    type: .qrCode,
+                    payload: payload,
+                    confidence: observation.confidence,
+                    symbology: "QR"
+                ))
+            }
         }
+        return items
     }
 
     /// Asynchronously detects and decodes QR codes on a background queue.
@@ -102,6 +107,96 @@ public final class RecognitionService {
             guard let self = self else { return }
             do {
                 let items = try self.recognizeQRCodes(in: image)
+                DispatchQueue.main.async {
+                    completion(.success(items))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
+
+    // MARK: - 1D Barcode Recognition
+
+    public static let oneDimensionalBarcodeSymbologies: [VNBarcodeSymbology] = [
+        .code128,
+        .code39,
+        .code39Checksum,
+        .code39FullASCII,
+        .code39FullASCIIChecksum,
+        .code93,
+        .code93i,
+        .ean13,
+        .ean8,
+        .upce,
+        .codabar,
+        .i2of5,
+        .i2of5Checksum,
+        .itf14
+    ]
+
+    /// Detects and decodes 1D barcodes in the provided CGImage using Apple Vision.
+    public func recognizeBarcodes(in image: CGImage) throws -> [RecognitionItem] {
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = RecognitionService.oneDimensionalBarcodeSymbologies
+
+        try performRequests([request], on: image)
+
+        guard let results = request.results else {
+            return []
+        }
+
+        var seen = Set<String>()
+        var items: [RecognitionItem] = []
+        for observation in results {
+            guard observation.symbology != .qr,
+                  observation.symbology != .microQR,
+                  let payload = observation.payloadStringValue,
+                  !payload.isEmpty else {
+                continue
+            }
+            let key = "\(observation.symbology.rawValue):\(payload)"
+            if seen.insert(key).inserted {
+                let symbologyName = friendlySymbologyName(for: observation.symbology)
+                items.append(RecognitionItem(
+                    type: .barcode,
+                    payload: payload,
+                    confidence: observation.confidence,
+                    symbology: symbologyName
+                ))
+            }
+        }
+        return items
+    }
+
+    /// Maps a Vision barcode symbology to a user-friendly display string.
+    public func friendlySymbologyName(for symbology: VNBarcodeSymbology) -> String {
+        switch symbology {
+        case .code128: return "Code 128"
+        case .code39, .code39Checksum, .code39FullASCII, .code39FullASCIIChecksum: return "Code 39"
+        case .code93, .code93i: return "Code 93"
+        case .ean13: return "EAN-13"
+        case .ean8: return "EAN-8"
+        case .upce: return "UPC-E"
+        case .codabar: return "Codabar"
+        case .i2of5, .i2of5Checksum: return "Interleaved 2 of 5"
+        case .itf14: return "ITF-14"
+        case .qr: return "QR"
+        default: return symbology.rawValue
+        }
+    }
+
+    /// Asynchronously detects and decodes 1D barcodes on a background queue.
+    public func recognizeBarcodesAsync(
+        in image: CGImage,
+        completion: @escaping (Result<[RecognitionItem], Error>) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let items = try self.recognizeBarcodes(in: image)
                 DispatchQueue.main.async {
                     completion(.success(items))
                 }
