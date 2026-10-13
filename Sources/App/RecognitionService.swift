@@ -64,4 +64,52 @@ public final class RecognitionService {
             }
         }
     }
+
+    // MARK: - QR Code Recognition
+
+    /// Detects and decodes QR codes in the provided CGImage using Apple Vision.
+    public func recognizeQRCodes(in image: CGImage) throws -> [RecognitionItem] {
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = [.qr]
+
+        try performRequests([request], on: image)
+
+        guard let results = request.results else {
+            return []
+        }
+
+        return results.compactMap { observation in
+            guard observation.symbology == .qr,
+                  let payload = observation.payloadStringValue,
+                  !payload.isEmpty else {
+                return nil
+            }
+            return RecognitionItem(
+                type: .qrCode,
+                payload: payload,
+                confidence: observation.confidence,
+                symbology: "QR"
+            )
+        }
+    }
+
+    /// Asynchronously detects and decodes QR codes on a background queue.
+    public func recognizeQRCodesAsync(
+        in image: CGImage,
+        completion: @escaping (Result<[RecognitionItem], Error>) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let items = try self.recognizeQRCodes(in: image)
+                DispatchQueue.main.async {
+                    completion(.success(items))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
 }

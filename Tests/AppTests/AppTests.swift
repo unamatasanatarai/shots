@@ -3,6 +3,7 @@ import CoreGraphics
 import Cocoa
 import Carbon
 import Vision
+import CoreImage
 
 public struct AppTests {
     @MainActor
@@ -990,6 +991,50 @@ public struct AppTests {
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
             }
             assert(asyncCompleted == true, "Async Vision request must finish within deadline")
+        }
+
+        // MARK: - QR Code Recognition Suite
+        testRunner("QR Code Recognition - Detection and Payload Extraction") {
+            let service = RecognitionService.shared
+
+            // Generate a real, high-contrast QR code image using CoreImage
+            let expectedPayload = "https://shots.local/verify?id=test-qr-12345"
+            let filter = CIFilter(name: "CIQRCodeGenerator")
+            filter?.setValue(expectedPayload.data(using: .utf8), forKey: "inputMessage")
+            filter?.setValue("M", forKey: "inputCorrectionLevel")
+
+            guard let ciOutput = filter?.outputImage else {
+                assertionFailure("Failed to generate CIQRCodeGenerator output")
+                return
+            }
+
+            // Scale up QR code image so it is easily detectable
+            let transform = CGAffineTransform(scaleX: 8.0, y: 8.0)
+            let scaledImage = ciOutput.transformed(by: transform)
+
+            let ciContext = CIContext()
+            guard let qrCGImage = ciContext.createCGImage(scaledImage, from: scaledImage.extent) else {
+                assertionFailure("Failed to render QR CGImage")
+                return
+            }
+
+            // 1. Synchronous QR recognition
+            let recognized = try! service.recognizeQRCodes(in: qrCGImage)
+            assert(recognized.count == 1, "Exactly 1 QR code must be detected (found \(recognized.count))")
+            assert(recognized[0].type == .qrCode, "Recognition type must be .qrCode")
+            assert(recognized[0].payload == expectedPayload, "QR payload must match expected string")
+            assert(recognized[0].symbology == "QR", "Symbology must be QR")
+
+            // 2. Negative test: Plain white image should produce 0 QR codes
+            let plainSize = CGSize(width: 100, height: 100)
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fill(CGRect(origin: .zero, size: plainSize))
+            let plainCGImage = ctx.makeImage()!
+
+            let emptyResults = try! service.recognizeQRCodes(in: plainCGImage)
+            assert(emptyResults.isEmpty, "Plain image must yield 0 QR codes")
         }
     }
 }
