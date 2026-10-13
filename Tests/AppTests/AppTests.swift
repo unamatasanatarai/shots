@@ -417,6 +417,24 @@ public struct AppTests {
             defaults.removePersistentDomain(forName: testSuite)
         }
 
+        // MARK: - Save Location Settings Suite
+        testRunner("Save Location Settings - Custom Path Persistence and Auto-Creation") {
+            let settings = AppSettings.shared
+            let prevPath = settings.saveDirectoryPath
+            defer {
+                settings.saveDirectoryPath = prevPath
+            }
+
+            let customDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("CustomShotsLocation_\(UUID().uuidString)")
+            settings.saveDirectoryPath = customDir.path
+
+            assert(settings.saveDirectoryPath == customDir.path, "saveDirectoryPath must reflect custom path")
+            assert(settings.resolvedSaveDirectoryURL.path == customDir.path, "resolvedSaveDirectoryURL must match custom path")
+            assert(FileManager.default.fileExists(atPath: customDir.path), "Custom save directory must be auto-created on disk")
+
+            try? FileManager.default.removeItem(at: customDir)
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

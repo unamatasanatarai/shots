@@ -196,6 +196,19 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(folderItem)
 
+        // 6. Change Save Location
+        let changeFolderItem = NSMenuItem(
+            title: "Change Save Location...",
+            action: #selector(changeFolderAction),
+            keyEquivalent: ""
+        )
+        changeFolderItem.target = self
+        if let folderBadgeIcon = NSImage(systemSymbolName: "folder.badge.gearshape", accessibilityDescription: nil) {
+            folderBadgeIcon.isTemplate = true
+            changeFolderItem.image = folderBadgeIcon
+        }
+        menu.addItem(changeFolderItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 6. Quit Shots!
@@ -303,6 +316,20 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func openFolderAction() {
         let url = AppSettings.shared.resolvedSaveDirectoryURL
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func changeFolderAction() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.directoryURL = AppSettings.shared.resolvedSaveDirectoryURL
+
+        if panel.runModal() == .OK, let selectedURL = panel.url {
+            AppSettings.shared.saveDirectoryPath = selectedURL.path
+        }
     }
 
     @objc private func quitAction() {

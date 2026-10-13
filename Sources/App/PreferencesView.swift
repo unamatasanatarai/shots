@@ -127,7 +127,7 @@ public struct PreferencesView: View {
                                 }
                             }
 
-                            Text("Screenshots are formatted into lossless PNG: Screenshot yyyy-MM-dd at HH.mm.ss.png")
+                            Text("Screenshots are saved as: shot_YYYYMMDD_HHMMSS.\(settings.imageFormat.fileExtension)")
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary)
                         }

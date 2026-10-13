@@ -20,7 +20,7 @@
   - Read the preferred save location from system preferences, if available.
   - Otherwise, default to `~/Pictures/shots`.
   - Create the default directory if it does not exist.
-- [ ] **Save Location Settings** — Allow users to change the default output folder.
+- [x] **Save Location Settings** — Allow users to change the default output folder.
 - [ ] **Post-Capture Action** — Save to disk by default, with an option to copy directly to the clipboard.
 - [ ] **Reveal Latest Screenshot** — Open Finder with the most recently captured file selected.
 
