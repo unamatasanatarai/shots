@@ -492,6 +492,50 @@ public struct AppTests {
             defaults.removePersistentDomain(forName: testSuite)
         }
 
+        // MARK: - Menu Bar Integration Suite
+        testRunner("Menu Bar Integration - Status Item, Icons, and Dropdown Hierarchy") {
+            _ = NSApplication.shared
+            let controller = StatusBarController()
+            let statusItem = controller.currentStatusItem
+            assert(statusItem.length == NSStatusItem.variableLength, "Status item length must be variableLength")
+
+            guard let button = statusItem.button else {
+                assertionFailure("Status item button must exist")
+                return
+            }
+
+            assert(button.image != nil, "Status item button must have an icon")
+            assert(button.image?.isTemplate == true, "Status item icon must be in template mode for native dark/light menu bars")
+            assert(button.toolTip?.contains("Shots!") == true, "Status button tooltip must contain app name")
+
+            let menu = controller.currentMenu
+            let titles = menu.items.map { $0.title }
+
+            assert(titles.contains(where: { $0.contains("Capture Region") }), "Menu must contain Capture Region item")
+            assert(titles.contains("Capture Fullscreen"), "Menu must contain Capture Fullscreen item")
+            assert(titles.contains("Save to Folder"), "Menu must contain Save to Folder item")
+            assert(titles.contains("Copy to Clipboard"), "Menu must contain Copy to Clipboard item")
+            assert(titles.contains("Include Cursor"), "Menu must contain Include Cursor item")
+            assert(titles.contains("Capture Delay"), "Menu must contain Capture Delay submenu")
+            assert(titles.contains("Image Format"), "Menu must contain Image Format submenu")
+            assert(titles.contains("JPG Quality"), "Menu must contain JPG Quality submenu")
+            assert(titles.contains("Post-Capture Action"), "Menu must contain Post-Capture Action submenu")
+            assert(titles.contains("Preferences & Hotkeys..."), "Menu must contain Preferences item")
+            assert(titles.contains("Open Screenshots Folder"), "Menu must contain Open Screenshots Folder item")
+            assert(titles.contains("Change Save Location..."), "Menu must contain Change Save Location item")
+            assert(titles.contains("Quit Shots!"), "Menu must contain Quit item")
+
+            // Verify submenus have children
+            let delayItem = menu.items.first(where: { $0.title == "Capture Delay" })
+            assert(delayItem?.submenu?.items.count == 4, "Capture Delay submenu must have 4 options")
+
+            let formatItem = menu.items.first(where: { $0.title == "Image Format" })
+            assert(formatItem?.submenu?.items.count == 2, "Image Format submenu must have 2 options (PNG, JPG)")
+
+            let postCaptureItem = menu.items.first(where: { $0.title == "Post-Capture Action" })
+            assert(postCaptureItem?.submenu?.items.count == 3, "Post-Capture Action submenu must have 3 options")
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

@@ -27,6 +27,14 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         )
     }
 
+    public var currentMenu: NSMenu {
+        return menu
+    }
+
+    public var currentStatusItem: NSStatusItem {
+        return statusItem
+    }
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -101,6 +109,10 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             keyEquivalent: ""
         )
         saveToDiskMenuItem.target = self
+        if let folderIcon = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
+            folderIcon.isTemplate = true
+            saveToDiskMenuItem.image = folderIcon
+        }
         menu.addItem(saveToDiskMenuItem)
 
         copyToClipboardMenuItem = NSMenuItem(
@@ -109,6 +121,10 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             keyEquivalent: ""
         )
         copyToClipboardMenuItem.target = self
+        if let clipIcon = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil) {
+            clipIcon.isTemplate = true
+            copyToClipboardMenuItem.image = clipIcon
+        }
         menu.addItem(copyToClipboardMenuItem)
 
         includeCursorMenuItem = NSMenuItem(
@@ -117,7 +133,13 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             keyEquivalent: ""
         )
         includeCursorMenuItem.target = self
+        if let cursorIcon = NSImage(systemSymbolName: "cursorarrow", accessibilityDescription: nil) {
+            cursorIcon.isTemplate = true
+            includeCursorMenuItem.image = cursorIcon
+        }
         menu.addItem(includeCursorMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
 
         // Capture Delay submenu
         delayMenuItem = NSMenuItem(title: "Capture Delay", action: nil, keyEquivalent: "")

@@ -42,7 +42,7 @@
 
 ## 5. Menu Bar & Screenshot History
 
-- [ ] **Menu Bar Integration** — Provide a dropdown panel showing the 5–10 most recent screenshots.
+- [x] **Menu Bar Integration** — Provide a dropdown panel showing the 5–10 most recent screenshots.
 - [ ] **Recent Screenshot Selection** — Select a recent screenshot to reveal its file in Finder.
 - [ ] **Recent Screenshot Actions**
   - Copy the image to the clipboard.
