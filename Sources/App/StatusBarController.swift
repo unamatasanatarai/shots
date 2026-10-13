@@ -6,6 +6,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     private var captureRegionMenuItem: NSMenuItem!
     private var captureFullscreenMenuItem: NSMenuItem!
+    private var scrollingCaptureMenuItem: NSMenuItem!
     private var repeatScreenshotMenuItem: NSMenuItem!
     private var ocrRecognitionMenuItem: NSMenuItem!
     private var revealLatestMenuItem: NSMenuItem!
@@ -105,7 +106,20 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(captureFullscreenMenuItem)
 
-        // 3. Repeat Previous Screenshot
+        // 3. Scrolling Capture
+        scrollingCaptureMenuItem = NSMenuItem(
+            title: "Scrolling Capture",
+            action: #selector(scrollingCaptureAction),
+            keyEquivalent: ""
+        )
+        scrollingCaptureMenuItem.target = self
+        if let scrollIcon = NSImage(systemSymbolName: "arrow.up.and.down.square", accessibilityDescription: nil) {
+            scrollIcon.isTemplate = true
+            scrollingCaptureMenuItem.image = scrollIcon
+        }
+        menu.addItem(scrollingCaptureMenuItem)
+
+        // 4. Repeat Previous Screenshot
         let repeatShortcut = AppSettings.shared.repeatShortcutDisplayString
         repeatScreenshotMenuItem = NSMenuItem(
             title: "Repeat Previous Screenshot (\(repeatShortcut))",
@@ -500,6 +514,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func captureFullscreenAction() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.captureFullscreen()
+        }
+    }
+
+    @objc public func scrollingCaptureAction() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            CaptureManager.shared.startScrollingCapture()
         }
     }
 

@@ -1198,5 +1198,81 @@ public struct AppTests {
             HotKeyManager.shared.onOCRCaptureTrigger?()
             assert(hotkeyTriggered == true, "onOCRCaptureTrigger must execute callback")
         }
+
+        // MARK: - Scrolling Capture Suite
+        testRunner("Scrolling Capture - Continuous Vertical Stitching & 20,000 px Clamping Enforcement") {
+            let service = ScrollingCaptureService.shared
+
+            // 1. Verify architectural constraint: maximum output height is 20,000 px
+            assert(ScrollingCaptureService.maxAllowedHeight == 20_000, "Maximum allowed scrolling capture height must be 20,000 px")
+
+            // 2. Helper to construct gradient test frames
+            let width = 60
+            let frameHeight = 60
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            func makeGradientFrame(yOffset: Int) -> CGImage {
+                let ctx = CGContext(
+                    data: nil,
+                    width: width,
+                    height: frameHeight,
+                    bitsPerComponent: 8,
+                    bytesPerRow: width * 4,
+                    space: colorSpace,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                )!
+                for y in 0..<frameHeight {
+                    let v = CGFloat((y + yOffset) % 256) / 255.0
+                    ctx.setFillColor(NSColor(red: v, green: v, blue: v, alpha: 1.0).cgColor)
+                    ctx.fill(CGRect(x: 0, y: y, width: width, height: 1))
+                }
+                return ctx.makeImage()!
+            }
+
+            let frame1 = makeGradientFrame(yOffset: 0)
+            let frame2 = makeGradientFrame(yOffset: 25)
+
+            // 3. Test identical frame detection
+            let identicalOffset = service.detectVerticalOffset(between: frame1, and: frame1)
+            assert(identicalOffset == 0, "Identical frames must produce vertical offset 0 (got \(identicalOffset))")
+
+            // 4. Test frame stitching
+            let stitchedTwoFrames = service.stitchFrames([frame1, frame2])
+            assert(stitchedTwoFrames != nil, "Stitched frames image must not be nil")
+            assert(stitchedTwoFrames?.width == width, "Stitched width must match source frame width")
+            assert(stitchedTwoFrames!.height >= frameHeight, "Stitched height must be >= single frame height (was \(stitchedTwoFrames!.height))")
+
+            // 5. Test strict clamping to maximum height (20,000 px)
+            // A. Test clampImageHeight with an artificially tall image (height > 20,000)
+            let tallHeight = 22_000
+            let tallCtx = CGContext(
+                data: nil,
+                width: 20,
+                height: tallHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: 20 * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let tallImage = tallCtx.makeImage()!
+            let clampedTall = service.clampImageHeight(tallImage)
+            assert(clampedTall.height == 20_000, "Image exceeding 20,000 px must be clamped to exactly 20,000 px (got \(clampedTall.height))")
+
+            // B. Test stitchFrames clamping with maxHeight parameter
+            let smallClamped = service.stitchFrames([frame1, frame2], maxHeight: 80)
+            assert(smallClamped != nil && smallClamped!.height <= 80, "Stitcher must strictly respect custom maxHeight constraint")
+
+            // 6. Test CaptureManager scrolling processing integration
+            let mgrResult = CaptureManager.shared.processScrollingFrames([frame1, frame2])
+            assert(mgrResult != nil, "CaptureManager.processScrollingFrames must return a valid CGImage")
+            assert(mgrResult!.height <= ScrollingCaptureService.maxAllowedHeight, "Processed scrolling image must not exceed 20,000 px")
+
+            // 7. Verify StatusBarController menu item presence and action
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+            let scrollItem = menu.items.first(where: { $0.title == "Scrolling Capture" })
+            assert(scrollItem != nil, "Scrolling Capture menu item must exist in status menu")
+            assert(scrollItem?.action == #selector(controller.scrollingCaptureAction), "Action must be scrollingCaptureAction")
+            assert(scrollItem?.image != nil, "Scrolling Capture must have an icon")
+        }
     }
 }

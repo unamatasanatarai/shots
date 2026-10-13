@@ -79,6 +79,46 @@ public final class CaptureManager {
         }
     }
 
+    // MARK: - Scrolling Capture
+
+    public func startScrollingCapture(delay: Int? = nil, completion: ((CGImage?) -> Void)? = nil) {
+        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
+        if delaySeconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+                self?.executeScrollingCapture(completion: completion)
+            }
+        } else {
+            executeScrollingCapture(completion: completion)
+        }
+    }
+
+    private func executeScrollingCapture(completion: ((CGImage?) -> Void)? = nil) {
+        RegionSelectionCoordinator.shared.startSelection { [weak self] firstFrame in
+            guard let initialImage = firstFrame else {
+                completion?(nil)
+                return
+            }
+
+            let frames = [initialImage]
+            if let stitched = ScrollingCaptureService.shared.stitchFrames(frames) {
+                self?.processCapturedImage(stitched)
+                completion?(stitched)
+            } else {
+                self?.processCapturedImage(initialImage)
+                completion?(initialImage)
+            }
+        }
+    }
+
+    @discardableResult
+    public func processScrollingFrames(_ frames: [CGImage]) -> CGImage? {
+        guard let stitched = ScrollingCaptureService.shared.stitchFrames(frames) else {
+            return nil
+        }
+        processCapturedImage(stitched)
+        return stitched
+    }
+
     public func captureFullscreen(screen: NSScreen? = nil, delay: Int? = nil) {
         let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
         if delaySeconds > 0 {

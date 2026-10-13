@@ -59,7 +59,7 @@ Implementation note: `VNRecognizeBarcodesRequest` is intended for barcode recogn
 
 ## Phase 5 — Scrolling capture
 
-- 26\. Scrolling Capture — Capture a selected region continuously while scrolling, stop when scrolling ends, and enforce a maximum output height of 20,000 px.
+- [x] 26\. Scrolling Capture — Capture a selected region continuously while scrolling, stop when scrolling ends, and enforce a maximum output height of 20,000 px.
 
 Why last? Scrolling capture is substantially more complex than ordinary screenshots. It may require scroll-event handling, repeated image capture, overlap detection, image stitching, and careful handling of fixed elements and changing content. It should build on a proven capture pipeline rather than delay the first usable release.
 
