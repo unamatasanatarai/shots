@@ -300,6 +300,28 @@ public struct AppTests {
             assert(untouched == baseImage, "Mouse outside target bounds should return base image untouched")
         }
 
+        // MARK: - Capture Delay Suite
+        testRunner("Capture Delay - Defaults and Configuration") {
+            let settings = AppSettings.shared
+            let prevDelay = settings.captureDelaySeconds
+            defer { settings.captureDelaySeconds = prevDelay }
+
+            // Verify default is 0
+            let testSuite = "com.test.shots.delay.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: testSuite)!
+            let freshSettings = AppSettings(defaults: defaults)
+            assert(freshSettings.captureDelaySeconds == 0, "Capture delay must default to 0 seconds")
+
+            // Verify mutations persist
+            freshSettings.captureDelaySeconds = 5
+            assert(defaults.integer(forKey: AppSettings.Keys.captureDelaySeconds) == 5, "Mutation must persist to UserDefaults")
+
+            freshSettings.captureDelaySeconds = 10
+            assert(freshSettings.captureDelaySeconds == 10, "Setting delay to 10 seconds")
+
+            defaults.removePersistentDomain(forName: testSuite)
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

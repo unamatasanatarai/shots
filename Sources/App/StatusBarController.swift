@@ -9,6 +9,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var saveToDiskMenuItem: NSMenuItem!
     private var copyToClipboardMenuItem: NSMenuItem!
     private var includeCursorMenuItem: NSMenuItem!
+    private var delayMenuItem: NSMenuItem!
 
     public override init() {
         super.init()
@@ -115,6 +116,23 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         includeCursorMenuItem.target = self
         menu.addItem(includeCursorMenuItem)
 
+        // Capture Delay submenu
+        delayMenuItem = NSMenuItem(title: "Capture Delay", action: nil, keyEquivalent: "")
+        if let timerIcon = NSImage(systemSymbolName: "timer", accessibilityDescription: nil) {
+            timerIcon.isTemplate = true
+            delayMenuItem.image = timerIcon
+        }
+        let delayMenu = NSMenu()
+        let delays = [(0, "None (0s)"), (3, "3 seconds"), (5, "5 seconds"), (10, "10 seconds")]
+        for (sec, title) in delays {
+            let item = NSMenuItem(title: title, action: #selector(setDelayAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = sec
+            delayMenu.addItem(item)
+        }
+        delayMenuItem.submenu = delayMenu
+        menu.addItem(delayMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 4. Preferences & Hotkeys
@@ -174,6 +192,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         saveToDiskMenuItem.state = settings.saveToDisk ? .on : .off
         copyToClipboardMenuItem.state = settings.copyToClipboard ? .on : .off
         includeCursorMenuItem.state = settings.includeCursor ? .on : .off
+
+        if let delayMenu = delayMenuItem?.submenu {
+            for item in delayMenu.items {
+                item.state = (item.tag == settings.captureDelaySeconds) ? .on : .off
+            }
+        }
     }
 
     // MARK: - Actions
@@ -203,6 +227,11 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleIncludeCursor() {
         AppSettings.shared.includeCursor.toggle()
+        updateMenuItemsState()
+    }
+
+    @objc private func setDelayAction(_ sender: NSMenuItem) {
+        AppSettings.shared.captureDelaySeconds = sender.tag
         updateMenuItemsState()
     }
 

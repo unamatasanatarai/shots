@@ -8,14 +8,36 @@ public final class CaptureManager {
 
     // MARK: - Capture Triggers
 
-    public func startRegionCapture() {
+    public func startRegionCapture(delay: Int? = nil) {
+        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
+        if delaySeconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+                self?.executeRegionCapture()
+            }
+        } else {
+            executeRegionCapture()
+        }
+    }
+
+    private func executeRegionCapture() {
         RegionSelectionCoordinator.shared.startSelection { [weak self] capturedImage in
             guard let image = capturedImage else { return }
             self?.processCapturedImage(image)
         }
     }
 
-    public func captureFullscreen(screen: NSScreen? = nil) {
+    public func captureFullscreen(screen: NSScreen? = nil, delay: Int? = nil) {
+        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
+        if delaySeconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+                self?.executeFullscreenCapture(screen: screen)
+            }
+        } else {
+            executeFullscreenCapture(screen: screen)
+        }
+    }
+
+    private func executeFullscreenCapture(screen: NSScreen? = nil) {
         if let explicitScreen = screen {
             let displayID = CaptureService.shared.displayID(for: explicitScreen) ?? CGMainDisplayID()
             if var image = CaptureService.shared.captureFullscreen(displayID: displayID) {
