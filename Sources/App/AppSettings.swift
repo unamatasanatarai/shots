@@ -16,6 +16,7 @@ public final class AppSettings: ObservableObject {
         public static let copyToClipboard = "copyToClipboard"
         public static let includeCursor = "includeCursor"
         public static let captureDelaySeconds = "captureDelaySeconds"
+        public static let imageFormat = "imageFormat"
         public static let freezeScreenOnCapture = "freezeScreenOnCapture"
     }
 
@@ -69,6 +70,12 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    @Published public var imageFormat: ImageFormat {
+        didSet {
+            defaults.set(imageFormat.rawValue, forKey: Keys.imageFormat)
+        }
+    }
+
 
     // MARK: - Validation & Conflict States
 
@@ -106,6 +113,14 @@ public final class AppSettings: ObservableObject {
         self.copyToClipboard = defaults.object(forKey: Keys.copyToClipboard) as? Bool ?? true
         self.includeCursor = defaults.object(forKey: Keys.includeCursor) as? Bool ?? false
         self.captureDelaySeconds = defaults.object(forKey: Keys.captureDelaySeconds) as? Int ?? 0
+
+        if let formatRaw = defaults.string(forKey: Keys.imageFormat),
+           let format = ImageFormat(rawValue: formatRaw) {
+            self.imageFormat = format
+        } else {
+            self.imageFormat = .png
+        }
+
         defaults.removeObject(forKey: Keys.freezeScreenOnCapture)
 
         // Ensure default directory is created immediately if missing

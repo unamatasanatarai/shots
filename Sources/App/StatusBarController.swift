@@ -10,6 +10,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var copyToClipboardMenuItem: NSMenuItem!
     private var includeCursorMenuItem: NSMenuItem!
     private var delayMenuItem: NSMenuItem!
+    private var formatMenuItem: NSMenuItem!
 
     public override init() {
         super.init()
@@ -133,6 +134,22 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         delayMenuItem.submenu = delayMenu
         menu.addItem(delayMenuItem)
 
+        // Image Format submenu
+        formatMenuItem = NSMenuItem(title: "Image Format", action: nil, keyEquivalent: "")
+        if let photoIcon = NSImage(systemSymbolName: "photo", accessibilityDescription: nil) {
+            photoIcon.isTemplate = true
+            formatMenuItem.image = photoIcon
+        }
+        let formatMenu = NSMenu()
+        for format in ImageFormat.allCases {
+            let item = NSMenuItem(title: format.displayName, action: #selector(setFormatAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = format
+            formatMenu.addItem(item)
+        }
+        formatMenuItem.submenu = formatMenu
+        menu.addItem(formatMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 4. Preferences & Hotkeys
@@ -198,6 +215,14 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 item.state = (item.tag == settings.captureDelaySeconds) ? .on : .off
             }
         }
+
+        if let formatMenu = formatMenuItem?.submenu {
+            for item in formatMenu.items {
+                if let fmt = item.representedObject as? ImageFormat {
+                    item.state = (fmt == settings.imageFormat) ? .on : .off
+                }
+            }
+        }
     }
 
     // MARK: - Actions
@@ -233,6 +258,13 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func setDelayAction(_ sender: NSMenuItem) {
         AppSettings.shared.captureDelaySeconds = sender.tag
         updateMenuItemsState()
+    }
+
+    @objc private func setFormatAction(_ sender: NSMenuItem) {
+        if let format = sender.representedObject as? ImageFormat {
+            AppSettings.shared.imageFormat = format
+            updateMenuItemsState()
+        }
     }
 
     @objc private func openPreferencesAction() {

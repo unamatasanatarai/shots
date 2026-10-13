@@ -85,14 +85,21 @@ public final class SaveService {
         return destinationURL
     }
 
-    /// Persists a CGImage as PNG to the target directory.
+    /// Encodes a CGImage into JPEG data at the specified quality factor (0.01 - 1.0).
+    public func encodeJPG(image: CGImage, quality: Double = 0.8) -> Data? {
+        let clampedQuality = max(0.01, min(1.0, quality))
+        let bitmapRep = NSBitmapImageRep(cgImage: image)
+        return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: clampedQuality])
+    }
+
+    /// Persists a CGImage as JPEG to the target directory.
     @discardableResult
-    public func savePNG(_ image: CGImage, to directoryURL: URL, filename: String) throws -> URL {
-        guard let data = encodePNG(image: image) else {
+    public func saveJPG(_ image: CGImage, to directoryURL: URL, filename: String, quality: Double = 0.8) throws -> URL {
+        guard let data = encodeJPG(image: image, quality: quality) else {
             throw NSError(
                 domain: "SaveService",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to encode image to PNG"]
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to encode image to JPG"]
             )
         }
         return try saveImageData(data, to: directoryURL, filename: filename)

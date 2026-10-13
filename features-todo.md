@@ -14,7 +14,7 @@ The first milestone is a working app that captures screenshots and saves them re
 - [x] 6\. Multi-Display Support — Correctly target the active display and handle display coordinates.
 - [x] 7\. Cursor Capture — Support including or excluding the cursor.
 - [x] 8\. Capture Delay — Configurable delay, defaulting to 0 seconds.
-- 9\. JPG Support — Add JPEG encoding.
+- [x] 9\. JPG Support — Add JPEG encoding.
 - 10\. JPG Quality — Configurable compression quality, defaulting to 80.
 - 11\. Save Location Settings — Allow users to change the output folder.
 - 12\. Post-Capture Action — Save to disk by default, with an option to copy directly to the clipboard.

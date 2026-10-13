@@ -322,6 +322,53 @@ public struct AppTests {
             defaults.removePersistentDomain(forName: testSuite)
         }
 
+        // MARK: - JPG Support Suite
+        testRunner("JPG Support - JPEG Encoding, Magic Bytes & Settings") {
+            let settings = AppSettings.shared
+            let prevFormat = settings.imageFormat
+            defer { settings.imageFormat = prevFormat }
+
+            settings.imageFormat = .jpg
+            assert(settings.imageFormat == .jpg, "imageFormat can be toggled to .jpg")
+
+            // Test JPG encoding with synthetic image
+            let width = 64
+            let height = 64
+            let ctx = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let testImage = ctx.makeImage()!
+
+            guard let jpgData = SaveService.shared.encodeJPG(image: testImage, quality: 0.8) else {
+                assertionFailure("Failed to encode image to JPG")
+                return
+            }
+
+            assert(!jpgData.isEmpty, "JPG data must not be empty")
+
+            // Verify JPEG standard 3-byte SOI header: 0xFF, 0xD8, 0xFF
+            var headerBytes = [UInt8](repeating: 0, count: 3)
+            jpgData.copyBytes(to: &headerBytes, count: 3)
+            assert(headerBytes[0] == 0xFF && headerBytes[1] == 0xD8 && headerBytes[2] == 0xFF, "Data must start with standard JPEG SOI marker (FF D8 FF)")
+
+            // Test saving JPG to disk
+            let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("JPGTest_\(UUID().uuidString)")
+            do {
+                let savedURL = try SaveService.shared.saveJPG(testImage, to: tempDir, filename: "test_output.jpg")
+                assert(FileManager.default.fileExists(atPath: savedURL.path), "Saved JPG must exist on disk")
+                assert(savedURL.pathExtension == "jpg", "Saved file must have .jpg extension")
+                try? FileManager.default.removeItem(at: tempDir)
+            } catch {
+                assertionFailure("Failed to save JPG: \(error)")
+            }
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850
