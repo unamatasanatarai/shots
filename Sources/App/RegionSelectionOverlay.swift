@@ -623,16 +623,36 @@ private final class RegionSelectionView: NSView {
 
     // MARK: - Precision Minimalist Reticle Crosshair Cursor
     // Circular reticle with compact crosshairs:
-    // - Circle diameter: 46% of overall width (unchanged)
-    // - Horizontal & vertical line length: 75% of overall width/height (compact)
-    // - Crosshair strokes: solid charcoal gray, ~3% width (1.0 pt), flat/square terminals
-    // - Circle outline: medium-light gray, ~2% width (0.75 pt)
-    // - Circle fill: pale neutral gray, low opacity
+    // - Circle diameter: 46% of overall width
+    // - Crosshair lines: luxurious #333333, fading out from 50% to center
+    // - Center: exactly 1px of transparency at cursor position
+
+    private static let crosshairColorSpace = CGColorSpaceCreateDeviceRGB()
+
+    private static let crosshairCasingGradient: CGGradient? = {
+        let casingComponents: [CGFloat] = [
+            1.00, 1.00, 1.00, 0.16,  // Outer tip (solid casing)
+            1.00, 1.00, 1.00, 0.16,  // 50% mark
+            1.00, 1.00, 1.00, 0.00   // Center gap edge (transparent)
+        ]
+        let locations: [CGFloat] = [0.0, 0.5, 1.0]
+        return CGGradient(colorSpace: crosshairColorSpace, colorComponents: casingComponents, locations: locations, count: 3)
+    }()
+
+    private static let crosshairStrokeGradient: CGGradient? = {
+        let strokeComponents: [CGFloat] = [
+            0.20, 0.20, 0.20, 1.00,  // Outer tip: luxurious #333333
+            0.20, 0.20, 0.20, 1.00,  // 50% mark
+            0.20, 0.20, 0.20, 0.00   // Center gap edge: transparent
+        ]
+        let locations: [CGFloat] = [0.0, 0.5, 1.0]
+        return CGGradient(colorSpace: crosshairColorSpace, colorComponents: strokeComponents, locations: locations, count: 3)
+    }()
 
     private func drawPrecisionCrosshair(at point: NSPoint, in context: CGContext, size: CGFloat = 32.0) {
         let cx = round(point.x)
         let cy = round(point.y)
-        let lineHalf = size * 0.375  // 75% of size / 2 = shorter lines
+        let lineHalf = size * 0.375  // Shorter lines (~12.0 pt)
 
         let circleDiameter = size * 0.46
         let circleRadius = circleDiameter / 2.0
@@ -648,132 +668,140 @@ private final class RegionSelectionView: NSView {
             height: circleDiameter
         )
 
-        // ── White glow pass (drawn first, behind everything) ──
-        // A soft white halo keeps all elements visible against dark/black backgrounds.
-        // Two passes at different blur radii build density without harshness.
-        context.saveGState()
-        context.setShadow(offset: .zero, blur: 3.0, color: CGColor(red: 1, green: 1, blue: 1, alpha: 0.70))
-
-        // Glow behind circle outline
-        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.50))
-        context.setLineWidth(circleStrokeWidth + 1.5)
-        context.strokeEllipse(in: circleRect)
-
-        // Glow behind crosshair lines
-        context.setLineWidth(crosshairStrokeWidth + 1.5)
-        context.setLineCap(.butt)
-        context.move(to: CGPoint(x: cx - lineHalf, y: cy))
-        context.addLine(to: CGPoint(x: cx + lineHalf, y: cy))
-        context.move(to: CGPoint(x: cx, y: cy - lineHalf))
-        context.addLine(to: CGPoint(x: cx, y: cy + lineHalf))
-        context.strokePath()
-        context.restoreGState()
-
-        // Tighter second glow pass for density
-        context.saveGState()
-        context.setShadow(offset: .zero, blur: 1.0, color: CGColor(red: 1, green: 1, blue: 1, alpha: 0.55))
-
-        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.35))
-        context.setLineWidth(crosshairStrokeWidth + 0.8)
-        context.setLineCap(.butt)
-        context.move(to: CGPoint(x: cx - lineHalf, y: cy))
-        context.addLine(to: CGPoint(x: cx + lineHalf, y: cy))
-        context.move(to: CGPoint(x: cx, y: cy - lineHalf))
-        context.addLine(to: CGPoint(x: cx, y: cy + lineHalf))
-        context.strokePath()
-        context.restoreGState()
-
-        // ── Foreground drawing ──
-
-        // 1. Circle interior fill: pale neutral gray, low opacity
-        let circleFillColor = CGColor(red: 0.88, green: 0.88, blue: 0.90, alpha: 0.22)
+        // 1. Circle interior fill: subtle translucent dark tint
+        let circleFillColor = CGColor(red: 0.20, green: 0.20, blue: 0.20, alpha: 0.12)
         context.setFillColor(circleFillColor)
         context.fillEllipse(in: circleRect)
 
-        // 2. Circle outline: medium-light gray
-        let circleOutlineColor = CGColor(red: 0.70, green: 0.70, blue: 0.72, alpha: 0.95)
+        // 2. Circle outline: subtle translucent #333333 ring
+        let circleOutlineColor = CGColor(red: 0.20, green: 0.20, blue: 0.20, alpha: 0.50)
         context.setStrokeColor(circleOutlineColor)
         context.setLineWidth(circleStrokeWidth)
         context.strokeEllipse(in: circleRect)
 
-        // 3. Crosshair strokes: solid charcoal gray, compact lines
-        let charcoalColor = CGColor(red: 0.20, green: 0.20, blue: 0.22, alpha: 1.0)
-        context.setStrokeColor(charcoalColor)
-        context.setLineWidth(crosshairStrokeWidth)
-        context.setLineCap(.butt)
+        // 3. Crosshair strokes fading out from 50% to center, leaving 1px center transparency
+        let centerGap: CGFloat = 0.5  // 0.5 pt on either side = 1.0 pt (1px) transparent center
+        let armLength = lineHalf - centerGap
+        let casingWidth = crosshairStrokeWidth + 1.8
 
-        // Horizontal line
-        context.move(to: CGPoint(x: cx - lineHalf, y: cy))
-        context.addLine(to: CGPoint(x: cx + lineHalf, y: cy))
+        if let casingGradient = Self.crosshairCasingGradient,
+           let strokeGradient = Self.crosshairStrokeGradient {
+            struct CrosshairArm {
+                let outer: CGPoint
+                let inner: CGPoint
+                let strokeRect: CGRect
+                let casingRect: CGRect
+            }
 
-        // Vertical line
-        context.move(to: CGPoint(x: cx, y: cy - lineHalf))
-        context.addLine(to: CGPoint(x: cx, y: cy + lineHalf))
+            let arms: [CrosshairArm] = [
+                // Left arm
+                CrosshairArm(
+                    outer: CGPoint(x: cx - lineHalf, y: cy),
+                    inner: CGPoint(x: cx - centerGap, y: cy),
+                    strokeRect: CGRect(x: cx - lineHalf, y: cy - crosshairStrokeWidth / 2.0, width: armLength, height: crosshairStrokeWidth),
+                    casingRect: CGRect(x: cx - lineHalf, y: cy - casingWidth / 2.0, width: armLength, height: casingWidth)
+                ),
+                // Right arm
+                CrosshairArm(
+                    outer: CGPoint(x: cx + lineHalf, y: cy),
+                    inner: CGPoint(x: cx + centerGap, y: cy),
+                    strokeRect: CGRect(x: cx + centerGap, y: cy - crosshairStrokeWidth / 2.0, width: armLength, height: crosshairStrokeWidth),
+                    casingRect: CGRect(x: cx + centerGap, y: cy - casingWidth / 2.0, width: armLength, height: casingWidth)
+                ),
+                // Bottom arm
+                CrosshairArm(
+                    outer: CGPoint(x: cx, y: cy - lineHalf),
+                    inner: CGPoint(x: cx, y: cy - centerGap),
+                    strokeRect: CGRect(x: cx - crosshairStrokeWidth / 2.0, y: cy - lineHalf, width: crosshairStrokeWidth, height: armLength),
+                    casingRect: CGRect(x: cx - casingWidth / 2.0, y: cy - lineHalf, width: casingWidth, height: armLength)
+                ),
+                // Top arm
+                CrosshairArm(
+                    outer: CGPoint(x: cx, y: cy + lineHalf),
+                    inner: CGPoint(x: cx, y: cy + centerGap),
+                    strokeRect: CGRect(x: cx - crosshairStrokeWidth / 2.0, y: cy + centerGap, width: crosshairStrokeWidth, height: armLength),
+                    casingRect: CGRect(x: cx - casingWidth / 2.0, y: cy + centerGap, width: casingWidth, height: armLength)
+                )
+            ]
 
-        context.strokePath()
+            // Draw white casings first (fading out from 50% to center)
+            for arm in arms {
+                context.saveGState()
+                context.clip(to: arm.casingRect)
+                context.drawLinearGradient(casingGradient, start: arm.outer, end: arm.inner, options: [])
+                context.restoreGState()
+            }
+
+            // Draw #333333 strokes on top (fading out from 50% to center)
+            for arm in arms {
+                context.saveGState()
+                context.clip(to: arm.strokeRect)
+                context.drawLinearGradient(strokeGradient, start: arm.outer, end: arm.inner, options: [])
+                context.restoreGState()
+            }
+        }
+
         context.restoreGState()
     }
 
-    // MARK: - Live Numbers Rendering (Black Text, Delicate White Edge)
+    // MARK: - Live Numbers Rendering (Luxurious #333333 Text, 1px Shadow, 3px Gap)
 
-    private func measureNumberText(_ text: String) -> NSSize {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold)
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 1.0
-        paragraphStyle.alignment = .left
+    private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 8.0, weight: .semibold)
 
-        let fillAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .paragraphStyle: paragraphStyle
+    private static let numberAttributes: [NSAttributedString.Key: Any] = {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.white.withAlphaComponent(0.85)
+        shadow.shadowOffset = NSSize(width: 1.0, height: -1.0)
+        shadow.shadowBlurRadius = 0.5
+
+        return [
+            .font: numberFont,
+            .foregroundColor: NSColor(srgbRed: 0.20, green: 0.20, blue: 0.20, alpha: 1.0),
+            .shadow: shadow
         ]
-        return NSAttributedString(string: text, attributes: fillAttributes).size()
+    }()
+
+    private func measureNumberBadge(top: String, bottom: String) -> NSSize {
+        let topSize = (top as NSString).size(withAttributes: Self.numberAttributes)
+        let bottomSize = (bottom as NSString).size(withAttributes: Self.numberAttributes)
+        let width = max(topSize.width, bottomSize.width) + 1.0
+        let height = topSize.height + Self.numberFont.capHeight + 3.0 + 1.0
+        return NSSize(width: ceil(width), height: ceil(height))
     }
 
-    private func drawSoftGlowNumberText(_ text: String, at origin: NSPoint, in context: CGContext) {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold)
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 1.0
-        paragraphStyle.alignment = .left
+    private func drawNumberBadge(
+        top: String,
+        bottom: String,
+        at origin: NSPoint,
+        alignment: NSTextAlignment,
+        in context: CGContext
+    ) {
+        let font = Self.numberFont
+        let attributes = Self.numberAttributes
 
-        let fillAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.black,
-            .paragraphStyle: paragraphStyle
-        ]
+        let topWidth = (top as NSString).size(withAttributes: attributes).width
+        let bottomWidth = (bottom as NSString).size(withAttributes: attributes).width
+        let maxWidth = max(topWidth, bottomWidth)
 
-        // White outline / glow — two passes build a soft but readable halo.
-        // Pass 1: wider blur for the outer glow
-        let outerShadow = NSShadow()
-        outerShadow.shadowColor = NSColor.white.withAlphaComponent(0.85)
-        outerShadow.shadowOffset = .zero
-        outerShadow.shadowBlurRadius = 2.0
-        let outerGlowAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.clear,
-            .strokeColor: NSColor.white.withAlphaComponent(0.70),
-            .strokeWidth: 3.0,
-            .shadow: outerShadow,
-            .paragraphStyle: paragraphStyle
-        ]
-        NSAttributedString(string: text, attributes: outerGlowAttributes).draw(at: origin)
+        // Distance between the lower edge of numbers in top row and upper edge of numbers in bottom row:
+        // topY - bottomY - font.capHeight = 3.0 px => rowSpacing = font.capHeight + 3.0
+        let rowSpacing = font.capHeight + 3.0
 
-        // Pass 2: tighter edge for crispness
-        let innerShadow = NSShadow()
-        innerShadow.shadowColor = NSColor.white.withAlphaComponent(0.65)
-        innerShadow.shadowOffset = .zero
-        innerShadow.shadowBlurRadius = 0.8
-        let innerGlowAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.clear,
-            .strokeColor: NSColor.white.withAlphaComponent(0.50),
-            .strokeWidth: 2.0,
-            .shadow: innerShadow,
-            .paragraphStyle: paragraphStyle
-        ]
-        NSAttributedString(string: text, attributes: innerGlowAttributes).draw(at: origin)
+        let topX: CGFloat
+        let bottomX: CGFloat
+        if alignment == .right {
+            topX = origin.x + (maxWidth - topWidth)
+            bottomX = origin.x + (maxWidth - bottomWidth)
+        } else {
+            topX = origin.x
+            bottomX = origin.x
+        }
 
-        // Crisp dark foreground text on top
-        NSAttributedString(string: text, attributes: fillAttributes).draw(at: origin)
+        let bottomOrigin = NSPoint(x: round(bottomX), y: origin.y)
+        let topOrigin = NSPoint(x: round(topX), y: origin.y + rowSpacing)
+
+        (bottom as NSString).draw(at: bottomOrigin, withAttributes: attributes)
+        (top as NSString).draw(at: topOrigin, withAttributes: attributes)
     }
 
     // MARK: - Live Coordinate Badge Next to Cursor (Hover Only)
@@ -787,8 +815,9 @@ private final class RegionSelectionView: NSView {
         let curX = max(0, min(Int(round(point.x * scaleX)), maxPixelX))
         let curY = max(0, min(Int(round((bounds.height - point.y) * scaleY)), maxPixelY))
 
-        let text = "\(curX)\n\(curY)"
-        let textSize = measureNumberText(text)
+        let topText = "\(curX)"
+        let bottomText = "\(curY)"
+        let textSize = measureNumberBadge(top: topText, bottom: bottomText)
 
         let offset: CGFloat = 8.0
         let margin: CGFloat = 8.0
@@ -816,7 +845,10 @@ private final class RegionSelectionView: NSView {
         originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
         originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
 
-        drawSoftGlowNumberText(text, at: NSPoint(x: originX, y: originY), in: context)
+        let isRightOfCursor = originX >= point.x
+        let alignment: NSTextAlignment = isRightOfCursor ? .left : .right
+
+        drawNumberBadge(top: topText, bottom: bottomText, at: NSPoint(x: originX, y: originY), alignment: alignment, in: context)
     }
 
     // MARK: - Live Selection Dimensions Badge (Drag Only)
@@ -828,8 +860,9 @@ private final class RegionSelectionView: NSView {
         let pixelWidth = Int(round(abs(current.x - start.x) * scaleX))
         let pixelHeight = Int(round(abs(current.y - start.y) * scaleY))
 
-        let dimensionText = "\(pixelWidth)\n\(pixelHeight)"
-        let textSize = measureNumberText(dimensionText)
+        let topText = "\(pixelWidth)"
+        let bottomText = "\(pixelHeight)"
+        let textSize = measureNumberBadge(top: topText, bottom: bottomText)
 
         let offset: CGFloat = 8.0
         let margin: CGFloat = 8.0
@@ -865,7 +898,10 @@ private final class RegionSelectionView: NSView {
         originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
         originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
 
-        drawSoftGlowNumberText(dimensionText, at: NSPoint(x: originX, y: originY), in: context)
+        let isRightOfCursor = originX >= curX
+        let alignment: NSTextAlignment = isRightOfCursor ? .left : .right
+
+        drawNumberBadge(top: topText, bottom: bottomText, at: NSPoint(x: originX, y: originY), alignment: alignment, in: context)
     }
 
     // MARK: - Geometry Helpers
