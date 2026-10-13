@@ -169,6 +169,7 @@ public final class CaptureManager {
 
         do {
             try SaveService.shared.saveImageData(data, to: folderURL, filename: destinationURL.lastPathComponent)
+            ScreenshotHistoryService.shared.recordNewScreenshot(fileURL: destinationURL)
             NSLog("Screenshot saved to disk: %@", destinationURL.path)
             return destinationURL
         } catch {

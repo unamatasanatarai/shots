@@ -37,7 +37,7 @@ Milestone: The app is usable as a native menu bar utility, primarily through sho
 
 Build history on top of the working save pipeline and menu bar.
 
-- 18\. Recent Screenshot List — Display the 5–10 most recent screenshots.
+- [x] 18\. Recent Screenshot List — Display the 5–10 most recent screenshots.
 - 19\. Recent Screenshot Selection — Reveal a selected screenshot in Finder.
 - 20\. Recent Screenshot Actions — Copy an image to the clipboard or reveal its file in Finder.
 

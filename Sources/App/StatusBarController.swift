@@ -8,6 +8,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var captureFullscreenMenuItem: NSMenuItem!
     private var repeatScreenshotMenuItem: NSMenuItem!
     private var revealLatestMenuItem: NSMenuItem!
+    private var recentScreenshotsMenuItem: NSMenuItem!
     private var saveToDiskMenuItem: NSMenuItem!
     private var copyToClipboardMenuItem: NSMenuItem!
     private var postCaptureActionMenuItem: NSMenuItem!
@@ -129,6 +130,20 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             revealLatestMenuItem.image = docIcon
         }
         menu.addItem(revealLatestMenuItem)
+
+        // 5. Recent Screenshots
+        recentScreenshotsMenuItem = NSMenuItem(
+            title: "Recent Screenshots",
+            action: nil,
+            keyEquivalent: ""
+        )
+        if let clockIcon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil) {
+            clockIcon.isTemplate = true
+            recentScreenshotsMenuItem.image = clockIcon
+        }
+        let recentMenu = NSMenu()
+        recentScreenshotsMenuItem.submenu = recentMenu
+        menu.addItem(recentScreenshotsMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -358,6 +373,44 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
 
         launchAtLoginMenuItem.state = settings.launchAtLogin ? .on : .off
+
+        updateRecentScreenshotsMenu()
+    }
+
+    private func updateRecentScreenshotsMenu() {
+        guard let recentMenu = recentScreenshotsMenuItem?.submenu else { return }
+        recentMenu.removeAllItems()
+
+        let recents = ScreenshotHistoryService.shared.fetchRecentScreenshots()
+        if recents.isEmpty {
+            let emptyItem = NSMenuItem(title: "No Recent Screenshots", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            recentMenu.addItem(emptyItem)
+            recentScreenshotsMenuItem.title = "Recent Screenshots"
+        } else {
+            recentScreenshotsMenuItem.title = "Recent Screenshots (\(recents.count))"
+            for item in recents {
+                let menuItem = NSMenuItem(
+                    title: item.filename,
+                    action: #selector(recentScreenshotSelected(_:)),
+                    keyEquivalent: ""
+                )
+                menuItem.target = self
+                menuItem.representedObject = item.fileURL
+                if let thumb = item.thumbnail {
+                    menuItem.image = thumb
+                } else if let fallback = NSImage(systemSymbolName: "photo", accessibilityDescription: nil) {
+                    fallback.isTemplate = true
+                    menuItem.image = fallback
+                }
+                recentMenu.addItem(menuItem)
+            }
+        }
+    }
+
+    @objc private func recentScreenshotSelected(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
     }
 
     // MARK: - Actions

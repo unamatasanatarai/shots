@@ -777,5 +777,67 @@ public struct AppTests {
             assert(revealItem?.action == Selector(("revealLatestScreenshotAction")), "Action selector must be revealLatestScreenshotAction")
             assert(revealItem?.isEnabled == true, "Reveal item must be enabled when latest screenshot exists")
         }
+
+        // MARK: - Recent Screenshot List Suite
+        testRunner("Recent Screenshot List - 5 to 10 Items Discovery, Caching, and Dropdown Submenu") {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("shots_history_test_\(UUID().uuidString)")
+            try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
+            defer {
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+
+            let historyService = ScreenshotHistoryService.shared
+            historyService.reset()
+            defer {
+                historyService.reset()
+            }
+
+            // 1. Empty directory
+            let emptyRecents = historyService.fetchRecentScreenshots(limit: 10, directoryURL: tempDir)
+            assert(emptyRecents.isEmpty, "Empty directory must yield 0 recent items")
+
+            // 2. Populate 12 screenshot files with ascending timestamps + 2 non-screenshot files
+            let baseTime = Date().addingTimeInterval(-3600)
+            var createdFiles: [URL] = []
+            for i in 1...12 {
+                let pad = String(format: "%02d", i)
+                let ext = (i % 2 == 0) ? "jpg" : "png"
+                let fileURL = tempDir.appendingPathComponent("shot_20261013_1200\(pad).\(ext)")
+                try! "content_\(i)".write(to: fileURL, atomically: true, encoding: .utf8)
+                let fileTime = baseTime.addingTimeInterval(Double(i * 60))
+                try! FileManager.default.setAttributes([.modificationDate: fileTime], ofItemAtPath: fileURL.path)
+                createdFiles.append(fileURL)
+            }
+            try! "note".write(to: tempDir.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+            try! "ignore".write(to: tempDir.appendingPathComponent("other.png"), atomically: true, encoding: .utf8)
+
+            // 3. Test limit = 10 (default)
+            let recents10 = historyService.fetchRecentScreenshots(limit: 10, directoryURL: tempDir)
+            assert(recents10.count == 10, "Recent screenshots list must clamp to 10 items (got \(recents10.count))")
+            assert(recents10[0].filename == createdFiles[11].lastPathComponent, "First item must be the newest screenshot (file 12)")
+            assert(recents10[9].filename == createdFiles[2].lastPathComponent, "10th item must be file 3")
+
+            // 4. Test limit = 5
+            let recents5 = historyService.fetchRecentScreenshots(limit: 5, directoryURL: tempDir)
+            assert(recents5.count == 5, "Recent screenshots list must return requested limit 5 (got \(recents5.count))")
+            assert(recents5[0].filename == createdFiles[11].lastPathComponent, "First item of 5 must be newest")
+
+            // 5. Test recordNewScreenshot in-memory insertion and clamping
+            historyService.fetchRecentScreenshots(limit: 10, directoryURL: tempDir)
+            assert(historyService.recentItems.count == 10, "Pre-condition: 10 items loaded")
+            let newShotURL = tempDir.appendingPathComponent("shot_new_live.png")
+            try! "live".write(to: newShotURL, atomically: true, encoding: .utf8)
+            historyService.recordNewScreenshot(fileURL: newShotURL)
+            assert(historyService.recentItems.count == 10, "recordNewScreenshot must clamp to maximum 10 items count")
+            assert(historyService.recentItems[0].fileURL.lastPathComponent == "shot_new_live.png", "Newly recorded screenshot must be at index 0")
+
+            // 6. Test StatusBarController dropdown menu integration
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+            let historyMenuItem = menu.items.first(where: { $0.title.contains("Recent Screenshots") })
+            assert(historyMenuItem != nil, "Recent Screenshots menu item must exist")
+            assert(historyMenuItem?.submenu != nil, "Recent Screenshots must have a submenu")
+            assert(historyMenuItem?.submenu?.items.count ?? 0 >= 1, "Submenu must contain items")
+        }
     }
 }
