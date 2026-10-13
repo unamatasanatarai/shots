@@ -198,6 +198,39 @@ public struct AppTests {
         }
 
         // MARK: - Area Selection & Coordinates Suite
+        testRunner("Area Screenshot - Normalization and Cropping Engine") {
+            // 1. Normalized rect tests
+            let p1 = NSPoint(x: 100, y: 200)
+            let p2 = NSPoint(x: 50, y: 350)
+            let norm = CaptureService.shared.normalizedRect(from: p1, to: p2)
+            assert(norm.origin.x == 50 && norm.origin.y == 200, "Normalized rect origin should be min coordinates")
+            assert(norm.width == 50 && norm.height == 150, "Normalized rect dimensions should be positive deltas")
+
+            // 2. Cropping engine test with synthetic image
+            let width = 200
+            let height = 100
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let baseImage = ctx.makeImage()!
+
+            // Select 50x30 region in 100x50 logical view size (2x retina scale)
+            let selRect = NSRect(x: 10, y: 10, width: 50, height: 30)
+            let viewSize = NSSize(width: 100, height: 50)
+            let cropped = CaptureService.shared.cropImage(baseImage, to: selRect, in: viewSize)
+
+            assert(cropped != nil, "Cropped image must not be nil")
+            assert(cropped!.width == 100, "Cropped image pixel width must be 50 * 2x scale = 100, was: \(cropped!.width)")
+            assert(cropped!.height == 60, "Cropped image pixel height must be 30 * 2x scale = 60, was: \(cropped!.height)")
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

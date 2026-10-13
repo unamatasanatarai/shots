@@ -411,33 +411,11 @@ public final class RegionSelectionCoordinator {
     // MARK: - Geometry & Cropping Helpers
 
     private func normalizedRect(from p1: NSPoint, to p2: NSPoint) -> NSRect {
-        let x = min(p1.x, p2.x)
-        let y = min(p1.y, p2.y)
-        let width = abs(p2.x - p1.x)
-        let height = abs(p2.y - p1.y)
-        return NSRect(x: x, y: y, width: width, height: height)
+        CaptureService.shared.normalizedRect(from: p1, to: p2)
     }
 
     private func cropImage(_ image: CGImage, to selRect: NSRect, in viewSize: NSSize) -> CGImage? {
-        guard viewSize.width > 0 && viewSize.height > 0 else { return nil }
-
-        let scaleX = CGFloat(image.width) / viewSize.width
-        let scaleY = CGFloat(image.height) / viewSize.height
-
-        let cropX = selRect.minX * scaleX
-        let cropY = (viewSize.height - selRect.maxY) * scaleY
-        let cropW = selRect.width * scaleX
-        let cropH = selRect.height * scaleY
-
-        let cropRect = CGRect(
-            x: max(0, cropX),
-            y: max(0, cropY),
-            width: min(cropW, CGFloat(image.width) - cropX),
-            height: min(cropH, CGFloat(image.height) - cropY)
-        )
-
-        guard cropRect.width > 0 && cropRect.height > 0 else { return nil }
-        return image.cropping(to: cropRect)
+        CaptureService.shared.cropImage(image, to: selRect, in: viewSize)
     }
 }
 

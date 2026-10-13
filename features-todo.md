@@ -10,7 +10,7 @@ The first milestone is a working app that captures screenshots and saves them re
 - [x] 2\. Default Save Location — Read system preferences where available; otherwise use `~/Pictures/shots`. Create the directory if missing.
 - [x] 3\. Timestamp Filenames — Use `shot_YYYYMMDD_HHMMSS.png` naming.
 - [x] 4\. Fullscreen Screenshot — Capture the entire active display.
-- 5\. Area Screenshot — Let users select a screen region.
+- [x] 5\. Area Screenshot — Let users select a screen region.
 - 6\. Multi-Display Support — Correctly target the active display and handle display coordinates.
 - 7\. Cursor Capture — Support including or excluding the cursor.
 - 8\. Capture Delay — Configurable delay, defaulting to 0 seconds.
