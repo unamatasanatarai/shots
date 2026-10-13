@@ -231,6 +231,30 @@ public struct AppTests {
             assert(cropped!.height == 60, "Cropped image pixel height must be 30 * 2x scale = 60, was: \(cropped!.height)")
         }
 
+        // MARK: - Multi-Display Support Suite
+        testRunner("Multi-Display Support - Coordinate Inversion & Display Targeting") {
+            let primaryScreen = NSScreen.screens.first ?? NSScreen()
+            let primaryHeight = primaryScreen.frame.height
+
+            // 1. Test coordinate inversion round-trip
+            let appKitPoint = NSPoint(x: 250, y: 150)
+            let cgPoint = CaptureService.shared.coreGraphicsPoint(from: appKitPoint)
+            assert(cgPoint.x == 250, "CG X matches AppKit X")
+            assert(cgPoint.y == primaryHeight - 150, "CG Y is inverted by primary screen height")
+
+            let restoredAppKit = CaptureService.shared.appKitPoint(from: cgPoint)
+            assert(restoredAppKit.x == appKitPoint.x && restoredAppKit.y == appKitPoint.y, "Round trip must restore exact AppKit coordinates")
+
+            // 2. Test display lookup by point
+            let midPoint = NSPoint(x: primaryScreen.frame.midX, y: primaryScreen.frame.midY)
+            let resolvedScreen = CaptureService.shared.screen(containing: midPoint)
+            assert(resolvedScreen != nil, "Resolved screen for primary mid-point must not be nil")
+            assert(resolvedScreen == primaryScreen, "Resolved screen should be primary screen")
+
+            let resolvedFromCG = CaptureService.shared.screen(containingCGPoint: cgPoint)
+            assert(resolvedFromCG != nil, "Resolved screen from CG point must not be nil")
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

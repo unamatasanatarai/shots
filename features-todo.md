@@ -11,7 +11,7 @@ The first milestone is a working app that captures screenshots and saves them re
 - [x] 3\. Timestamp Filenames — Use `shot_YYYYMMDD_HHMMSS.png` naming.
 - [x] 4\. Fullscreen Screenshot — Capture the entire active display.
 - [x] 5\. Area Screenshot — Let users select a screen region.
-- 6\. Multi-Display Support — Correctly target the active display and handle display coordinates.
+- [x] 6\. Multi-Display Support — Correctly target the active display and handle display coordinates.
 - 7\. Cursor Capture — Support including or excluding the cursor.
 - 8\. Capture Delay — Configurable delay, defaulting to 0 seconds.
 - 9\. JPG Support — Add JPEG encoding.

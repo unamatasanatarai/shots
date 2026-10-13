@@ -310,19 +310,18 @@ public final class RegionSelectionCoordinator {
         let midX = (startCG.x + endCG.x) / 2.0
         let midY = (startCG.y + endCG.y) / 2.0
 
-        let screenHeight = NSScreen.screens.first.map { $0.frame.maxY } ?? 0
-        let midAppKit = NSPoint(x: midX, y: screenHeight - midY)
-        let targetScreen = NSScreen.screens.first(where: { $0.frame.contains(midAppKit) })
-            ?? NSScreen.main ?? NSScreen.screens[0]
+        let targetScreen = CaptureService.shared.screen(containingCGPoint: CGPoint(x: midX, y: midY))
+            ?? NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
         let screenFrame = targetScreen.frame
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
 
         let localStart = NSPoint(
             x: startCG.x - screenFrame.origin.x,
-            y: (screenHeight - startCG.y) - screenFrame.origin.y
+            y: (primaryHeight - startCG.y) - screenFrame.origin.y
         )
         let localEnd = NSPoint(
             x: endCG.x - screenFrame.origin.x,
-            y: (screenHeight - endCG.y) - screenFrame.origin.y
+            y: (primaryHeight - endCG.y) - screenFrame.origin.y
         )
 
         let selRect = normalizedRect(from: localStart, to: localEnd)

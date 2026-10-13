@@ -22,6 +22,31 @@ public final class CaptureService {
         return screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 
+    // MARK: - Multi-Display Coordinate Translation
+
+    /// Converts an AppKit screen point (origin bottom-left of primary screen) to CoreGraphics coordinates (origin top-left of primary display).
+    public func coreGraphicsPoint(from appKitPoint: NSPoint) -> CGPoint {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return CGPoint(x: appKitPoint.x, y: primaryHeight - appKitPoint.y)
+    }
+
+    /// Converts a CoreGraphics point (origin top-left of primary display) to AppKit screen coordinates.
+    public func appKitPoint(from cgPoint: CGPoint) -> NSPoint {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return NSPoint(x: cgPoint.x, y: primaryHeight - cgPoint.y)
+    }
+
+    /// Finds which NSScreen contains the given AppKit point across all connected displays.
+    public func screen(containing appKitPoint: NSPoint) -> NSScreen? {
+        return NSScreen.screens.first(where: { $0.frame.contains(appKitPoint) })
+    }
+
+    /// Finds which NSScreen contains the given CoreGraphics point across all connected displays.
+    public func screen(containingCGPoint cgPoint: CGPoint) -> NSScreen? {
+        let appKitPt = appKitPoint(from: cgPoint)
+        return screen(containing: appKitPt)
+    }
+
     // MARK: - Fullscreen Capture
 
     /// Captures the full display corresponding to the given display ID.
