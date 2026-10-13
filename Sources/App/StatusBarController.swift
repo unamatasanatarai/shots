@@ -8,6 +8,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var captureFullscreenMenuItem: NSMenuItem!
     private var saveToDiskMenuItem: NSMenuItem!
     private var copyToClipboardMenuItem: NSMenuItem!
+    private var postCaptureActionMenuItem: NSMenuItem!
     private var includeCursorMenuItem: NSMenuItem!
     private var delayMenuItem: NSMenuItem!
     private var formatMenuItem: NSMenuItem!
@@ -168,6 +169,22 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         qualityMenuItem.submenu = qualityMenu
         menu.addItem(qualityMenuItem)
 
+        // Post-Capture Action submenu
+        postCaptureActionMenuItem = NSMenuItem(title: "Post-Capture Action", action: nil, keyEquivalent: "")
+        if let docIcon = NSImage(systemSymbolName: "arrow.right.doc.on.clipboard", accessibilityDescription: nil) {
+            docIcon.isTemplate = true
+            postCaptureActionMenuItem.image = docIcon
+        }
+        let postCaptureMenu = NSMenu()
+        for action in PostCaptureAction.allCases {
+            let item = NSMenuItem(title: action.displayName, action: #selector(setPostCaptureAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = action
+            postCaptureMenu.addItem(item)
+        }
+        postCaptureActionMenuItem.submenu = postCaptureMenu
+        menu.addItem(postCaptureActionMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 4. Preferences & Hotkeys
@@ -260,6 +277,14 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 item.state = (item.tag == settings.jpgQuality) ? .on : .off
             }
         }
+
+        if let postMenu = postCaptureActionMenuItem?.submenu {
+            for item in postMenu.items {
+                if let action = item.representedObject as? PostCaptureAction {
+                    item.state = (action == settings.postCaptureAction) ? .on : .off
+                }
+            }
+        }
     }
 
     // MARK: - Actions
@@ -307,6 +332,13 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func setQualityAction(_ sender: NSMenuItem) {
         AppSettings.shared.jpgQuality = sender.tag
         updateMenuItemsState()
+    }
+
+    @objc private func setPostCaptureAction(_ sender: NSMenuItem) {
+        if let action = sender.representedObject as? PostCaptureAction {
+            AppSettings.shared.postCaptureAction = action
+            updateMenuItemsState()
+        }
     }
 
     @objc private func openPreferencesAction() {

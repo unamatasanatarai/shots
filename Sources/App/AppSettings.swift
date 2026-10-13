@@ -2,6 +2,22 @@ import Carbon
 import Cocoa
 import Combine
 
+public enum PostCaptureAction: String, CaseIterable, Identifiable {
+    case saveToDisk = "saveToDisk"
+    case copyToClipboard = "copyToClipboard"
+    case both = "both"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .saveToDisk: return "Save to Disk Only"
+        case .copyToClipboard: return "Copy to Clipboard Only"
+        case .both: return "Save & Copy to Clipboard"
+        }
+    }
+}
+
 public final class AppSettings: ObservableObject {
     public static let shared = AppSettings()
 
@@ -14,6 +30,7 @@ public final class AppSettings: ObservableObject {
         public static let saveToDisk = "saveToDisk"
         public static let saveDirectoryPath = "saveDirectoryPath"
         public static let copyToClipboard = "copyToClipboard"
+        public static let postCaptureAction = "postCaptureAction"
         public static let includeCursor = "includeCursor"
         public static let captureDelaySeconds = "captureDelaySeconds"
         public static let imageFormat = "imageFormat"
@@ -22,6 +39,7 @@ public final class AppSettings: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    private var isSyncingActionFlags = false
 
     // MARK: - Hotkey Configuration
 
@@ -39,11 +57,32 @@ public final class AppSettings: ObservableObject {
         }
     }
 
-    // MARK: - Storage and Clipboard Toggles
+    // MARK: - Post-Capture Action & Storage Toggles
+
+    @Published public var postCaptureAction: PostCaptureAction {
+        didSet {
+            defaults.set(postCaptureAction.rawValue, forKey: Keys.postCaptureAction)
+            guard !isSyncingActionFlags else { return }
+            isSyncingActionFlags = true
+            switch postCaptureAction {
+            case .saveToDisk:
+                saveToDisk = true
+                copyToClipboard = false
+            case .copyToClipboard:
+                saveToDisk = false
+                copyToClipboard = true
+            case .both:
+                saveToDisk = true
+                copyToClipboard = true
+            }
+            isSyncingActionFlags = false
+        }
+    }
 
     @Published public var saveToDisk: Bool {
         didSet {
             defaults.set(saveToDisk, forKey: Keys.saveToDisk)
+            syncPostCaptureActionFromFlags()
         }
     }
 
@@ -56,6 +95,25 @@ public final class AppSettings: ObservableObject {
     @Published public var copyToClipboard: Bool {
         didSet {
             defaults.set(copyToClipboard, forKey: Keys.copyToClipboard)
+            syncPostCaptureActionFromFlags()
+        }
+    }
+
+    private func syncPostCaptureActionFromFlags() {
+        guard !isSyncingActionFlags else { return }
+        let newAction: PostCaptureAction
+        if saveToDisk && copyToClipboard {
+            newAction = .both
+        } else if copyToClipboard {
+            newAction = .copyToClipboard
+        } else {
+            newAction = .saveToDisk
+        }
+        if postCaptureAction != newAction {
+            isSyncingActionFlags = true
+            postCaptureAction = newAction
+            defaults.set(newAction.rawValue, forKey: Keys.postCaptureAction)
+            isSyncingActionFlags = false
         }
     }
 
@@ -119,14 +177,39 @@ public final class AppSettings: ObservableObject {
             self.hotkeyModifiers = defaultModifiers
         }
 
-        self.saveToDisk = defaults.object(forKey: Keys.saveToDisk) as? Bool ?? true
-
         let resolvedDefaultFolder = AppSettings.defaultSaveLocation()
         let configuredPath = defaults.string(forKey: Keys.saveDirectoryPath)
         let finalPath = (configuredPath != nil && !configuredPath!.isEmpty) ? configuredPath! : resolvedDefaultFolder
         self.saveDirectoryPath = finalPath
 
-        self.copyToClipboard = defaults.object(forKey: Keys.copyToClipboard) as? Bool ?? true
+        if let actionRaw = defaults.string(forKey: Keys.postCaptureAction),
+           let action = PostCaptureAction(rawValue: actionRaw) {
+            self.postCaptureAction = action
+            switch action {
+            case .saveToDisk:
+                self.saveToDisk = true
+                self.copyToClipboard = false
+            case .copyToClipboard:
+                self.saveToDisk = false
+                self.copyToClipboard = true
+            case .both:
+                self.saveToDisk = true
+                self.copyToClipboard = true
+            }
+        } else {
+            let savedDisk = defaults.object(forKey: Keys.saveToDisk) as? Bool ?? true
+            let copiedClip = defaults.object(forKey: Keys.copyToClipboard) as? Bool ?? true
+            self.saveToDisk = savedDisk
+            self.copyToClipboard = copiedClip
+            if savedDisk && copiedClip {
+                self.postCaptureAction = .both
+            } else if copiedClip {
+                self.postCaptureAction = .copyToClipboard
+            } else {
+                self.postCaptureAction = .saveToDisk
+            }
+        }
+
         self.includeCursor = defaults.object(forKey: Keys.includeCursor) as? Bool ?? false
         self.captureDelaySeconds = defaults.object(forKey: Keys.captureDelaySeconds) as? Int ?? 0
 

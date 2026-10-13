@@ -21,7 +21,7 @@
   - Otherwise, default to `~/Pictures/shots`.
   - Create the default directory if it does not exist.
 - [x] **Save Location Settings** — Allow users to change the default output folder.
-- [ ] **Post-Capture Action** — Save to disk by default, with an option to copy directly to the clipboard.
+- [x] **Post-Capture Action** — Save to disk by default, with an option to copy directly to the clipboard.
 - [ ] **Reveal Latest Screenshot** — Open Finder with the most recently captured file selected.
 
 ## 3. OCR & Code Recognition

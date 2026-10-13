@@ -136,7 +136,23 @@ public struct PreferencesView: View {
 
                     // Behavior Box (Capture Behavior Toggles)
                     GroupBox(label: Label("Capture Behavior", systemImage: "slider.horizontal.3")) {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Post-Capture Action")
+                                .font(.system(size: 13, weight: .medium))
+
+                            Picker("", selection: $settings.postCaptureAction) {
+                                ForEach(PostCaptureAction.allCases) { action in
+                                    Text(action.displayName).tag(action)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text("Configure whether screenshots are saved to disk, copied directly to the clipboard, or both.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+
+                            Divider()
+
                             Toggle("Save screenshot to disk", isOn: $settings.saveToDisk)
                             Toggle("Copy screenshot to clipboard", isOn: $settings.copyToClipboard)
                         }

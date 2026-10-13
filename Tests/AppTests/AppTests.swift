@@ -435,6 +435,63 @@ public struct AppTests {
             try? FileManager.default.removeItem(at: customDir)
         }
 
+        // MARK: - Post-Capture Action Suite
+        testRunner("Post-Capture Action - Mode Synchronization, Persistence, and Pasteboard Dispatch") {
+            let testSuite = "com.test.shots.postcapture.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: testSuite) else {
+                assertionFailure("Failed to allocate test defaults suite")
+                return
+            }
+
+            let settings = AppSettings(defaults: defaults)
+
+            // Test 1: Setting .saveToDisk
+            settings.postCaptureAction = .saveToDisk
+            assert(settings.saveToDisk == true, "saveToDisk must be true for .saveToDisk")
+            assert(settings.copyToClipboard == false, "copyToClipboard must be false for .saveToDisk")
+            assert(defaults.string(forKey: AppSettings.Keys.postCaptureAction) == PostCaptureAction.saveToDisk.rawValue, "UserDefaults must persist postCaptureAction")
+
+            // Test 2: Setting .copyToClipboard
+            settings.postCaptureAction = .copyToClipboard
+            assert(settings.saveToDisk == false, "saveToDisk must be false for .copyToClipboard")
+            assert(settings.copyToClipboard == true, "copyToClipboard must be true for .copyToClipboard")
+            assert(defaults.string(forKey: AppSettings.Keys.postCaptureAction) == PostCaptureAction.copyToClipboard.rawValue, "UserDefaults must persist postCaptureAction")
+
+            // Test 3: Setting .both
+            settings.postCaptureAction = .both
+            assert(settings.saveToDisk == true, "saveToDisk must be true for .both")
+            assert(settings.copyToClipboard == true, "copyToClipboard must be true for .both")
+            assert(defaults.string(forKey: AppSettings.Keys.postCaptureAction) == PostCaptureAction.both.rawValue, "UserDefaults must persist postCaptureAction")
+
+            // Test 4: Mutating flags directly syncs postCaptureAction
+            settings.saveToDisk = true
+            settings.copyToClipboard = false
+            assert(settings.postCaptureAction == .saveToDisk, "Flag mutation must update postCaptureAction to .saveToDisk")
+
+            settings.saveToDisk = false
+            settings.copyToClipboard = true
+            assert(settings.postCaptureAction == .copyToClipboard, "Flag mutation must update postCaptureAction to .copyToClipboard")
+
+            // Test 5: Pasteboard copy verification with mock image
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let context = CGContext(
+                data: nil,
+                width: 10,
+                height: 10,
+                bitsPerComponent: 8,
+                bytesPerRow: 10 * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let testImage = context.makeImage()!
+            SaveService.shared.copyToPasteboard(image: testImage, fileURL: nil)
+
+            let pb = NSPasteboard.general
+            assert(pb.types?.contains(.png) == true || pb.types?.contains(.tiff) == true, "System pasteboard must contain image data")
+
+            defaults.removePersistentDomain(forName: testSuite)
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

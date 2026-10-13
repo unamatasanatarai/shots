@@ -17,7 +17,7 @@ The first milestone is a working app that captures screenshots and saves them re
 - [x] 9\. JPG Support — Add JPEG encoding.
 - [x] 10\. JPG Quality — Configurable compression quality, defaulting to 80.
 - [x] 11\. Save Location Settings — Allow users to change the output folder.
-- 12\. Post-Capture Action — Save to disk by default, with an option to copy directly to the clipboard.
+- [x] 12\. Post-Capture Action — Save to disk by default, with an option to copy directly to the clipboard.
 
 Milestone: Both capture modes work reliably, with correct output files and configurable saving behavior.
 
