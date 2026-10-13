@@ -1079,5 +1079,55 @@ public struct AppTests {
             let emptyResults = try! service.recognizeBarcodes(in: plainCGImage)
             assert(emptyResults.isEmpty, "Plain image must yield 0 barcodes")
         }
+
+        // MARK: - OCR Text Recognition Suite
+        testRunner("OCR Text Recognition - English and Polish Text Extraction") {
+            let service = RecognitionService.shared
+
+            // Helper to render high-contrast text to CGImage
+            func renderTextImage(text: String, fontSize: CGFloat = 36) -> CGImage {
+                let font = NSFont.boldSystemFont(ofSize: fontSize)
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: font,
+                    .foregroundColor: NSColor.black
+                ]
+                let size = (text as NSString).size(withAttributes: attrs)
+                let imgWidth = max(200, ceil(size.width) + 40)
+                let imgHeight = max(100, ceil(size.height) + 40)
+                let image = NSImage(size: NSSize(width: imgWidth, height: imgHeight))
+                image.lockFocus()
+                NSColor.white.setFill()
+                NSRect(origin: .zero, size: image.size).fill()
+                (text as NSString).draw(at: NSPoint(x: 20, y: 20), withAttributes: attrs)
+                image.unlockFocus()
+                return image.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+            }
+
+            // 1. English text extraction test
+            let englishCG = renderTextImage(text: "Screenshot Captured")
+            let englishResults = try! service.recognizeText(in: englishCG)
+            assert(!englishResults.isEmpty, "English text must be recognized")
+            assert(englishResults[0].type == .text, "Result type must be .text")
+            let englishFull = englishResults.map { $0.payload }.joined(separator: " ")
+            assert(englishFull.contains("Screenshot") || englishFull.contains("Captured"), "English payload must contain expected text (got '\(englishFull)')")
+
+            // 2. Polish text extraction test (verifying Polish language prioritization)
+            let polishCG = renderTextImage(text: "Zrzut ekranu")
+            let polishResults = try! service.recognizeText(in: polishCG, languages: ["pl-PL", "en-US"])
+            assert(!polishResults.isEmpty, "Polish text must be recognized")
+            let polishFull = polishResults.map { $0.payload }.joined(separator: " ")
+            assert(polishFull.contains("Zrzut") || polishFull.contains("ekranu"), "Polish payload must contain expected text (got '\(polishFull)')")
+
+            // 3. Negative test: Plain blank image produces 0 text items
+            let plainSize = CGSize(width: 100, height: 100)
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fill(CGRect(origin: .zero, size: plainSize))
+            let plainCGImage = ctx.makeImage()!
+
+            let blankResults = try! service.recognizeText(in: plainCGImage)
+            assert(blankResults.isEmpty, "Blank image must yield 0 text items")
+        }
     }
 }

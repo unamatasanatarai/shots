@@ -50,7 +50,7 @@ Implement recognition as a separate capability so it doesn't complicate the init
 - [x] 21\. Native Recognition Framework — Use Apple's Vision framework for on-device recognition.
 - [x] 22\. QR Code Recognition — Detect and decode QR codes.
 - [x] 23\. Barcode Recognition — Detect and decode 1D barcodes.
-- 24\. OCR Text Recognition — Extract text, prioritizing English and Polish.
+- [x] 24\. OCR Text Recognition — Extract text, prioritizing English and Polish.
 - 25\. Unified Recognition Action — Add an OCR Recognition menu item that chooses the appropriate recognition mode based on the image.
 
 Milestone: Users can extract text or decode supported codes directly from screenshots.

@@ -207,4 +207,61 @@ public final class RecognitionService {
             }
         }
     }
+
+    // MARK: - OCR Text Recognition
+
+    public static let defaultOCRLanguages: [String] = ["en-US", "pl-PL"]
+
+    /// Extracts recognized text from a CGImage, prioritizing English and Polish.
+    public func recognizeText(
+        in image: CGImage,
+        languages: [String] = RecognitionService.defaultOCRLanguages
+    ) throws -> [RecognitionItem] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = languages
+        request.usesLanguageCorrection = true
+
+        try performRequests([request], on: image)
+
+        guard let results = request.results else {
+            return []
+        }
+
+        var items: [RecognitionItem] = []
+        for observation in results {
+            guard let topCandidate = observation.topCandidates(1).first,
+                  !topCandidate.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+            items.append(RecognitionItem(
+                type: .text,
+                payload: topCandidate.string,
+                confidence: topCandidate.confidence,
+                symbology: nil
+            ))
+        }
+        return items
+    }
+
+    /// Asynchronously extracts recognized text from a CGImage on a background queue.
+    public func recognizeTextAsync(
+        in image: CGImage,
+        languages: [String] = RecognitionService.defaultOCRLanguages,
+        completion: @escaping (Result<[RecognitionItem], Error>) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let items = try self.recognizeText(in: image, languages: languages)
+                DispatchQueue.main.async {
+                    completion(.success(items))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
 }
