@@ -269,11 +269,13 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func updateMenuItemsState() {
         let settings = AppSettings.shared
-        let shortcut = settings.hotkeyDisplayString
-        captureRegionMenuItem.title = "Capture Region (\(shortcut))"
+        let areaShortcut = settings.areaShortcutDisplayString
+        let fsShortcut = settings.fullscreenShortcutDisplayString
+        captureRegionMenuItem.title = "Capture Region (\(areaShortcut))"
+        captureFullscreenMenuItem.title = "Capture Fullscreen (\(fsShortcut))"
 
         if let button = statusItem.button {
-            button.toolTip = "Shots! — Click for options or press \(shortcut)"
+            button.toolTip = "Shots! — Click for options or press \(areaShortcut)"
         }
 
         saveToDiskMenuItem.state = settings.saveToDisk ? .on : .off

@@ -27,6 +27,12 @@ public final class AppSettings: ObservableObject {
     public enum Keys {
         public static let hotkeyKeyCode = "hotkeyKeyCode"
         public static let hotkeyModifiers = "hotkeyModifiers"
+        public static let fullscreenShortcutKeyCode = "fullscreenShortcutKeyCode"
+        public static let fullscreenShortcutModifiers = "fullscreenShortcutModifiers"
+        public static let repeatShortcutKeyCode = "repeatShortcutKeyCode"
+        public static let repeatShortcutModifiers = "repeatShortcutModifiers"
+        public static let ocrShortcutKeyCode = "ocrShortcutKeyCode"
+        public static let ocrShortcutModifiers = "ocrShortcutModifiers"
         public static let saveToDisk = "saveToDisk"
         public static let saveDirectoryPath = "saveDirectoryPath"
         public static let copyToClipboard = "copyToClipboard"
@@ -41,11 +47,12 @@ public final class AppSettings: ObservableObject {
     private let defaults: UserDefaults
     private var isSyncingActionFlags = false
 
-    // MARK: - Hotkey Configuration
+    // MARK: - Hotkey Configurations
 
     @Published public var hotkeyKeyCode: UInt16 {
         didSet {
             defaults.set(Int(hotkeyKeyCode), forKey: Keys.hotkeyKeyCode)
+            checkForShortcutConflicts()
             NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
         }
     }
@@ -53,6 +60,65 @@ public final class AppSettings: ObservableObject {
     @Published public var hotkeyModifiers: UInt32 {
         didSet {
             defaults.set(Int(hotkeyModifiers), forKey: Keys.hotkeyModifiers)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    public var areaShortcutKeyCode: UInt16 {
+        get { hotkeyKeyCode }
+        set { hotkeyKeyCode = newValue }
+    }
+
+    public var areaShortcutModifiers: UInt32 {
+        get { hotkeyModifiers }
+        set { hotkeyModifiers = newValue }
+    }
+
+    @Published public var fullscreenShortcutKeyCode: UInt16 {
+        didSet {
+            defaults.set(Int(fullscreenShortcutKeyCode), forKey: Keys.fullscreenShortcutKeyCode)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var fullscreenShortcutModifiers: UInt32 {
+        didSet {
+            defaults.set(Int(fullscreenShortcutModifiers), forKey: Keys.fullscreenShortcutModifiers)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var repeatShortcutKeyCode: UInt16 {
+        didSet {
+            defaults.set(Int(repeatShortcutKeyCode), forKey: Keys.repeatShortcutKeyCode)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var repeatShortcutModifiers: UInt32 {
+        didSet {
+            defaults.set(Int(repeatShortcutModifiers), forKey: Keys.repeatShortcutModifiers)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var ocrShortcutKeyCode: UInt16 {
+        didSet {
+            defaults.set(Int(ocrShortcutKeyCode), forKey: Keys.ocrShortcutKeyCode)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var ocrShortcutModifiers: UInt32 {
+        didSet {
+            defaults.set(Int(ocrShortcutModifiers), forKey: Keys.ocrShortcutModifiers)
+            checkForShortcutConflicts()
             NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
         }
     }
@@ -177,6 +243,42 @@ public final class AppSettings: ObservableObject {
             self.hotkeyModifiers = defaultModifiers
         }
 
+        if defaults.object(forKey: Keys.fullscreenShortcutKeyCode) != nil {
+            self.fullscreenShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.fullscreenShortcutKeyCode))
+        } else {
+            self.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
+        }
+
+        if defaults.object(forKey: Keys.fullscreenShortcutModifiers) != nil {
+            self.fullscreenShortcutModifiers = UInt32(defaults.integer(forKey: Keys.fullscreenShortcutModifiers))
+        } else {
+            self.fullscreenShortcutModifiers = defaultModifiers
+        }
+
+        if defaults.object(forKey: Keys.repeatShortcutKeyCode) != nil {
+            self.repeatShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.repeatShortcutKeyCode))
+        } else {
+            self.repeatShortcutKeyCode = UInt16(kVK_ANSI_R)
+        }
+
+        if defaults.object(forKey: Keys.repeatShortcutModifiers) != nil {
+            self.repeatShortcutModifiers = UInt32(defaults.integer(forKey: Keys.repeatShortcutModifiers))
+        } else {
+            self.repeatShortcutModifiers = defaultModifiers
+        }
+
+        if defaults.object(forKey: Keys.ocrShortcutKeyCode) != nil {
+            self.ocrShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.ocrShortcutKeyCode))
+        } else {
+            self.ocrShortcutKeyCode = UInt16(kVK_ANSI_O)
+        }
+
+        if defaults.object(forKey: Keys.ocrShortcutModifiers) != nil {
+            self.ocrShortcutModifiers = UInt32(defaults.integer(forKey: Keys.ocrShortcutModifiers))
+        } else {
+            self.ocrShortcutModifiers = defaultModifiers
+        }
+
         let resolvedDefaultFolder = AppSettings.defaultSaveLocation()
         let configuredPath = defaults.string(forKey: Keys.saveDirectoryPath)
         let finalPath = (configuredPath != nil && !configuredPath!.isEmpty) ? configuredPath! : resolvedDefaultFolder
@@ -256,8 +358,24 @@ public final class AppSettings: ObservableObject {
         return ("~/Pictures/shots" as NSString).expandingTildeInPath
     }
 
-    public var hotkeyDisplayString: String {
+    public var areaShortcutDisplayString: String {
         KeyCodes.shortcutString(keyCode: hotkeyKeyCode, carbonMods: hotkeyModifiers)
+    }
+
+    public var fullscreenShortcutDisplayString: String {
+        KeyCodes.shortcutString(keyCode: fullscreenShortcutKeyCode, carbonMods: fullscreenShortcutModifiers)
+    }
+
+    public var repeatShortcutDisplayString: String {
+        KeyCodes.shortcutString(keyCode: repeatShortcutKeyCode, carbonMods: repeatShortcutModifiers)
+    }
+
+    public var ocrShortcutDisplayString: String {
+        KeyCodes.shortcutString(keyCode: ocrShortcutKeyCode, carbonMods: ocrShortcutModifiers)
+    }
+
+    public var hotkeyDisplayString: String {
+        areaShortcutDisplayString
     }
 
     public var resolvedSaveDirectoryURL: URL {
@@ -269,8 +387,40 @@ public final class AppSettings: ObservableObject {
         return url
     }
 
-    public func resetHotkeyToDefault() {
+    public func checkForShortcutConflicts() {
+        let shortcuts = [
+            ("Area", hotkeyKeyCode, hotkeyModifiers),
+            ("Fullscreen", fullscreenShortcutKeyCode, fullscreenShortcutModifiers),
+            ("Repeat", repeatShortcutKeyCode, repeatShortcutModifiers),
+            ("OCR", ocrShortcutKeyCode, ocrShortcutModifiers)
+        ]
+
+        for i in 0..<shortcuts.count {
+            for j in (i + 1)..<shortcuts.count {
+                if shortcuts[i].1 == shortcuts[j].1 && shortcuts[i].2 == shortcuts[j].2 {
+                    isHotkeyConflict = true
+                    hotkeyErrorMessage = "Shortcut conflict between \(shortcuts[i].0) and \(shortcuts[j].0)."
+                    return
+                }
+            }
+        }
+        isHotkeyConflict = false
+        hotkeyErrorMessage = nil
+    }
+
+    public func resetHotkeysToDefault() {
         hotkeyKeyCode = UInt16(kVK_ANSI_1)
         hotkeyModifiers = UInt32(cmdKey | shiftKey)
+        fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
+        fullscreenShortcutModifiers = UInt32(cmdKey | shiftKey)
+        repeatShortcutKeyCode = UInt16(kVK_ANSI_R)
+        repeatShortcutModifiers = UInt32(cmdKey | shiftKey)
+        ocrShortcutKeyCode = UInt16(kVK_ANSI_O)
+        ocrShortcutModifiers = UInt32(cmdKey | shiftKey)
+        checkForShortcutConflicts()
+    }
+
+    public func resetHotkeyToDefault() {
+        resetHotkeysToDefault()
     }
 }

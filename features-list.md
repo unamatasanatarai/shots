@@ -36,7 +36,7 @@
 
 ## 4. Hotkeys & System Integration
 
-- [ ] **Global Keyboard Shortcuts** — Support customizable shortcuts for each capture mode.
+- [x] **Global Keyboard Shortcuts** — Support customizable shortcuts for each capture mode.
   - Use [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) for shortcut configuration and UI.
 - [ ] **Launch at Login** — Option to launch automatically when the user logs in.
 

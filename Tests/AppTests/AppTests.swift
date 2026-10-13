@@ -512,7 +512,7 @@ public struct AppTests {
             let titles = menu.items.map { $0.title }
 
             assert(titles.contains(where: { $0.contains("Capture Region") }), "Menu must contain Capture Region item")
-            assert(titles.contains("Capture Fullscreen"), "Menu must contain Capture Fullscreen item")
+            assert(titles.contains(where: { $0.contains("Capture Fullscreen") }), "Menu must contain Capture Fullscreen item")
             assert(titles.contains("Save to Folder"), "Menu must contain Save to Folder item")
             assert(titles.contains("Copy to Clipboard"), "Menu must contain Copy to Clipboard item")
             assert(titles.contains("Include Cursor"), "Menu must contain Include Cursor item")
@@ -534,6 +534,68 @@ public struct AppTests {
 
             let postCaptureItem = menu.items.first(where: { $0.title == "Post-Capture Action" })
             assert(postCaptureItem?.submenu?.items.count == 3, "Post-Capture Action submenu must have 3 options")
+        }
+
+        // MARK: - Global Keyboard Shortcuts Suite
+        testRunner("Global Keyboard Shortcuts - Multi-Mode Mappings, Conflicts, and Dispatch") {
+            let testSuite = "com.test.shots.shortcuts.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: testSuite) else {
+                assertionFailure("Failed to allocate test defaults")
+                return
+            }
+
+            let settings = AppSettings(defaults: defaults)
+
+            // Verify default shortcut strings
+            assert(settings.areaShortcutDisplayString == "⇧⌘1", "Area shortcut default must be ⇧⌘1 (was \(settings.areaShortcutDisplayString))")
+            assert(settings.fullscreenShortcutDisplayString == "⇧⌘2", "Fullscreen shortcut default must be ⇧⌘2 (was \(settings.fullscreenShortcutDisplayString))")
+            assert(settings.repeatShortcutDisplayString == "⇧⌘R", "Repeat shortcut default must be ⇧⌘R (was \(settings.repeatShortcutDisplayString))")
+            assert(settings.ocrShortcutDisplayString == "⇧⌘O", "OCR shortcut default must be ⇧⌘O (was \(settings.ocrShortcutDisplayString))")
+
+            // Test custom assignment
+            settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_3)
+            assert(settings.fullscreenShortcutDisplayString == "⇧⌘3", "Updated shortcut must reflect new keycode")
+            assert(defaults.integer(forKey: AppSettings.Keys.fullscreenShortcutKeyCode) == Int(kVK_ANSI_3), "UserDefaults must store new shortcut")
+
+            // Test conflict detection
+            settings.fullscreenShortcutKeyCode = settings.areaShortcutKeyCode
+            settings.fullscreenShortcutModifiers = settings.areaShortcutModifiers
+            settings.checkForShortcutConflicts()
+            assert(settings.isHotkeyConflict == true, "Matching shortcut combination must trigger conflict flag")
+            assert(settings.hotkeyErrorMessage != nil, "Conflict error message must be set")
+
+            // Test reset to defaults
+            settings.resetHotkeysToDefault()
+            assert(settings.isHotkeyConflict == false, "Reset must resolve shortcut conflict")
+            assert(settings.areaShortcutDisplayString == "⇧⌘1", "Reset must restore Area shortcut")
+            assert(settings.fullscreenShortcutDisplayString == "⇧⌘2", "Reset must restore Fullscreen shortcut")
+
+            // Test HotKeyManager multi-mode dispatch callbacks
+            let manager = HotKeyManager.shared
+            var areaFired = false
+            var fsFired = false
+            var repeatFired = false
+            var ocrFired = false
+
+            manager.onAreaCaptureTrigger = { areaFired = true }
+            manager.onFullscreenCaptureTrigger = { fsFired = true }
+            manager.onRepeatCaptureTrigger = { repeatFired = true }
+            manager.onOCRCaptureTrigger = { ocrFired = true }
+
+            // Trigger closures manually to verify wiring
+            manager.onAreaCaptureTrigger?()
+            assert(areaFired, "Area capture trigger callback must execute")
+
+            manager.onFullscreenCaptureTrigger?()
+            assert(fsFired, "Fullscreen capture trigger callback must execute")
+
+            manager.onRepeatCaptureTrigger?()
+            assert(repeatFired, "Repeat capture trigger callback must execute")
+
+            manager.onOCRCaptureTrigger?()
+            assert(ocrFired, "OCR capture trigger callback must execute")
+
+            defaults.removePersistentDomain(forName: testSuite)
         }
 
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {

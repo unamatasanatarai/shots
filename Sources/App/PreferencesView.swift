@@ -3,11 +3,31 @@ import Carbon
 import Cocoa
 
 public struct PreferencesView: View {
+    enum ShortcutTarget: String, CaseIterable, Identifiable {
+        case area = "Area Screenshot"
+        case fullscreen = "Fullscreen Screenshot"
+        case repeatCapture = "Repeat Previous"
+        case ocr = "OCR Recognition"
+
+        var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .area: return "viewfinder"
+            case .fullscreen: return "display"
+            case .repeatCapture: return "arrow.counterclockwise"
+            case .ocr: return "text.viewfinder"
+            }
+        }
+    }
+
     @ObservedObject public var settings = AppSettings.shared
-    @State private var isRecordingHotkey = false
+    @State private var recordingTarget: ShortcutTarget? = nil
     @State private var eventMonitor: Any?
     @State private var screenCaptureGranted: Bool = CGPreflightScreenCaptureAccess()
     @State private var accessibilityGranted: Bool = AXIsProcessTrusted()
+
+    public var isRecordingHotkey: Bool { recordingTarget != nil }
 
     public init() {}
 
@@ -36,50 +56,56 @@ public struct PreferencesView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    // Global Shortcut Box
-                    GroupBox(label: Label("Global Shortcut", systemImage: "keyboard")) {
+                    // Global Shortcuts Box
+                    GroupBox(label: Label("Global Shortcuts", systemImage: "keyboard")) {
                         VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Capture Trigger:")
-                                    .font(.system(size: 13, weight: .medium))
+                            ForEach(ShortcutTarget.allCases) { target in
+                                HStack {
+                                    Label(target.rawValue, systemImage: target.icon)
+                                        .font(.system(size: 13, weight: .medium))
 
-                                Spacer()
+                                    Spacer()
 
-                                // Interactive Hotkey Recorder Button
-                                Button(action: {
-                                    toggleRecording()
-                                }) {
-                                    HStack(spacing: 6) {
-                                        if isRecordingHotkey {
-                                            Circle()
-                                                .fill(Color.red)
-                                                .frame(width: 8, height: 8)
-                                            Text("Press keys (Esc to cancel)...")
-                                                .font(.system(size: 12, weight: .medium))
-                                                .foregroundColor(.primary)
-                                        } else {
-                                            Text(settings.hotkeyDisplayString)
-                                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                                                .foregroundColor(.primary)
+                                    // Interactive Hotkey Recorder Button
+                                    Button(action: {
+                                        toggleRecording(for: target)
+                                    }) {
+                                        HStack(spacing: 6) {
+                                            if recordingTarget == target {
+                                                Circle()
+                                                    .fill(Color.red)
+                                                    .frame(width: 8, height: 8)
+                                                Text("Press keys (Esc to cancel)...")
+                                                    .font(.system(size: 12, weight: .medium))
+                                                    .foregroundColor(.primary)
+                                            } else {
+                                                Text(displayString(for: target))
+                                                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                                    .foregroundColor(.primary)
+                                            }
                                         }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(recordingTarget == target ? Color.accentColor.opacity(0.15) : Color(NSColor.controlBackgroundColor))
+                                        .cornerRadius(6)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(recordingTarget == target ? Color.accentColor : Color(NSColor.separatorColor), lineWidth: 1.5)
+                                        )
                                     }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(isRecordingHotkey ? Color.accentColor.opacity(0.15) : Color(NSColor.controlBackgroundColor))
-                                    .cornerRadius(6)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(isRecordingHotkey ? Color.accentColor : Color(NSColor.separatorColor), lineWidth: 1.5)
-                                    )
-                                }
-                                .buttonStyle(.plain)
+                                    .buttonStyle(.plain)
 
-                                Button("Reset") {
-                                    stopRecording()
-                                    settings.resetHotkeyToDefault()
+                                    Button("Reset") {
+                                        stopRecording()
+                                        resetShortcut(for: target)
+                                    }
+                                    .font(.system(size: 11))
+                                    .disabled(isDefault(for: target))
                                 }
-                                .font(.system(size: 11))
-                                .disabled(settings.hotkeyKeyCode == UInt16(kVK_ANSI_1) && settings.hotkeyModifiers == UInt32(cmdKey | shiftKey))
+
+                                if target != ShortcutTarget.allCases.last {
+                                    Divider()
+                                }
                             }
 
                             if settings.isHotkeyConflict, let msg = settings.hotkeyErrorMessage {
@@ -95,7 +121,7 @@ public struct PreferencesView: View {
                                 .cornerRadius(6)
                             }
 
-                            Text("Press the hotkey globally to initiate region selection or capture active screen.")
+                            Text("Trigger screenshots instantly from any application with customizable global shortcuts.")
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary)
                         }
@@ -255,16 +281,17 @@ public struct PreferencesView: View {
 
     // MARK: - Hotkey Recorder Handlers
 
-    private func toggleRecording() {
-        if isRecordingHotkey {
+    private func toggleRecording(for target: ShortcutTarget) {
+        if recordingTarget == target {
             stopRecording()
         } else {
-            startRecording()
+            startRecording(for: target)
         }
     }
 
-    private func startRecording() {
-        isRecordingHotkey = true
+    private func startRecording(for target: ShortcutTarget) {
+        stopRecording()
+        recordingTarget = target
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             if event.type == .keyDown {
@@ -276,7 +303,7 @@ public struct PreferencesView: View {
 
                 // Delete resets to default
                 if event.keyCode == 51 {
-                    self.settings.resetHotkeyToDefault()
+                    self.resetShortcut(for: target)
                     self.stopRecording()
                     return nil
                 }
@@ -286,8 +313,20 @@ public struct PreferencesView: View {
 
                 // Require at least one modifier key or a function key
                 if carbonMods != 0 || isFunctionKey {
-                    self.settings.hotkeyKeyCode = event.keyCode
-                    self.settings.hotkeyModifiers = carbonMods
+                    switch target {
+                    case .area:
+                        self.settings.hotkeyKeyCode = event.keyCode
+                        self.settings.hotkeyModifiers = carbonMods
+                    case .fullscreen:
+                        self.settings.fullscreenShortcutKeyCode = event.keyCode
+                        self.settings.fullscreenShortcutModifiers = carbonMods
+                    case .repeatCapture:
+                        self.settings.repeatShortcutKeyCode = event.keyCode
+                        self.settings.repeatShortcutModifiers = carbonMods
+                    case .ocr:
+                        self.settings.ocrShortcutKeyCode = event.keyCode
+                        self.settings.ocrShortcutModifiers = carbonMods
+                    }
                     self.stopRecording()
                     return nil
                 }
@@ -297,10 +336,49 @@ public struct PreferencesView: View {
     }
 
     private func stopRecording() {
-        isRecordingHotkey = false
+        recordingTarget = nil
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
+        }
+    }
+
+    private func resetShortcut(for target: ShortcutTarget) {
+        switch target {
+        case .area:
+            settings.hotkeyKeyCode = UInt16(kVK_ANSI_1)
+            settings.hotkeyModifiers = UInt32(cmdKey | shiftKey)
+        case .fullscreen:
+            settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
+            settings.fullscreenShortcutModifiers = UInt32(cmdKey | shiftKey)
+        case .repeatCapture:
+            settings.repeatShortcutKeyCode = UInt16(kVK_ANSI_R)
+            settings.repeatShortcutModifiers = UInt32(cmdKey | shiftKey)
+        case .ocr:
+            settings.ocrShortcutKeyCode = UInt16(kVK_ANSI_O)
+            settings.ocrShortcutModifiers = UInt32(cmdKey | shiftKey)
+        }
+    }
+
+    private func displayString(for target: ShortcutTarget) -> String {
+        switch target {
+        case .area: return settings.areaShortcutDisplayString
+        case .fullscreen: return settings.fullscreenShortcutDisplayString
+        case .repeatCapture: return settings.repeatShortcutDisplayString
+        case .ocr: return settings.ocrShortcutDisplayString
+        }
+    }
+
+    private func isDefault(for target: ShortcutTarget) -> Bool {
+        switch target {
+        case .area:
+            return settings.hotkeyKeyCode == UInt16(kVK_ANSI_1) && settings.hotkeyModifiers == UInt32(cmdKey | shiftKey)
+        case .fullscreen:
+            return settings.fullscreenShortcutKeyCode == UInt16(kVK_ANSI_2) && settings.fullscreenShortcutModifiers == UInt32(cmdKey | shiftKey)
+        case .repeatCapture:
+            return settings.repeatShortcutKeyCode == UInt16(kVK_ANSI_R) && settings.repeatShortcutModifiers == UInt32(cmdKey | shiftKey)
+        case .ocr:
+            return settings.ocrShortcutKeyCode == UInt16(kVK_ANSI_O) && settings.ocrShortcutModifiers == UInt32(cmdKey | shiftKey)
         }
     }
 

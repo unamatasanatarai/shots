@@ -18,7 +18,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Eagerly initialize persistent configuration
         _ = AppSettings.shared
 
-        // Wire global hardware hotkey trigger to interactive region selection
+        // Wire global hardware hotkey triggers to capture actions
+        HotKeyManager.shared.onAreaCaptureTrigger = {
+            CaptureManager.shared.startRegionCapture()
+        }
+        HotKeyManager.shared.onFullscreenCaptureTrigger = {
+            CaptureManager.shared.captureFullscreen()
+        }
         HotKeyManager.shared.onTrigger = {
             CaptureManager.shared.startRegionCapture()
         }

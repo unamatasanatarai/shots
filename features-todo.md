@@ -26,7 +26,7 @@ Milestone: Both capture modes work reliably, with correct output files and confi
 Make the utility convenient to use without opening its main interface.
 
 - [x] 13\. Menu Bar Integration — Add a menu bar icon and dropdown panel.
-- 14\. Global Keyboard Shortcuts — Add customizable shortcuts for each capture mode using [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts).
+- [x] 14\. Global Keyboard Shortcuts — Add customizable shortcuts for each capture mode using [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts).
 - 15\. Launch at Login — Allow automatic startup.
 - 16\. Repeat Previous Screenshot — Repeat the last capture mode and selection.
 - 17\. Reveal Latest Screenshot — Reveal the most recent file in Finder.
