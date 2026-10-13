@@ -397,13 +397,44 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 )
                 menuItem.target = self
                 menuItem.representedObject = item.fileURL
-                menuItem.toolTip = "Reveal \(item.filename) in Finder"
+                menuItem.toolTip = "Reveal \(item.filename) in Finder or choose action"
                 if let thumb = item.thumbnail {
                     menuItem.image = thumb
                 } else if let fallback = NSImage(systemSymbolName: "photo", accessibilityDescription: nil) {
                     fallback.isTemplate = true
                     menuItem.image = fallback
                 }
+
+                // Submenu for explicit actions: Reveal in Finder and Copy to Clipboard
+                let actionSubmenu = NSMenu()
+
+                let revealSubItem = NSMenuItem(
+                    title: "Reveal in Finder",
+                    action: #selector(revealRecentScreenshotAction(_:)),
+                    keyEquivalent: ""
+                )
+                revealSubItem.target = self
+                revealSubItem.representedObject = item.fileURL
+                if let revealIcon = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: nil) {
+                    revealIcon.isTemplate = true
+                    revealSubItem.image = revealIcon
+                }
+                actionSubmenu.addItem(revealSubItem)
+
+                let copySubItem = NSMenuItem(
+                    title: "Copy to Clipboard",
+                    action: #selector(copyRecentScreenshotAction(_:)),
+                    keyEquivalent: ""
+                )
+                copySubItem.target = self
+                copySubItem.representedObject = item.fileURL
+                if let copyIcon = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil) {
+                    copyIcon.isTemplate = true
+                    copySubItem.image = copyIcon
+                }
+                actionSubmenu.addItem(copySubItem)
+
+                menuItem.submenu = actionSubmenu
                 recentMenu.addItem(menuItem)
             }
         }
@@ -415,6 +446,28 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             return
         }
         if !ScreenshotHistoryService.shared.revealScreenshotInFinder(fileURL: fileURL) {
+            NSSound.beep()
+            updateRecentScreenshotsMenu()
+        }
+    }
+
+    @objc public func revealRecentScreenshotAction(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else {
+            NSSound.beep()
+            return
+        }
+        if !ScreenshotHistoryService.shared.revealScreenshotInFinder(fileURL: fileURL) {
+            NSSound.beep()
+            updateRecentScreenshotsMenu()
+        }
+    }
+
+    @objc public func copyRecentScreenshotAction(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else {
+            NSSound.beep()
+            return
+        }
+        if !ScreenshotHistoryService.shared.copyScreenshotToClipboard(fileURL: fileURL) {
             NSSound.beep()
             updateRecentScreenshotsMenu()
         }

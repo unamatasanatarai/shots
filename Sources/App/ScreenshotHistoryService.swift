@@ -127,4 +127,20 @@ public final class ScreenshotHistoryService {
         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
         return true
     }
+
+    /// Reads image data from the screenshot URL and copies it to the general pasteboard.
+    @discardableResult
+    public func copyScreenshotToClipboard(fileURL: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return false
+        }
+        guard let image = NSImage(contentsOf: fileURL),
+              let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let cgImage = bitmap.cgImage else {
+            return false
+        }
+        SaveService.shared.copyToPasteboard(image: cgImage, fileURL: fileURL)
+        return true
+    }
 }

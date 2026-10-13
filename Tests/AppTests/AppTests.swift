@@ -878,5 +878,74 @@ public struct AppTests {
             item.representedObject = nil
             controller.recentScreenshotSelected(item)
         }
+
+        // MARK: - Recent Screenshot Actions Suite
+        testRunner("Recent Screenshot Actions - Submenu Actions: Reveal in Finder and Copy to Clipboard") {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("shots_actions_test_\(UUID().uuidString)")
+            try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
+            let prevDir = AppSettings.shared.saveDirectoryPath
+            AppSettings.shared.saveDirectoryPath = tempDir.path
+            defer {
+                AppSettings.shared.saveDirectoryPath = prevDir
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+
+            // Create a valid image file on disk
+            let imageURL = tempDir.appendingPathComponent("shot_test_action.png")
+            let size = CGSize(width: 50, height: 50)
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(data: nil, width: 50, height: 50, bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.setFillColor(NSColor.systemBlue.cgColor)
+            ctx.fill(CGRect(origin: .zero, size: size))
+            let cgImage = ctx.makeImage()!
+            let pngData = SaveService.shared.encodePNG(image: cgImage)!
+            try! pngData.write(to: imageURL)
+
+            let historyService = ScreenshotHistoryService.shared
+
+            // 1. Test copyScreenshotToClipboard API
+            let copyResult = historyService.copyScreenshotToClipboard(fileURL: imageURL)
+            assert(copyResult == true, "copyScreenshotToClipboard must succeed on valid image file")
+
+            let pbTypes = NSPasteboard.general.types ?? []
+            assert(pbTypes.contains(.png) || pbTypes.contains(.fileURL) || pbTypes.contains(NSPasteboard.PasteboardType("public.png")), "Pasteboard must contain image/file types after copy")
+
+            let missingURL = tempDir.appendingPathComponent("missing.png")
+            assert(historyService.copyScreenshotToClipboard(fileURL: missingURL) == false, "copyScreenshotToClipboard must fail on missing file")
+
+            // 2. Test menu item submenu construction
+            historyService.reset()
+            historyService.recordNewScreenshot(fileURL: imageURL)
+
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+            controller.menuWillOpen(menu)
+
+            let historyMenuItem = menu.items.first(where: { $0.title.contains("Recent Screenshots") })
+            let recentSubmenu = historyMenuItem?.submenu
+            assert(recentSubmenu != nil, "Recent Screenshots must have submenu")
+
+            let recentItem = recentSubmenu?.items.first(where: { $0.title == imageURL.lastPathComponent })
+            assert(recentItem != nil, "Recent screenshot item must exist in submenu")
+
+            let actionSubmenu = recentItem?.submenu
+            assert(actionSubmenu != nil, "Recent screenshot item must have action submenu")
+
+            let revealActionItem = actionSubmenu?.items.first(where: { $0.title == "Reveal in Finder" })
+            assert(revealActionItem != nil, "Action submenu must contain Reveal in Finder")
+            assert(revealActionItem?.action == #selector(controller.revealRecentScreenshotAction(_:)), "Reveal action selector must match")
+
+            let copyActionItem = actionSubmenu?.items.first(where: { $0.title == "Copy to Clipboard" })
+            assert(copyActionItem != nil, "Action submenu must contain Copy to Clipboard")
+            assert(copyActionItem?.action == #selector(controller.copyRecentScreenshotAction(_:)), "Copy action selector must match")
+
+            // Test executing both action selectors
+            if let revealItem = revealActionItem {
+                controller.revealRecentScreenshotAction(revealItem)
+            }
+            if let copyItem = copyActionItem {
+                controller.copyRecentScreenshotAction(copyItem)
+            }
+        }
     }
 }
