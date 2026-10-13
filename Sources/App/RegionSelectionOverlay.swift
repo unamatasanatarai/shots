@@ -698,9 +698,9 @@ private final class RegionSelectionView: NSView {
     }
 
     // MARK: - Precision Minimalist Reticle Crosshair Cursor
-    // Circular reticle with perfectly aligned crosshairs matching technical specification:
-    // - Circle diameter: 46% of overall width
-    // - Horizontal & vertical line length: 100% of overall width/height
+    // Circular reticle with compact crosshairs:
+    // - Circle diameter: 46% of overall width (unchanged)
+    // - Horizontal & vertical line length: 75% of overall width/height (compact)
     // - Crosshair strokes: solid charcoal gray, ~3% width (1.0 pt), flat/square terminals
     // - Circle outline: medium-light gray, ~2% width (0.75 pt)
     // - Circle fill: pale neutral gray, low opacity
@@ -708,7 +708,7 @@ private final class RegionSelectionView: NSView {
     private func drawPrecisionCrosshair(at point: NSPoint, in context: CGContext, size: CGFloat = 32.0) {
         let cx = round(point.x)
         let cy = round(point.y)
-        let halfSize = size / 2.0
+        let lineHalf = size * 0.375  // 75% of size / 2 = shorter lines
 
         let circleDiameter = size * 0.46
         let circleRadius = circleDiameter / 2.0
@@ -735,19 +735,19 @@ private final class RegionSelectionView: NSView {
         context.setLineWidth(circleStrokeWidth)
         context.strokeEllipse(in: circleRect)
 
-        // 3. Crosshair strokes: solid charcoal gray, approximately 3% of overall width
+        // 3. Crosshair strokes: solid charcoal gray, compact lines
         let charcoalColor = CGColor(red: 0.20, green: 0.20, blue: 0.22, alpha: 1.0)
         context.setStrokeColor(charcoalColor)
         context.setLineWidth(crosshairStrokeWidth)
         context.setLineCap(.butt)
 
-        // Horizontal line: 100% of overall width, extends beyond circumference in both directions
-        context.move(to: CGPoint(x: cx - halfSize, y: cy))
-        context.addLine(to: CGPoint(x: cx + halfSize, y: cy))
+        // Horizontal line: 75% of overall width
+        context.move(to: CGPoint(x: cx - lineHalf, y: cy))
+        context.addLine(to: CGPoint(x: cx + lineHalf, y: cy))
 
-        // Vertical line: 100% of overall height, extends beyond circumference in both directions
-        context.move(to: CGPoint(x: cx, y: cy - halfSize))
-        context.addLine(to: CGPoint(x: cx, y: cy + halfSize))
+        // Vertical line: 75% of overall height
+        context.move(to: CGPoint(x: cx, y: cy - lineHalf))
+        context.addLine(to: CGPoint(x: cx, y: cy + lineHalf))
 
         context.strokePath()
         context.restoreGState()
@@ -769,45 +769,43 @@ private final class RegionSelectionView: NSView {
     }
 
     private func drawSoftGlowNumberText(_ text: String, at origin: NSPoint, in context: CGContext) {
-        context.saveGState()
-        context.setLineJoin(.round)
-        context.setLineCap(.round)
-
         let font = NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold)
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = 1.0
         paragraphStyle.alignment = .left
 
-        // Soft, blurry omnidirectional white outline halo (zero directional drop shadow)
-        let whiteHalo = NSShadow()
-        whiteHalo.shadowColor = NSColor.white.withAlphaComponent(0.95)
-        whiteHalo.shadowOffset = .zero
-        whiteHalo.shadowBlurRadius = 2.5
-
-        // Pass 1: Soft, blurry white outline
-        let outlineAttributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.white,
-            .strokeColor: NSColor.white,
-            .strokeWidth: 16.0,
-            .shadow: whiteHalo,
-            .paragraphStyle: paragraphStyle
-        ]
-
-        // Pass 2: Crisp black text foreground
         let fillAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor(white: 0.08, alpha: 1.0),
+            .foregroundColor: NSColor(white: 0.10, alpha: 1.0),
             .paragraphStyle: paragraphStyle
         ]
 
-        let outlineString = NSAttributedString(string: text, attributes: outlineAttributes)
-        let fillString = NSAttributedString(string: text, attributes: fillAttributes)
+        // Delicate multi-directional white text-shadow halo (like CSS text-shadow)
+        // Multiple subtle passes at slight offsets create a soft, even glow
+        let shadowOffsets: [(CGFloat, CGFloat)] = [
+            ( 0.0, -1.0), ( 0.0,  1.0), (-1.0,  0.0), ( 1.0,  0.0),
+            ( 0.7, -0.7), (-0.7, -0.7), ( 0.7,  0.7), (-0.7,  0.7)
+        ]
 
-        outlineString.draw(at: origin)
-        fillString.draw(at: origin)
+        for (dx, dy) in shadowOffsets {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.white.withAlphaComponent(0.40)
+            shadow.shadowOffset = NSSize(width: dx, height: dy)
+            shadow.shadowBlurRadius = 1.5
 
-        context.restoreGState()
+            let shadowAttributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.clear,
+                .strokeColor: NSColor.white.withAlphaComponent(0.35),
+                .strokeWidth: 4.0,
+                .shadow: shadow,
+                .paragraphStyle: paragraphStyle
+            ]
+            NSAttributedString(string: text, attributes: shadowAttributes).draw(at: origin)
+        }
+
+        // Crisp dark foreground text on top
+        NSAttributedString(string: text, attributes: fillAttributes).draw(at: origin)
     }
 
     // MARK: - Live Coordinate Badge Next to Cursor (Hover Only)
@@ -821,7 +819,7 @@ private final class RegionSelectionView: NSView {
         let curX = max(0, min(Int(round(point.x * scaleX)), maxPixelX))
         let curY = max(0, min(Int(round((bounds.height - point.y) * scaleY)), maxPixelY))
 
-        let text = "x: \(curX)\ny: \(curY)"
+        let text = "\(curX)\n\(curY)"
         let textSize = measureNumberText(text)
 
         let offset: CGFloat = 8.0
