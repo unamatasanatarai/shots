@@ -124,10 +124,10 @@ public struct AppTests {
                 return
             }
 
-            // Test PNG encoding
-            let bitmapRep = NSBitmapImageRep(cgImage: testImage)
-            guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
-                assertionFailure("Failed to encode NSBitmapImageRep to PNG")
+            // Test PNG encoding via SaveService
+            let saveService = SaveService.shared
+            guard let pngData = saveService.encodePNG(image: testImage) else {
+                assertionFailure("Failed to encode via SaveService.encodePNG")
                 return
             }
 
@@ -138,6 +138,17 @@ public struct AppTests {
             var actualHeader = [UInt8](repeating: 0, count: 8)
             pngData.copyBytes(to: &actualHeader, count: 8)
             assert(actualHeader == pngHeader, "Encoded data must match standard PNG magic signature")
+
+            // Verify saving pipeline to temporary directory
+            let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("SaveServiceTest_\(UUID().uuidString)")
+            do {
+                let savedURL = try saveService.saveImageData(pngData, to: tempDir, filename: "test_output.png")
+                assert(FileManager.default.fileExists(atPath: savedURL.path), "Saved PNG file must exist on disk")
+                assert(saveService.latestSavedURL == savedURL, "SaveService.latestSavedURL should update")
+                try? FileManager.default.removeItem(at: tempDir)
+            } catch {
+                assertionFailure("SaveService.saveImageData failed: \(error)")
+            }
         }
 
         testRunner("Filename Formatting - ISO Timestamp Pattern") {

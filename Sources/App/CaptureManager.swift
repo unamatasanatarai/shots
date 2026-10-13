@@ -56,42 +56,29 @@ public final class CaptureManager {
 
     public func processCapturedImage(_ cgImage: CGImage) {
         let settings = AppSettings.shared
+        let saveService = SaveService.shared
 
         // Perform encoding and I/O off the main RunLoop to maintain ultra-low latency
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
-            // 1. Full-resolution lossless PNG rasterization
-            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-            guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+            // 1. Lossless PNG rasterization via SaveService
+            guard let pngData = saveService.encodePNG(image: cgImage) else {
                 NSLog("Failed to encode bitmap into lossless PNG format")
                 return
             }
 
             var savedFileURL: URL?
 
-            // 2. Disk Persistence (FR-08)
+            // 2. Disk Persistence
             if settings.saveToDisk {
                 savedFileURL = self.savePNGToDisk(data: pngData, settings: settings)
             }
 
-            // 3. System Pasteboard Synchronization (FR-09)
+            // 3. System Pasteboard Synchronization
             if settings.copyToClipboard {
-                let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
                 DispatchQueue.main.async {
-                    let pb = NSPasteboard.general
-                    pb.clearContents()
-
-                    // Concurrently write native image representation
-                    pb.writeObjects([nsImage])
-
-                    // If disk persistence succeeded, also provide file URL on pasteboard
-                    if let fileURL = savedFileURL {
-                        pb.writeObjects([fileURL as NSURL])
-                    }
-
-                    // Directly supply raw PNG data flavor
-                    pb.setData(pngData, forType: .png)
+                    saveService.copyToPasteboard(image: cgImage, pngData: pngData, fileURL: savedFileURL)
                 }
             }
         }
@@ -117,7 +104,7 @@ public final class CaptureManager {
         }
 
         do {
-            try data.write(to: destinationURL, options: .atomic)
+            try SaveService.shared.saveImageData(data, to: folderURL, filename: destinationURL.lastPathComponent)
             NSLog("Lossless screenshot saved to disk: %@", destinationURL.path)
             return destinationURL
         } catch {
