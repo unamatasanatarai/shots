@@ -369,6 +369,54 @@ public struct AppTests {
             }
         }
 
+        // MARK: - JPG Quality Suite
+        testRunner("JPG Quality - Compression Factor and File Size Scaling") {
+            let settings = AppSettings.shared
+            let prevQuality = settings.jpgQuality
+            defer { settings.jpgQuality = prevQuality }
+
+            // 1. Verify default quality is 80
+            let testSuite = "com.test.shots.quality.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: testSuite)!
+            let freshSettings = AppSettings(defaults: defaults)
+            assert(freshSettings.jpgQuality == 80, "Default JPG quality must be 80")
+            assert(abs(freshSettings.jpgCompressionFactor - 0.8) < 0.001, "Default compression factor must be 0.8")
+
+            // 2. Test clamping
+            freshSettings.jpgQuality = 150
+            assert(freshSettings.jpgQuality == 100, "Quality should be clamped to 100 max")
+            freshSettings.jpgQuality = -10
+            assert(freshSettings.jpgQuality == 1, "Quality should be clamped to 1 min")
+
+            // 3. Test compression factor scaling with synthetic gradient image
+            let width = 256
+            let height = 256
+            let ctx = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            // Fill with gradient-like varying pixels to make JPEG compression differences noticeable
+            for y in 0..<height {
+                for x in 0..<width {
+                    ctx.setFillColor(CGColor(red: CGFloat(x) / 256.0, green: CGFloat(y) / 256.0, blue: 0.5, alpha: 1.0))
+                    ctx.fill(CGRect(x: x, y: y, width: 1, height: 1))
+                }
+            }
+            let gradientImage = ctx.makeImage()!
+
+            let lowQualityData = SaveService.shared.encodeJPG(image: gradientImage, quality: 0.20)!
+            let highQualityData = SaveService.shared.encodeJPG(image: gradientImage, quality: 0.95)!
+
+            assert(lowQualityData.count < highQualityData.count, "Low quality JPG (\(lowQualityData.count) bytes) should be smaller than high quality JPG (\(highQualityData.count) bytes)")
+
+            defaults.removePersistentDomain(forName: testSuite)
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

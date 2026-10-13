@@ -83,7 +83,7 @@ public final class CaptureManager {
             guard let self = self else { return }
 
             // 1. Format-aware image encoding (PNG / JPG)
-            guard let encodedData = saveService.encodeImage(cgImage, format: format) else {
+            guard let encodedData = saveService.encodeImage(cgImage, format: format, quality: settings.jpgCompressionFactor) else {
                 NSLog("Failed to encode bitmap into format: %@", format.rawValue)
                 return
             }

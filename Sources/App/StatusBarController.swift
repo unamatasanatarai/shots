@@ -11,6 +11,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var includeCursorMenuItem: NSMenuItem!
     private var delayMenuItem: NSMenuItem!
     private var formatMenuItem: NSMenuItem!
+    private var qualityMenuItem: NSMenuItem!
 
     public override init() {
         super.init()
@@ -150,6 +151,23 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         formatMenuItem.submenu = formatMenu
         menu.addItem(formatMenuItem)
 
+        // JPG Quality submenu
+        qualityMenuItem = NSMenuItem(title: "JPG Quality", action: nil, keyEquivalent: "")
+        if let sliderIcon = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil) {
+            sliderIcon.isTemplate = true
+            qualityMenuItem.image = sliderIcon
+        }
+        let qualityMenu = NSMenu()
+        let qualityOptions = [(60, "60% (Compact)"), (80, "80% (Default)"), (90, "90% (High)"), (100, "100% (Maximum)")]
+        for (q, title) in qualityOptions {
+            let item = NSMenuItem(title: title, action: #selector(setQualityAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = q
+            qualityMenu.addItem(item)
+        }
+        qualityMenuItem.submenu = qualityMenu
+        menu.addItem(qualityMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 4. Preferences & Hotkeys
@@ -223,6 +241,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 }
             }
         }
+
+        if let qualityMenu = qualityMenuItem?.submenu {
+            for item in qualityMenu.items {
+                item.state = (item.tag == settings.jpgQuality) ? .on : .off
+            }
+        }
     }
 
     // MARK: - Actions
@@ -265,6 +289,11 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             AppSettings.shared.imageFormat = format
             updateMenuItemsState()
         }
+    }
+
+    @objc private func setQualityAction(_ sender: NSMenuItem) {
+        AppSettings.shared.jpgQuality = sender.tag
+        updateMenuItemsState()
     }
 
     @objc private func openPreferencesAction() {

@@ -17,6 +17,7 @@ public final class AppSettings: ObservableObject {
         public static let includeCursor = "includeCursor"
         public static let captureDelaySeconds = "captureDelaySeconds"
         public static let imageFormat = "imageFormat"
+        public static let jpgQuality = "jpgQuality"
         public static let freezeScreenOnCapture = "freezeScreenOnCapture"
     }
 
@@ -76,6 +77,21 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    @Published public var jpgQuality: Int {
+        didSet {
+            let clamped = max(1, min(100, jpgQuality))
+            if jpgQuality != clamped {
+                jpgQuality = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.jpgQuality)
+        }
+    }
+
+    public var jpgCompressionFactor: Double {
+        max(0.01, min(1.0, Double(jpgQuality) / 100.0))
+    }
+
 
     // MARK: - Validation & Conflict States
 
@@ -119,6 +135,12 @@ public final class AppSettings: ObservableObject {
             self.imageFormat = format
         } else {
             self.imageFormat = .png
+        }
+
+        if defaults.object(forKey: Keys.jpgQuality) != nil {
+            self.jpgQuality = max(1, min(100, defaults.integer(forKey: Keys.jpgQuality)))
+        } else {
+            self.jpgQuality = 80
         }
 
         defaults.removeObject(forKey: Keys.freezeScreenOnCapture)
