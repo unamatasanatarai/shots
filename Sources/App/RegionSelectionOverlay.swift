@@ -338,11 +338,21 @@ public final class RegionSelectionCoordinator {
 
         if selRect.width >= 6 && selRect.height >= 6 {
             let fullImage = CGDisplayCreateImage(displayID)
-            let cropped = fullImage.flatMap { cropImage($0, to: selRect, in: viewSize) }
+            var cropped = fullImage.flatMap { cropImage($0, to: selRect, in: viewSize) }
+            if AppSettings.shared.includeCursor, let validCrop = cropped {
+                cropped = CaptureService.shared.compositeCursor(
+                    on: validCrop,
+                    screen: targetScreen,
+                    cropRect: selRect
+                )
+            }
             finish(with: cropped ?? fullImage)
         } else {
             // Click without drag captures full display
-            let fullImage = CGDisplayCreateImage(displayID)
+            var fullImage = CGDisplayCreateImage(displayID)
+            if AppSettings.shared.includeCursor, let validFull = fullImage {
+                fullImage = CaptureService.shared.compositeCursor(on: validFull, screen: targetScreen)
+            }
             finish(with: fullImage)
         }
     }

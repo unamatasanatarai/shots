@@ -8,6 +8,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var captureFullscreenMenuItem: NSMenuItem!
     private var saveToDiskMenuItem: NSMenuItem!
     private var copyToClipboardMenuItem: NSMenuItem!
+    private var includeCursorMenuItem: NSMenuItem!
 
     public override init() {
         super.init()
@@ -106,6 +107,14 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         copyToClipboardMenuItem.target = self
         menu.addItem(copyToClipboardMenuItem)
 
+        includeCursorMenuItem = NSMenuItem(
+            title: "Include Cursor",
+            action: #selector(toggleIncludeCursor),
+            keyEquivalent: ""
+        )
+        includeCursorMenuItem.target = self
+        menu.addItem(includeCursorMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 4. Preferences & Hotkeys
@@ -164,6 +173,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
         saveToDiskMenuItem.state = settings.saveToDisk ? .on : .off
         copyToClipboardMenuItem.state = settings.copyToClipboard ? .on : .off
+        includeCursorMenuItem.state = settings.includeCursor ? .on : .off
     }
 
     // MARK: - Actions
@@ -188,6 +198,11 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleCopyToClipboard() {
         AppSettings.shared.copyToClipboard.toggle()
+        updateMenuItemsState()
+    }
+
+    @objc private func toggleIncludeCursor() {
+        AppSettings.shared.includeCursor.toggle()
         updateMenuItemsState()
     }
 

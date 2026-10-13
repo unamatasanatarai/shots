@@ -18,16 +18,22 @@ public final class CaptureManager {
     public func captureFullscreen(screen: NSScreen? = nil) {
         if let explicitScreen = screen {
             let displayID = CaptureService.shared.displayID(for: explicitScreen) ?? CGMainDisplayID()
-            if let image = CaptureService.shared.captureFullscreen(displayID: displayID) {
+            if var image = CaptureService.shared.captureFullscreen(displayID: displayID) {
+                if AppSettings.shared.includeCursor {
+                    image = CaptureService.shared.compositeCursor(on: image, screen: explicitScreen) ?? image
+                }
                 processCapturedImage(image)
             } else {
                 captureFallback()
             }
         } else {
             guard let result = CaptureService.shared.captureActiveFullscreen(),
-                  let image = result.image else {
+                  var image = result.image else {
                 captureFallback()
                 return
+            }
+            if AppSettings.shared.includeCursor {
+                image = CaptureService.shared.compositeCursor(on: image, screen: result.screen) ?? image
             }
             processCapturedImage(image)
         }

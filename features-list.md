@@ -8,7 +8,7 @@
 - [ ] **Scrolling Capture** — Capture a selected area continuously while scrolling, stopping when scrolling ends or the maximum height of 20,000 px is reached.
 - [ ] **Repeat Previous Screenshot** — Repeat the last capture using the same mode and selection.
 - [x] **Multi-Display Support** — Automatically target the active display.
-- [ ] **Cursor Capture** — Option to include or exclude the mouse cursor.
+- [x] **Cursor Capture** — Option to include or exclude the mouse cursor.
 
 ## 2. Saving & File Management
 

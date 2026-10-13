@@ -255,6 +255,51 @@ public struct AppTests {
             assert(resolvedFromCG != nil, "Resolved screen from CG point must not be nil")
         }
 
+        // MARK: - Cursor Capture Suite
+        testRunner("Cursor Capture - Compositing Engine & Settings") {
+            let settings = AppSettings.shared
+            let prevSetting = settings.includeCursor
+            defer { settings.includeCursor = prevSetting }
+
+            settings.includeCursor = true
+            assert(settings.includeCursor == true, "includeCursor can be set to true")
+
+            // Test cursor compositing on synthetic image
+            let width = 200
+            let height = 200
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let baseImage = ctx.makeImage()!
+            let testScreen = NSScreen.screens.first ?? NSScreen()
+
+            // 1. Mouse inside screen -> composites cursor image
+            let insideMouse = NSPoint(x: testScreen.frame.midX, y: testScreen.frame.midY)
+            let composited = CaptureService.shared.compositeCursor(
+                on: baseImage,
+                screen: testScreen,
+                mouseLocation: insideMouse
+            )
+            assert(composited != nil, "Composited image must not be nil")
+            assert(composited!.width == width && composited!.height == height, "Composited dimensions must match base image")
+
+            // 2. Mouse outside screen -> returns original image untouched
+            let outsideMouse = NSPoint(x: -9999, y: -9999)
+            let untouched = CaptureService.shared.compositeCursor(
+                on: baseImage,
+                screen: testScreen,
+                mouseLocation: outsideMouse
+            )
+            assert(untouched == baseImage, "Mouse outside target bounds should return base image untouched")
+        }
+
         testRunner("Coordinates Badge - Pattern Format & Boundary Clamping") {
             let curX = 1420
             let curY = 850

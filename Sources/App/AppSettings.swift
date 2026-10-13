@@ -14,6 +14,7 @@ public final class AppSettings: ObservableObject {
         public static let saveToDisk = "saveToDisk"
         public static let saveDirectoryPath = "saveDirectoryPath"
         public static let copyToClipboard = "copyToClipboard"
+        public static let includeCursor = "includeCursor"
         public static let freezeScreenOnCapture = "freezeScreenOnCapture"
     }
 
@@ -55,6 +56,12 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    @Published public var includeCursor: Bool {
+        didSet {
+            defaults.set(includeCursor, forKey: Keys.includeCursor)
+        }
+    }
+
 
     // MARK: - Validation & Conflict States
 
@@ -90,6 +97,7 @@ public final class AppSettings: ObservableObject {
         self.saveDirectoryPath = finalPath
 
         self.copyToClipboard = defaults.object(forKey: Keys.copyToClipboard) as? Bool ?? true
+        self.includeCursor = defaults.object(forKey: Keys.includeCursor) as? Bool ?? false
         defaults.removeObject(forKey: Keys.freezeScreenOnCapture)
 
         // Ensure default directory is created immediately if missing

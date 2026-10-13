@@ -100,4 +100,74 @@ public final class CaptureService {
         guard cropRect.width > 0 && cropRect.height > 0 else { return nil }
         return image.cropping(to: cropRect)
     }
+
+    // MARK: - Cursor Compositing
+
+    /// Overlays the mouse cursor onto a captured CGImage if within bounds, respecting screen coordinates and Retina scale.
+    public func compositeCursor(
+        on baseImage: CGImage,
+        screen: NSScreen,
+        cropRect: NSRect? = nil,
+        mouseLocation: NSPoint = NSEvent.mouseLocation,
+        cursor: NSCursor = NSCursor.current
+    ) -> CGImage? {
+        let screenFrame = screen.frame
+        let targetLogicalRect = cropRect.map {
+            NSRect(
+                x: screenFrame.origin.x + $0.origin.x,
+                y: screenFrame.origin.y + $0.origin.y,
+                width: $0.width,
+                height: $0.height
+            )
+        } ?? screenFrame
+
+        // Check if cursor location is inside the captured rectangle
+        guard targetLogicalRect.contains(mouseLocation) else {
+            return baseImage
+        }
+
+        let width = baseImage.width
+        let height = baseImage.height
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo.rawValue
+        ) else {
+            return baseImage
+        }
+
+        // Draw the base image
+        context.draw(baseImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Compute cursor position in target pixel coordinates
+        let scaleX = CGFloat(width) / targetLogicalRect.width
+        let scaleY = CGFloat(height) / targetLogicalRect.height
+
+        let cursorImage = cursor.image
+        let hotSpot = cursor.hotSpot
+
+        // Logical position relative to bottom-left of targetLogicalRect
+        let cursorLogicalX = (mouseLocation.x - targetLogicalRect.origin.x) - hotSpot.x
+        let cursorLogicalY = (mouseLocation.y - targetLogicalRect.origin.y) - (cursorImage.size.height - hotSpot.y)
+
+        let cursorPixelRect = CGRect(
+            x: cursorLogicalX * scaleX,
+            y: cursorLogicalY * scaleY,
+            width: cursorImage.size.width * scaleX,
+            height: cursorImage.size.height * scaleY
+        )
+
+        if let cursorCGImage = cursorImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            context.draw(cursorCGImage, in: cursorPixelRect)
+        }
+
+        return context.makeImage() ?? baseImage
+    }
 }
