@@ -22,7 +22,7 @@
   - Create the default directory if it does not exist.
 - [x] **Save Location Settings** — Allow users to change the default output folder.
 - [x] **Post-Capture Action** — Save to disk by default, with an option to copy directly to the clipboard.
-- [ ] **Reveal Latest Screenshot** — Open Finder with the most recently captured file selected.
+- [x] **Reveal Latest Screenshot** — Open Finder with the most recently captured file selected.
 
 ## 3. OCR & Code Recognition
 

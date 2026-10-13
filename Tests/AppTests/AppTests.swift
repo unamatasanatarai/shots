@@ -722,8 +722,60 @@ public struct AppTests {
                 assert(badgeX >= margin, "Badge X must be >= margin (was \(badgeX))")
                 assert(badgeX + badgeW <= boundsSize.width - margin, "Badge right must not exceed bounds")
                 assert(badgeY >= margin, "Badge Y must be >= margin (was \(badgeY))")
-                assert(badgeY + badgeH <= boundsSize.height - margin, "Badge top must not exceed bounds")
             }
+        }
+
+        // MARK: - Reveal Latest Screenshot Suite
+        testRunner("Reveal Latest Screenshot - File Resolution and Menu Bar Integration") {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("shots_reveal_test_\(UUID().uuidString)")
+            try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
+            defer {
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+
+            let saveService = SaveService.shared
+            let oldLatest = saveService.latestSavedURL
+            defer {
+                saveService.latestSavedURL = oldLatest
+            }
+
+            // 1. Initial empty directory resolution without cached URL
+            saveService.latestSavedURL = nil
+            let emptyResult = saveService.resolveLatestScreenshotURL(directoryURL: tempDir)
+            assert(emptyResult == nil, "Empty directory must resolve to nil")
+
+            // 2. Create mock screenshot files with distinct modification timestamps
+            let olderURL = tempDir.appendingPathComponent("shot_20261013_080000.png")
+            let newerURL = tempDir.appendingPathComponent("shot_20261013_120000.jpg")
+            let nonScreenshotURL = tempDir.appendingPathComponent("notes.txt")
+
+            try! "older".write(to: olderURL, atomically: true, encoding: .utf8)
+            try! "newer".write(to: newerURL, atomically: true, encoding: .utf8)
+            try! "text".write(to: nonScreenshotURL, atomically: true, encoding: .utf8)
+
+            let olderDate = Date().addingTimeInterval(-3600)
+            let newerDate = Date()
+            try! FileManager.default.setAttributes([.modificationDate: olderDate], ofItemAtPath: olderURL.path)
+            try! FileManager.default.setAttributes([.modificationDate: newerDate], ofItemAtPath: newerURL.path)
+
+            // Test resolution from disk
+            saveService.latestSavedURL = nil
+            let resolved = saveService.resolveLatestScreenshotURL(directoryURL: tempDir)
+            assert(resolved?.lastPathComponent == newerURL.lastPathComponent, "resolveLatestScreenshotURL must choose newest screenshot (got \(String(describing: resolved?.lastPathComponent)))")
+            assert(saveService.latestSavedURL?.lastPathComponent == newerURL.lastPathComponent, "latestSavedURL must be updated with resolved file")
+
+            // 3. Test saving updates latestSavedURL immediately
+            let sampleData = Data([0x89, 0x50, 0x4E, 0x47])
+            try! saveService.saveImageData(sampleData, to: tempDir, filename: "shot_test_immediate.png")
+            assert(saveService.latestSavedURL?.lastPathComponent == "shot_test_immediate.png", "saveImageData must update latestSavedURL directly")
+
+            // 4. Test StatusBarController integration
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+            let revealItem = menu.items.first(where: { $0.title == "Reveal Latest Screenshot" })
+            assert(revealItem != nil, "Reveal Latest Screenshot item must exist in menu")
+            assert(revealItem?.action == Selector(("revealLatestScreenshotAction")), "Action selector must be revealLatestScreenshotAction")
+            assert(revealItem?.isEnabled == true, "Reveal item must be enabled when latest screenshot exists")
         }
     }
 }

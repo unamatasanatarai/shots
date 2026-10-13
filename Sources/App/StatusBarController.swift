@@ -7,6 +7,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var captureRegionMenuItem: NSMenuItem!
     private var captureFullscreenMenuItem: NSMenuItem!
     private var repeatScreenshotMenuItem: NSMenuItem!
+    private var revealLatestMenuItem: NSMenuItem!
     private var saveToDiskMenuItem: NSMenuItem!
     private var copyToClipboardMenuItem: NSMenuItem!
     private var postCaptureActionMenuItem: NSMenuItem!
@@ -115,6 +116,19 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             repeatScreenshotMenuItem.image = repeatIcon
         }
         menu.addItem(repeatScreenshotMenuItem)
+
+        // 4. Reveal Latest Screenshot
+        revealLatestMenuItem = NSMenuItem(
+            title: "Reveal Latest Screenshot",
+            action: #selector(revealLatestScreenshotAction),
+            keyEquivalent: ""
+        )
+        revealLatestMenuItem.target = self
+        if let docIcon = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: nil) {
+            docIcon.isTemplate = true
+            revealLatestMenuItem.image = docIcon
+        }
+        menu.addItem(revealLatestMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -305,6 +319,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         captureFullscreenMenuItem.title = "Capture Fullscreen (\(fsShortcut))"
         repeatScreenshotMenuItem.title = "Repeat Previous Screenshot (\(repShortcut))"
         repeatScreenshotMenuItem.isEnabled = (CaptureManager.shared.lastCapture != nil)
+        revealLatestMenuItem.isEnabled = (SaveService.shared.resolveLatestScreenshotURL() != nil)
 
         if let button = statusItem.button {
             button.toolTip = "Shots! — Click for options or press \(areaShortcut)"
@@ -363,6 +378,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func repeatScreenshotAction() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.repeatPreviousScreenshot()
+        }
+    }
+
+    @objc private func revealLatestScreenshotAction() {
+        if !SaveService.shared.revealLatestScreenshot() {
+            NSSound.beep()
         }
     }
 

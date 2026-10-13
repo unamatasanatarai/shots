@@ -20,7 +20,7 @@ public enum ImageFormat: String, CaseIterable {
 public final class SaveService {
     public static let shared = SaveService()
 
-    public private(set) var latestSavedURL: URL?
+    public var latestSavedURL: URL?
 
     public init() {}
 
@@ -122,5 +122,51 @@ public final class SaveService {
         if let data = pngData ?? encodePNG(image: image) {
             pb.setData(data, forType: .png)
         }
+    }
+
+    // MARK: - Reveal & Latest File Resolution
+
+    /// Resolves the latest screenshot file URL, either from in-memory tracking or by inspecting the target directory.
+    public func resolveLatestScreenshotURL(directoryURL: URL? = nil) -> URL? {
+        if let latest = latestSavedURL, FileManager.default.fileExists(atPath: latest.path) {
+            return latest
+        }
+
+        let targetDir = directoryURL ?? AppSettings.shared.resolvedSaveDirectoryURL
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: targetDir,
+            includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let screenshotFiles = files.filter { url in
+            let ext = url.pathExtension.lowercased()
+            let filename = url.lastPathComponent
+            return (ext == "png" || ext == "jpg" || ext == "jpeg") && filename.hasPrefix("shot_")
+        }
+
+        let sorted = screenshotFiles.sorted { u1, u2 in
+            let d1 = (try? u1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
+            let d2 = (try? u2.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
+            return d1 > d2
+        }
+
+        if let newest = sorted.first {
+            latestSavedURL = newest
+            return newest
+        }
+        return nil
+    }
+
+    /// Reveals the latest screenshot in macOS Finder, selecting the file.
+    @discardableResult
+    public func revealLatestScreenshot(directoryURL: URL? = nil) -> Bool {
+        guard let url = resolveLatestScreenshotURL(directoryURL: directoryURL) else {
+            return false
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        return true
     }
 }
