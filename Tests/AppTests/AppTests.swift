@@ -156,17 +156,31 @@ public struct AppTests {
             }
         }
 
-        testRunner("Filename Formatting - ISO Timestamp Pattern") {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-            let dateString = formatter.string(from: Date())
-            let filename = "Screenshot \(dateString).png"
+        testRunner("Filename Formatting - shot_YYYYMMDD_HHMMSS Pattern & Collision Resolution") {
+            let filename = SaveService.generateFilename(date: Date(), format: .png)
 
-            // Validate filename starts with 'Screenshot ' and ends with '.png'
-            assert(filename.hasPrefix("Screenshot "), "Filename must start with 'Screenshot '")
-            assert(filename.hasSuffix(".png"), "Filename must end with '.png'")
-            assert(filename.contains(" at "), "Filename must contain ' at ' separator")
+            // Validate filename matches ^shot_\d{8}_\d{6}\.png$
+            let regex = try! NSRegularExpression(pattern: #"^shot_\d{8}_\d{6}\.png$"#)
+            let matchRange = NSRange(location: 0, length: filename.utf16.count)
+            assert(regex.firstMatch(in: filename, range: matchRange) != nil, "Filename must match 'shot_YYYYMMDD_HHMMSS.png', was: \(filename)")
+
+            // Test collision handling
+            let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("CollisionTest_\(UUID().uuidString)")
+            try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
+
+            let testDate = Date(timeIntervalSince1970: 1700000000)
+            let expectedBase = SaveService.generateFilename(date: testDate, format: .png)
+            let url1 = SaveService.shared.resolveUniqueDestinationURL(in: tempDir, date: testDate, format: .png)
+            assert(url1.lastPathComponent == expectedBase, "Initial URL should have base name, expected \(expectedBase) got \(url1.lastPathComponent)")
+
+            // Simulate file existing
+            try! "dummy".write(to: url1, atomically: true, encoding: .utf8)
+
+            let expectedCollided = expectedBase.replacingOccurrences(of: ".png", with: "_1.png")
+            let url2 = SaveService.shared.resolveUniqueDestinationURL(in: tempDir, date: testDate, format: .png)
+            assert(url2.lastPathComponent == expectedCollided, "Collision URL should have _1 suffix, was: \(url2.lastPathComponent)")
+
+            try? FileManager.default.removeItem(at: tempDir)
         }
 
         // MARK: - Area Selection & Coordinates Suite

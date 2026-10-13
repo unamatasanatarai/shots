@@ -15,7 +15,7 @@
 - [x] **PNG Support** — Save screenshots as PNG.
 - [ ] **JPG Support** — Save screenshots as JPG.
 - [ ] **JPG Quality** — Configurable compression quality, defaulting to 80.
-- [ ] **Timestamp Filenames** — Generate filenames in the format `shot_YYYYMMDD_HHMMSS.png` (or `.jpg`).
+- [x] **Timestamp Filenames** — Generate filenames in the format `shot_YYYYMMDD_HHMMSS.png` (or `.jpg`).
 - [x] **Default Save Location**
   - Read the preferred save location from system preferences, if available.
   - Otherwise, default to `~/Pictures/shots`.

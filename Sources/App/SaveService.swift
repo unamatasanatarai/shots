@@ -44,6 +44,35 @@ public final class SaveService {
         }
     }
 
+    // MARK: - Filename Generation & Collision Handling
+
+    /// Generates timestamp filename: shot_YYYYMMDD_HHMMSS.{png|jpg}
+    public static func generateFilename(date: Date = Date(), format: ImageFormat = .png) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let dateString = formatter.string(from: date)
+        return "shot_\(dateString).\(format.fileExtension)"
+    }
+
+    /// Resolves unique destination URL in directory, handling same-second collisions with _1, _2 suffix.
+    public func resolveUniqueDestinationURL(in directoryURL: URL, date: Date = Date(), format: ImageFormat = .png) -> URL {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        let dateString = formatter.string(from: date)
+        let base = "shot_\(dateString)"
+        let ext = format.fileExtension
+
+        var destinationURL = directoryURL.appendingPathComponent("\(base).\(ext)")
+        var collisionIndex = 1
+        while FileManager.default.fileExists(atPath: destinationURL.path) {
+            destinationURL = directoryURL.appendingPathComponent("\(base)_\(collisionIndex).\(ext)")
+            collisionIndex += 1
+        }
+        return destinationURL
+    }
+
     // MARK: - Saving Pipeline
 
     /// Persists encoded image data to the target directory with the given filename.

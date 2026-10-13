@@ -87,21 +87,8 @@ public final class CaptureManager {
     // MARK: - File Serialization Helper
 
     private func savePNGToDisk(data: Data, settings: AppSettings) -> URL? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        let dateString = formatter.string(from: Date())
-        let baseFilename = "Screenshot \(dateString)"
-
         let folderURL = settings.resolvedSaveDirectoryURL
-        var destinationURL = folderURL.appendingPathComponent("\(baseFilename).png")
-
-        // Handle collision within the same second
-        var collisionIndex = 1
-        while FileManager.default.fileExists(atPath: destinationURL.path) {
-            destinationURL = folderURL.appendingPathComponent("\(baseFilename) \(collisionIndex).png")
-            collisionIndex += 1
-        }
+        let destinationURL = SaveService.shared.resolveUniqueDestinationURL(in: folderURL, format: .png)
 
         do {
             try SaveService.shared.saveImageData(data, to: folderURL, filename: destinationURL.lastPathComponent)
