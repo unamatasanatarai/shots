@@ -740,6 +740,63 @@ private final class RegionSelectionView: NSView {
         context.restoreGState()
     }
 
+    // MARK: - Live Numbers Rendering (Black Text, Soft Blurry White Outline, Zero Drop Shadow)
+
+    private func measureNumberText(_ text: String) -> NSSize {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 1.0
+        paragraphStyle.alignment = .left
+
+        let fillAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraphStyle
+        ]
+        return NSAttributedString(string: text, attributes: fillAttributes).size()
+    }
+
+    private func drawSoftGlowNumberText(_ text: String, at origin: NSPoint, in context: CGContext) {
+        context.saveGState()
+        context.setLineJoin(.round)
+        context.setLineCap(.round)
+
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = 1.0
+        paragraphStyle.alignment = .left
+
+        // Soft, blurry omnidirectional white outline halo (zero directional drop shadow)
+        let whiteHalo = NSShadow()
+        whiteHalo.shadowColor = NSColor.white.withAlphaComponent(0.95)
+        whiteHalo.shadowOffset = .zero
+        whiteHalo.shadowBlurRadius = 2.5
+
+        // Pass 1: Soft, blurry white outline
+        let outlineAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+            .strokeColor: NSColor.white,
+            .strokeWidth: 16.0,
+            .shadow: whiteHalo,
+            .paragraphStyle: paragraphStyle
+        ]
+
+        // Pass 2: Crisp black text foreground
+        let fillAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor(white: 0.08, alpha: 1.0),
+            .paragraphStyle: paragraphStyle
+        ]
+
+        let outlineString = NSAttributedString(string: text, attributes: outlineAttributes)
+        let fillString = NSAttributedString(string: text, attributes: fillAttributes)
+
+        outlineString.draw(at: origin)
+        fillString.draw(at: origin)
+
+        context.restoreGState()
+    }
+
     // MARK: - Live Coordinate Badge Next to Cursor (Hover Only)
 
     private func drawCoordinateBadge(at point: NSPoint, in context: CGContext) {
@@ -752,25 +809,7 @@ private final class RegionSelectionView: NSView {
         let curY = max(0, min(Int(round((bounds.height - point.y) * scaleY)), maxPixelY))
 
         let text = "x: \(curX)\ny: \(curY)"
-
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 1.0
-        paragraphStyle.alignment = .left
-
-        let textShadow = NSShadow()
-        textShadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
-        textShadow.shadowOffset = NSSize(width: 0.0, height: -1.0)
-        textShadow.shadowBlurRadius = 1.0
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .medium),
-            .foregroundColor: NSColor(white: 0.98, alpha: 1.0),
-            .shadow: textShadow,
-            .paragraphStyle: paragraphStyle
-        ]
-
-        let attributedText = NSAttributedString(string: text, attributes: attributes)
-        let textSize = attributedText.size()
+        let textSize = measureNumberText(text)
 
         let offset: CGFloat = 18.0
         let margin: CGFloat = 8.0
@@ -779,7 +818,8 @@ private final class RegionSelectionView: NSView {
         var originX = point.x + offset
         var originY = point.y - textSize.height - offset
 
-        // second: flip to top if would hide below bottom edge of screen,
+        // Edge flip logic:
+        // flip to top if would hide below bottom edge of screen,
         // flip bottom if top of screen would hide, left if screen right, right if screen left.
         if originY < margin {
             originY = point.y + offset
@@ -797,7 +837,7 @@ private final class RegionSelectionView: NSView {
         originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
         originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
 
-        attributedText.draw(at: NSPoint(x: originX, y: originY))
+        drawSoftGlowNumberText(text, at: NSPoint(x: originX, y: originY), in: context)
     }
 
     // MARK: - Live Selection Dimensions Badge (Drag Only)
@@ -810,25 +850,7 @@ private final class RegionSelectionView: NSView {
         let pixelHeight = Int(round(abs(current.y - start.y) * scaleY))
 
         let dimensionText = "\(pixelWidth)\n\(pixelHeight)"
-
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 1.0
-        paragraphStyle.alignment = .left
-
-        let textShadow = NSShadow()
-        textShadow.shadowColor = NSColor.black.withAlphaComponent(0.85)
-        textShadow.shadowOffset = NSSize(width: 0.0, height: -1.0)
-        textShadow.shadowBlurRadius = 1.0
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .medium),
-            .foregroundColor: NSColor(white: 0.98, alpha: 1.0),
-            .shadow: textShadow,
-            .paragraphStyle: paragraphStyle
-        ]
-
-        let attributedString = NSAttributedString(string: dimensionText, attributes: attributes)
-        let textSize = attributedString.size()
+        let textSize = measureNumberText(dimensionText)
 
         let offset: CGFloat = 18.0
         let margin: CGFloat = 8.0
@@ -861,11 +883,10 @@ private final class RegionSelectionView: NSView {
             originX = curX + offset
         }
 
-        // Clamp to screen bounds as safeguard
         originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
         originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
 
-        attributedString.draw(at: NSPoint(x: originX, y: originY))
+        drawSoftGlowNumberText(dimensionText, at: NSPoint(x: originX, y: originY), in: context)
     }
 
     // MARK: - Geometry Helpers
