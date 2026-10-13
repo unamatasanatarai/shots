@@ -41,6 +41,7 @@ public final class AppSettings: ObservableObject {
         public static let captureDelaySeconds = "captureDelaySeconds"
         public static let imageFormat = "imageFormat"
         public static let jpgQuality = "jpgQuality"
+        public static let launchAtLogin = "launchAtLogin"
         public static let freezeScreenOnCapture = "freezeScreenOnCapture"
     }
 
@@ -212,6 +213,12 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    @Published public var launchAtLogin: Bool {
+        didSet {
+            defaults.set(launchAtLogin, forKey: Keys.launchAtLogin)
+        }
+    }
+
     public var jpgCompressionFactor: Double {
         max(0.01, min(1.0, Double(jpgQuality) / 100.0))
     }
@@ -327,6 +334,8 @@ public final class AppSettings: ObservableObject {
         } else {
             self.jpgQuality = 80
         }
+
+        self.launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
 
         defaults.removeObject(forKey: Keys.freezeScreenOnCapture)
 

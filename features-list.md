@@ -38,7 +38,7 @@
 
 - [x] **Global Keyboard Shortcuts** — Support customizable shortcuts for each capture mode.
   - Use [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) for shortcut configuration and UI.
-- [ ] **Launch at Login** — Option to launch automatically when the user logs in.
+- [x] **Launch at Login** — Option to launch automatically when the user logs in.
 
 ## 5. Menu Bar & Screenshot History
 

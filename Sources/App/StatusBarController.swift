@@ -13,6 +13,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var delayMenuItem: NSMenuItem!
     private var formatMenuItem: NSMenuItem!
     private var qualityMenuItem: NSMenuItem!
+    private var launchAtLoginMenuItem: NSMenuItem!
 
     public override init() {
         super.init()
@@ -209,6 +210,19 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Launch at Login
+        launchAtLoginMenuItem = NSMenuItem(
+            title: "Launch at Login",
+            action: #selector(toggleLaunchAtLogin),
+            keyEquivalent: ""
+        )
+        launchAtLoginMenuItem.target = self
+        if let loopIcon = NSImage(systemSymbolName: "arrow.triangle.2.circlepath.circle", accessibilityDescription: nil) {
+            loopIcon.isTemplate = true
+            launchAtLoginMenuItem.image = loopIcon
+        }
+        menu.addItem(launchAtLoginMenuItem)
+
         // 4. Preferences & Hotkeys
         let prefsItem = NSMenuItem(
             title: "Preferences & Hotkeys...",
@@ -309,6 +323,8 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 }
             }
         }
+
+        launchAtLoginMenuItem.state = settings.launchAtLogin ? .on : .off
     }
 
     // MARK: - Actions
@@ -363,6 +379,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             AppSettings.shared.postCaptureAction = action
             updateMenuItemsState()
         }
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        let current = AppSettings.shared.launchAtLogin
+        _ = LaunchAtLoginService.shared.setLaunchAtLogin(enabled: !current)
+        updateMenuItemsState()
     }
 
     @objc private func openPreferencesAction() {

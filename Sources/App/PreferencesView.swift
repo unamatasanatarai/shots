@@ -128,6 +128,22 @@ public struct PreferencesView: View {
                         .padding(10)
                     }
 
+                    // General Startup Box
+                    GroupBox(label: Label("General", systemImage: "gearshape")) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle("Launch Shots! automatically at login", isOn: Binding(
+                                get: { settings.launchAtLogin },
+                                set: { newValue in
+                                    _ = LaunchAtLoginService.shared.setLaunchAtLogin(enabled: newValue)
+                                }
+                            ))
+                            Text("Starts Shots! quietly in the background when you log into your Mac.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(10)
+                    }
+
                     // Storage Box
                     GroupBox(label: Label("Storage Destination", systemImage: "folder")) {
                         VStack(alignment: .leading, spacing: 12) {

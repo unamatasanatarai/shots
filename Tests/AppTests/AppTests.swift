@@ -520,6 +520,7 @@ public struct AppTests {
             assert(titles.contains("Image Format"), "Menu must contain Image Format submenu")
             assert(titles.contains("JPG Quality"), "Menu must contain JPG Quality submenu")
             assert(titles.contains("Post-Capture Action"), "Menu must contain Post-Capture Action submenu")
+            assert(titles.contains("Launch at Login"), "Menu must contain Launch at Login item")
             assert(titles.contains("Preferences & Hotkeys..."), "Menu must contain Preferences item")
             assert(titles.contains("Open Screenshots Folder"), "Menu must contain Open Screenshots Folder item")
             assert(titles.contains("Change Save Location..."), "Menu must contain Change Save Location item")
@@ -594,6 +595,42 @@ public struct AppTests {
 
             manager.onOCRCaptureTrigger?()
             assert(ocrFired, "OCR capture trigger callback must execute")
+
+            defaults.removePersistentDomain(forName: testSuite)
+        }
+
+        // MARK: - Launch at Login Suite
+        testRunner("Launch at Login - State Management & Persistence") {
+            let testSuite = "com.test.shots.launch.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: testSuite) else {
+                assertionFailure("Failed to allocate test defaults")
+                return
+            }
+
+            let settings = AppSettings(defaults: defaults)
+            assert(settings.launchAtLogin == false, "Launch at Login must default to false")
+
+            // Test setting toggle
+            settings.launchAtLogin = true
+            assert(settings.launchAtLogin == true, "launchAtLogin must be true when enabled")
+            assert(defaults.bool(forKey: AppSettings.Keys.launchAtLogin) == true, "UserDefaults must persist launchAtLogin = true")
+
+            settings.launchAtLogin = false
+            assert(settings.launchAtLogin == false, "launchAtLogin must be false when disabled")
+            assert(defaults.bool(forKey: AppSettings.Keys.launchAtLogin) == false, "UserDefaults must persist launchAtLogin = false")
+
+            // Test LaunchAtLoginService API invocation
+            let service = LaunchAtLoginService.shared
+            let prevSetting = AppSettings.shared.launchAtLogin
+            defer {
+                _ = service.setLaunchAtLogin(enabled: prevSetting)
+            }
+
+            _ = service.setLaunchAtLogin(enabled: true)
+            assert(AppSettings.shared.launchAtLogin == true, "Service must update AppSettings.shared")
+
+            _ = service.setLaunchAtLogin(enabled: false)
+            assert(AppSettings.shared.launchAtLogin == false, "Service must update AppSettings.shared to false")
 
             defaults.removePersistentDomain(forName: testSuite)
         }
