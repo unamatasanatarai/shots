@@ -198,8 +198,11 @@ public final class HotKeyManager {
             guard let self = self else { return }
             switch id {
             case 1:
-                self.onAreaCaptureTrigger?()
-                self.onTrigger?()
+                if let onArea = self.onAreaCaptureTrigger {
+                    onArea()
+                } else {
+                    self.onTrigger?()
+                }
             case 2:
                 self.onFullscreenCaptureTrigger?()
             case 3:

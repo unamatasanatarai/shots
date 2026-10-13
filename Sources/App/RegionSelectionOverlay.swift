@@ -41,82 +41,11 @@ public final class RegionSelectionCoordinator {
     private var liveCurrentPoint: NSPoint?
     private var liveIsDragging = false
     private var isCursorHidden = false
-    private var cursorHideCount = 0
-    private var savedCursor: NSCursor?
 
     private init() {
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.restoreSystemCursor()
-        }
     }
 
     deinit {
-        restoreSystemCursor()
-    }
-
-    // MARK: - Temporary Custom Cursor Overlay Lifecycle (Hide, Draw, Track, Restore)
-
-    /// Step 1 & 2: Save the current cursor state and hide the system cursor.
-    private func hideSystemCursor() {
-        guard !isCursorHidden else { return }
-        isCursorHidden = true
-
-        // 1. Save the current cursor state
-        savedCursor = NSCursor.current
-
-        // 2. Hide the system cursor (WindowServer display hardware + Cocoa cursor)
-        hideDisplayCursors()
-        cursorHideCount = 1
-
-        NSCursor.hide()
-        RegionSelectionView.invisibleCursor.push()
-    }
-
-    private func hideDisplayCursors() {
-        var count: UInt32 = 0
-        CGGetActiveDisplayList(0, nil, &count)
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        CGGetActiveDisplayList(count, &displays, &count)
-        for display in displays {
-            CGDisplayHideCursor(display)
-        }
-    }
-
-    private func showDisplayCursors() {
-        var count: UInt32 = 0
-        CGGetActiveDisplayList(0, nil, &count)
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        CGGetActiveDisplayList(count, &displays, &count)
-        for display in displays {
-            CGDisplayShowCursor(display)
-        }
-    }
-
-    private func rehideSystemCursorIfNeeded() {
-        NSCursor.hide()
-        RegionSelectionView.invisibleCursor.set()
-    }
-
-    /// Step 5: When the operation ends, hide the graphic and restore the system cursor.
-    private func restoreSystemCursor() {
-        guard isCursorHidden else { return }
-        isCursorHidden = false
-
-        // 5. Restore the system cursor and saved cursor state
-        NSCursor.pop()
-        NSCursor.unhide()
-
-        while cursorHideCount > 0 {
-            showDisplayCursors()
-            cursorHideCount -= 1
-        }
-
-        savedCursor?.set()
-        savedCursor = nil
     }
 
     // MARK: - Public API
@@ -131,9 +60,6 @@ public final class RegionSelectionCoordinator {
         guard !isSelecting else { return }
         isSelecting = true
         completionHandler = completion
-
-        // Hide normal system mouse cursor while taking shots
-        hideSystemCursor()
 
         let screens = NSScreen.screens
         guard !screens.isEmpty else {
@@ -170,7 +96,7 @@ public final class RegionSelectionCoordinator {
             )
 
             // Sit just above popUpMenu level so crosshairs draw over context menus,
-            // while remaining completely transparent so video playback and animations continue uninterrupted.
+            // while remaining completely transparent so video playback, menus and animations continue uninterrupted.
             panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) + 1)
             panel.isOpaque = false
             panel.backgroundColor = .clear
@@ -178,10 +104,8 @@ public final class RegionSelectionCoordinator {
             panel.hidesOnDeactivate = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-            // Overlay panel captures cursor rects to enforce complete system pointer invisibility.
-            // All mouse clicks/drags are intercepted and consumed by the CGEventTap.
             panel.ignoresMouseEvents = false
-            panel.acceptsMouseMovedEvents = false
+            panel.acceptsMouseMovedEvents = true
 
             let selectionView = RegionSelectionView(
                 frame: NSRect(origin: .zero, size: screen.frame.size),
@@ -195,25 +119,16 @@ public final class RegionSelectionCoordinator {
         // Install consuming event tap to intercept and swallow mouse clicks/drags
         installEventTap()
 
-        // Immediately resolve the exact current hardware mouse location from WindowServer
-        let initialCGLocation: CGPoint = {
-            if let event = CGEvent(source: nil) {
-                return event.location
-            }
-            let appKit = NSEvent.mouseLocation
-            let primaryH = NSScreen.screens.first?.frame.height ?? 0
-            return CGPoint(x: appKit.x, y: primaryH - appKit.y)
-        }()
+        let initialCGLocation = CGEvent(source: nil)?.location ?? CGPoint.zero
         liveCurrentPoint = initialCGLocation
-
-        // Immediately position the crosshair reticle center exactly at the hardware mouse cursor
         updateOverlays(globalCGPoint: initialCGLocation)
 
         // Show transparent overlays without stealing key focus from existing windows or menus
         for panel in overlayPanels {
             panel.orderFrontRegardless()
-            panel.resetCursorRects()
         }
+
+        updateOverlays(globalCGPoint: initialCGLocation)
     }
 
     // MARK: - Finish
@@ -221,8 +136,6 @@ public final class RegionSelectionCoordinator {
     private func finish(with image: CGImage?) {
         guard isSelecting else { return }
         isSelecting = false
-
-        restoreSystemCursor()
 
         removeEscapeHotKey()
         removeEventTap()
@@ -357,12 +270,11 @@ public final class RegionSelectionCoordinator {
                 liveCurrentPoint = cgPoint
             }
             updateOverlays(globalCGPoint: cgPoint)
-            return true // consume — swallow hover events so menus don't change focus or open submenus
+            return true // consume
 
         case .leftMouseDragged:
             if liveIsDragging {
                 liveCurrentPoint = cgPoint
-                rehideSystemCursorIfNeeded()
             }
             updateOverlays(globalCGPoint: cgPoint)
             return true // consume
@@ -371,13 +283,8 @@ public final class RegionSelectionCoordinator {
             liveStartPoint = cgPoint
             liveCurrentPoint = cgPoint
             liveIsDragging = true
-            // macOS unhides cursor upon click at WindowServer level; explicitly re-hide display cursor and Cocoa cursor
-            hideDisplayCursors()
-            cursorHideCount += 1
-            NSCursor.hide()
-            RegionSelectionView.invisibleCursor.set()
             updateOverlays(globalCGPoint: cgPoint)
-            return true // consume — prevents menu dismissal & button clicks
+            return true // consume
 
         case .leftMouseUp:
             guard liveIsDragging, let start = liveStartPoint else { return true }
@@ -390,10 +297,10 @@ public final class RegionSelectionCoordinator {
 
         case .rightMouseDown:
             finish(with: nil)
-            return true // consume — prevents context menu on cancellation
+            return true // consume
 
         case .scrollWheel, .rightMouseUp, .otherMouseDown:
-            return true // consume — prevent accidental scroll or secondary clicks during selection
+            return true // consume
 
         default:
             return false
@@ -594,6 +501,17 @@ private final class RegionSelectionView: NSView {
         self.targetScreen = screen
         super.init(frame: frameRect)
         wantsLayer = true
+
+        // NSTrackingArea with .activeAlways ensures cursorUpdate fires even when
+        // our app is not the active (frontmost) application.  .inVisibleRect
+        // auto-adapts to bounds changes so we never need to recreate it.
+        let cursorTracking = NSTrackingArea(
+            rect: .zero,
+            options: [.cursorUpdate, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(cursorTracking)
     }
 
     required init?(coder: NSCoder) {
@@ -617,10 +535,33 @@ private final class RegionSelectionView: NSView {
 
     override var acceptsFirstResponder: Bool { false }
 
-    // MARK: - Invisible Cursor Enforcer
+    // MARK: - Transparent Native Cursor
 
+    /// A real transparent bitmap avoids AppKit's fallback-to-arrow behavior that
+    /// can occur with an empty or one-pixel image.
     static let invisibleCursor: NSCursor = {
-        let image = NSImage(size: NSSize(width: 1, height: 1))
+        let cursorSize = 32
+        let representation = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: cursorSize,
+            pixelsHigh: cursorSize,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: cursorSize * 4,
+            bitsPerPixel: 32
+        )!
+
+        for x in 0..<cursorSize {
+            for y in 0..<cursorSize {
+                representation.setColor(.clear, atX: x, y: y)
+            }
+        }
+
+        let image = NSImage(size: NSSize(width: cursorSize, height: cursorSize))
+        image.addRepresentation(representation)
         return NSCursor(image: image, hotSpot: .zero)
     }()
 
@@ -631,32 +572,15 @@ private final class RegionSelectionView: NSView {
     }
 
     override func cursorUpdate(with event: NSEvent) {
+        // Always force the transparent cursor.  This fires via the .activeAlways
+        // tracking area even when our app is not frontmost, ensuring the system
+        // pointer never leaks through our custom crosshair.
         Self.invisibleCursor.set()
-        NSCursor.hide()
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        Self.invisibleCursor.set()
-        NSCursor.hide()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        Self.invisibleCursor.set()
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        Self.invisibleCursor.set()
-        NSCursor.hide()
     }
 
     // MARK: - Drawing & Rendering
 
     override func draw(_ dirtyRect: NSRect) {
-        Self.invisibleCursor.set()
-        if isDragging {
-            NSCursor.hide()
-        }
-
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
         // 1. Selection Marquee: bright luminous highlight with high-contrast glowing borders
@@ -724,12 +648,49 @@ private final class RegionSelectionView: NSView {
             height: circleDiameter
         )
 
+        // ── White glow pass (drawn first, behind everything) ──
+        // A soft white halo keeps all elements visible against dark/black backgrounds.
+        // Two passes at different blur radii build density without harshness.
+        context.saveGState()
+        context.setShadow(offset: .zero, blur: 3.0, color: CGColor(red: 1, green: 1, blue: 1, alpha: 0.70))
+
+        // Glow behind circle outline
+        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.50))
+        context.setLineWidth(circleStrokeWidth + 1.5)
+        context.strokeEllipse(in: circleRect)
+
+        // Glow behind crosshair lines
+        context.setLineWidth(crosshairStrokeWidth + 1.5)
+        context.setLineCap(.butt)
+        context.move(to: CGPoint(x: cx - lineHalf, y: cy))
+        context.addLine(to: CGPoint(x: cx + lineHalf, y: cy))
+        context.move(to: CGPoint(x: cx, y: cy - lineHalf))
+        context.addLine(to: CGPoint(x: cx, y: cy + lineHalf))
+        context.strokePath()
+        context.restoreGState()
+
+        // Tighter second glow pass for density
+        context.saveGState()
+        context.setShadow(offset: .zero, blur: 1.0, color: CGColor(red: 1, green: 1, blue: 1, alpha: 0.55))
+
+        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.35))
+        context.setLineWidth(crosshairStrokeWidth + 0.8)
+        context.setLineCap(.butt)
+        context.move(to: CGPoint(x: cx - lineHalf, y: cy))
+        context.addLine(to: CGPoint(x: cx + lineHalf, y: cy))
+        context.move(to: CGPoint(x: cx, y: cy - lineHalf))
+        context.addLine(to: CGPoint(x: cx, y: cy + lineHalf))
+        context.strokePath()
+        context.restoreGState()
+
+        // ── Foreground drawing ──
+
         // 1. Circle interior fill: pale neutral gray, low opacity
         let circleFillColor = CGColor(red: 0.88, green: 0.88, blue: 0.90, alpha: 0.22)
         context.setFillColor(circleFillColor)
         context.fillEllipse(in: circleRect)
 
-        // 2. Circle outline: medium-light gray, approximately 2% of overall width
+        // 2. Circle outline: medium-light gray
         let circleOutlineColor = CGColor(red: 0.70, green: 0.70, blue: 0.72, alpha: 0.95)
         context.setStrokeColor(circleOutlineColor)
         context.setLineWidth(circleStrokeWidth)
@@ -741,11 +702,11 @@ private final class RegionSelectionView: NSView {
         context.setLineWidth(crosshairStrokeWidth)
         context.setLineCap(.butt)
 
-        // Horizontal line: 75% of overall width
+        // Horizontal line
         context.move(to: CGPoint(x: cx - lineHalf, y: cy))
         context.addLine(to: CGPoint(x: cx + lineHalf, y: cy))
 
-        // Vertical line: 75% of overall height
+        // Vertical line
         context.move(to: CGPoint(x: cx, y: cy - lineHalf))
         context.addLine(to: CGPoint(x: cx, y: cy + lineHalf))
 
@@ -753,7 +714,7 @@ private final class RegionSelectionView: NSView {
         context.restoreGState()
     }
 
-    // MARK: - Live Numbers Rendering (Black Text, Soft Blurry White Outline, Zero Drop Shadow)
+    // MARK: - Live Numbers Rendering (Black Text, Delicate White Edge)
 
     private func measureNumberText(_ text: String) -> NSSize {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 9.0, weight: .semibold)
@@ -776,33 +737,40 @@ private final class RegionSelectionView: NSView {
 
         let fillAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: NSColor(white: 0.10, alpha: 1.0),
+            .foregroundColor: NSColor.black,
             .paragraphStyle: paragraphStyle
         ]
 
-        // Delicate multi-directional white text-shadow halo (like CSS text-shadow)
-        // Multiple subtle passes at slight offsets create a soft, even glow
-        let shadowOffsets: [(CGFloat, CGFloat)] = [
-            ( 0.0, -1.0), ( 0.0,  1.0), (-1.0,  0.0), ( 1.0,  0.0),
-            ( 0.7, -0.7), (-0.7, -0.7), ( 0.7,  0.7), (-0.7,  0.7)
+        // White outline / glow — two passes build a soft but readable halo.
+        // Pass 1: wider blur for the outer glow
+        let outerShadow = NSShadow()
+        outerShadow.shadowColor = NSColor.white.withAlphaComponent(0.85)
+        outerShadow.shadowOffset = .zero
+        outerShadow.shadowBlurRadius = 2.0
+        let outerGlowAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.clear,
+            .strokeColor: NSColor.white.withAlphaComponent(0.70),
+            .strokeWidth: 3.0,
+            .shadow: outerShadow,
+            .paragraphStyle: paragraphStyle
         ]
+        NSAttributedString(string: text, attributes: outerGlowAttributes).draw(at: origin)
 
-        for (dx, dy) in shadowOffsets {
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.white.withAlphaComponent(0.40)
-            shadow.shadowOffset = NSSize(width: dx, height: dy)
-            shadow.shadowBlurRadius = 1.5
-
-            let shadowAttributes: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: NSColor.clear,
-                .strokeColor: NSColor.white.withAlphaComponent(0.35),
-                .strokeWidth: 4.0,
-                .shadow: shadow,
-                .paragraphStyle: paragraphStyle
-            ]
-            NSAttributedString(string: text, attributes: shadowAttributes).draw(at: origin)
-        }
+        // Pass 2: tighter edge for crispness
+        let innerShadow = NSShadow()
+        innerShadow.shadowColor = NSColor.white.withAlphaComponent(0.65)
+        innerShadow.shadowOffset = .zero
+        innerShadow.shadowBlurRadius = 0.8
+        let innerGlowAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.clear,
+            .strokeColor: NSColor.white.withAlphaComponent(0.50),
+            .strokeWidth: 2.0,
+            .shadow: innerShadow,
+            .paragraphStyle: paragraphStyle
+        ]
+        NSAttributedString(string: text, attributes: innerGlowAttributes).draw(at: origin)
 
         // Crisp dark foreground text on top
         NSAttributedString(string: text, attributes: fillAttributes).draw(at: origin)
