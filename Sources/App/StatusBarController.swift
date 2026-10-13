@@ -174,6 +174,33 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // 6. Editor Options
+        let openEditorMenuItem = NSMenuItem(
+            title: "Open Image in Editor...",
+            action: #selector(openImageInEditorAction),
+            keyEquivalent: "o"
+        )
+        openEditorMenuItem.target = self
+        if let editIcon = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil) {
+            editIcon.isTemplate = true
+            openEditorMenuItem.image = editIcon
+        }
+        menu.addItem(openEditorMenuItem)
+
+        let openTestImageMenuItem = NSMenuItem(
+            title: "Open Test Image in Editor",
+            action: #selector(openTestImageInEditorAction),
+            keyEquivalent: ""
+        )
+        openTestImageMenuItem.target = self
+        if let testIcon = NSImage(systemSymbolName: "photo.badge.checkmark", accessibilityDescription: nil) {
+            testIcon.isTemplate = true
+            openTestImageMenuItem.image = testIcon
+        }
+        menu.addItem(openTestImageMenuItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // 3. Quick Toggles
         saveToDiskMenuItem = NSMenuItem(
             title: "Save to Folder",
@@ -436,8 +463,21 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                     menuItem.image = fallback
                 }
 
-                // Submenu for explicit actions: Reveal in Finder and Copy to Clipboard
+                // Submenu for explicit actions: Open in Editor, Reveal in Finder and Copy to Clipboard
                 let actionSubmenu = NSMenu()
+
+                let openInEditorSubItem = NSMenuItem(
+                    title: "Open in Editor",
+                    action: #selector(openRecentInEditorAction(_:)),
+                    keyEquivalent: ""
+                )
+                openInEditorSubItem.target = self
+                openInEditorSubItem.representedObject = item.fileURL
+                if let editIcon = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil) {
+                    editIcon.isTemplate = true
+                    openInEditorSubItem.image = editIcon
+                }
+                actionSubmenu.addItem(openInEditorSubItem)
 
                 let revealSubItem = NSMenuItem(
                     title: "Reveal in Finder",
@@ -505,6 +545,19 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Actions
+
+    @objc private func openImageInEditorAction() {
+        EditorCoordinator.shared.openImageFileDialog()
+    }
+
+    @objc private func openTestImageInEditorAction() {
+        EditorCoordinator.shared.openTestImage()
+    }
+
+    @objc public func openRecentInEditorAction(_ sender: NSMenuItem) {
+        guard let fileURL = sender.representedObject as? URL else { return }
+        EditorCoordinator.shared.openImageFile(url: fileURL)
+    }
 
     @objc private func captureRegionAction() {
         // Slight delay to allow menu window to completely dismiss from screen

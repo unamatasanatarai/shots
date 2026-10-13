@@ -39,6 +39,10 @@ kill:
 test:
 	@./scripts/test.sh
 
+## test-editor: Run Image Annotation Engine unit test suite (test-image.jpg)
+test-editor:
+	@./scripts/test-editor.sh
+
 ## reset-cache: Clear macOS LaunchServices and IconServices caches
 reset-cache:
 	@echo "==> Resetting macOS Icon and LaunchServices caches..."

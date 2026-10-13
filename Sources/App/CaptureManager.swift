@@ -198,6 +198,11 @@ public final class CaptureManager {
         let saveService = SaveService.shared
         let format = settings.imageFormat
 
+        // Automatically open the editor with the captured screenshot
+        DispatchQueue.main.async {
+            EditorCoordinator.shared.openEditor(with: cgImage)
+        }
+
         // Perform encoding and I/O off the main RunLoop to maintain ultra-low latency
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }

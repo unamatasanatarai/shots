@@ -204,27 +204,27 @@ Spotlights must never compound (double-darken) where they overlap.
 
 ### Phase 1: Core Architecture & Rendering
 
-* [ ] **1.1** Scaffold the Swift macOS project using AppKit. Create the floating, borderless `NSPanel` overlay.
-* [ ] **1.2** Implement the `CGContext` rendering loop inside a custom `NSView`. Ensure 60fps+ redraws during drag events.
-* [ ] **1.3** Implement the base `AnnotationLayer` protocol and specific structs (Arrow, Rectangle, Callout).
-* [ ] **1.4** Implement the 3-point Quadratic Bezier math and rendering for the Arrow tool.
+* [x] **1.1** Scaffold the Swift macOS project using AppKit. Create the floating, borderless `NSPanel` overlay.
+* [x] **1.2** Implement the `CGContext` rendering loop inside a custom `NSView`. Ensure 60fps+ redraws during drag events.
+* [x] **1.3** Implement the base `AnnotationLayer` protocol and specific structs (Arrow, Rectangle, Callout).
+* [x] **1.4** Implement the 3-point Quadratic Bezier math and rendering for the Arrow tool.
 
 ### Phase 2: Elastic Canvas Integration
 
-* [ ] **2.1** Abstract `originalImageBounds` and `activeCanvasBounds` in the State Manager.
-* [ ] **2.2** Implement precise `getBoundingBox()` math for all vector layers, accounting for stroke width overhangs.
-* [ ] **2.3** Build the `computeElasticBounds()` algorithm to dynamically calculate the union rect + `10px` padding.
-* [ ] **2.4** Hook the elastic bounds calculation into the mouse drag event handler. Ensure negative `minX`/`minY` coordinates properly translate the `CGContext` origin so the image stays anchored.
+* [x] **2.1** Abstract `originalImageBounds` and `activeCanvasBounds` in the State Manager.
+* [x] **2.2** Implement precise `getBoundingBox()` math for all vector layers, accounting for stroke width overhangs.
+* [x] **2.3** Build the `computeElasticBounds()` algorithm to dynamically calculate the union rect + `10px` padding.
+* [x] **2.4** Hook the elastic bounds calculation into the mouse drag event handler. Ensure negative `minX`/`minY` coordinates properly translate the `CGContext` origin so the image stays anchored.
 
 ### Phase 3: Micro-Interactions & Fiddly Bits
 
-* [ ] **3.1** Implement the `Spacebar` mid-draw translation interrupt.
-* [ ] **3.2** Implement the `Shift` constraint for perfect squares/circles.
-* [ ] **3.3** Integrate Apple Vision `VNRecognizeTextRequest` and hook it into a smart selection `Option` drag and the `isTextOnlyMode` blur.
-* [ ] **3.4** Build the Spotlight offscreen mask buffer to prevent overlap compounding.
+* [x] **3.1** Implement the `Spacebar` mid-draw translation interrupt.
+* [x] **3.2** Implement the `Shift` constraint for perfect squares/circles.
+* [x] **3.3** Integrate Apple Vision `VNRecognizeTextRequest` and hook it into a smart selection `Option` drag and the `isTextOnlyMode` blur.
+* [x] **3.4** Build the Spotlight offscreen mask buffer to prevent overlap compounding.
 
 ### Phase 4: Export & System Integration
 
-* [ ] **4.1** Implement `NSPasteboard` integration to copy the composited `activeCanvasBounds` as a PNG.
-* [ ] **4.2** Implement `NSDraggingSource` to allow the user to drag the finished image out of the app into Finder/Messages.
-* [ ] **4.3** Hook up the `deleteLayer` event to trigger an auto-shrink bounds recalculation.
+* [x] **4.1** Implement `NSPasteboard` integration to copy the composited `activeCanvasBounds` as a PNG.
+* [x] **4.2** Implement `NSDraggingSource` to allow the user to drag the finished image out of the app into Finder/Messages.
+* [x] **4.3** Hook up the `deleteLayer` event to trigger an auto-shrink bounds recalculation.

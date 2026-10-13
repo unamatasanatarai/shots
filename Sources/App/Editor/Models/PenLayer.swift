@@ -1,0 +1,230 @@
+import Foundation
+import CoreGraphics
+import AppKit
+
+// MARK: - Pen Layer (Freehand)
+
+public final class PenLayer: AnnotationLayer {
+    public let id: UUID
+    public let type: LayerType = .pen
+    public var zIndex: Int
+    public var isVisible: Bool = true
+    public var color: String
+    public var strokeWidth: CGFloat
+
+    public var points: [CGPoint]
+
+    public init(
+        id: UUID = UUID(),
+        points: [CGPoint] = [],
+        color: String = "#FF3B30",
+        strokeWidth: CGFloat = 4.0,
+        zIndex: Int = 0
+    ) {
+        self.id = id
+        self.points = points
+        self.color = color
+        self.strokeWidth = strokeWidth
+        self.zIndex = zIndex
+    }
+
+    public func getBoundingBox() -> CGRect {
+        guard !points.isEmpty else { return .zero }
+        var minX = points[0].x, maxX = points[0].x
+        var minY = points[0].y, maxY = points[0].y
+        for p in points {
+            minX = min(minX, p.x); maxX = max(maxX, p.x)
+            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        }
+        let pad = strokeWidth + 6.0
+        return CGRect(x: minX - pad, y: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2)
+    }
+
+    public func contains(point: CGPoint) -> Bool {
+        guard points.count >= 2 else { return false }
+        let threshold = max(strokeWidth * 1.5, 10.0)
+        for i in 0..<(points.count - 1) {
+            let a = points[i]
+            let b = points[i + 1]
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            let lenSq = dx * dx + dy * dy
+            if lenSq < 0.001 {
+                if hypot(point.x - a.x, point.y - a.y) <= threshold { return true }
+                continue
+            }
+            let t = max(0, min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq))
+            let proj = CGPoint(x: a.x + t * dx, y: a.y + t * dy)
+            if hypot(point.x - proj.x, point.y - proj.y) <= threshold { return true }
+        }
+        return false
+    }
+
+    public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
+        guard !points.isEmpty else { return nil }
+        if hypot(point.x - points.first!.x, point.y - points.first!.y) <= radius { return 0 }
+        if hypot(point.x - points.last!.x, point.y - points.last!.y) <= radius { return points.count - 1 }
+        return nil
+    }
+
+    public func move(by delta: CGPoint) {
+        for i in 0..<points.count {
+            points[i].x += delta.x
+            points[i].y += delta.y
+        }
+    }
+
+    public func updateHandle(index: Int, to point: CGPoint) {
+        if index >= 0 && index < points.count {
+            points[index] = point
+        }
+    }
+
+    public func draw(in context: CGContext, scale: CGFloat) {
+        guard points.count >= 2 else { return }
+        context.saveGState()
+
+        let strokeColor = NSColor(hex: color).cgColor
+        context.setStrokeColor(strokeColor)
+        context.setLineWidth(strokeWidth)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+
+        context.beginPath()
+        context.move(to: points[0])
+
+        // Quadratic smoothing between midpoints
+        for i in 1..<points.count {
+            let mid = CGPoint(
+                x: (points[i - 1].x + points[i].x) / 2.0,
+                y: (points[i - 1].y + points[i].y) / 2.0
+            )
+            context.addQuadCurve(to: mid, control: points[i - 1])
+        }
+        context.addLine(to: points.last!)
+        context.strokePath()
+
+        context.restoreGState()
+    }
+
+    public func clone() -> AnnotationLayer {
+        PenLayer(
+            id: UUID(),
+            points: points,
+            color: color,
+            strokeWidth: strokeWidth,
+            zIndex: zIndex
+        )
+    }
+}
+
+// MARK: - Highlighter Layer
+
+public final class HighlighterLayer: AnnotationLayer {
+    public let id: UUID
+    public let type: LayerType = .highlighter
+    public var zIndex: Int
+    public var isVisible: Bool = true
+    public var color: String
+    public var strokeWidth: CGFloat
+
+    public var points: [CGPoint]
+
+    public init(
+        id: UUID = UUID(),
+        points: [CGPoint] = [],
+        color: String = "#FFCC00",
+        strokeWidth: CGFloat = 20.0,
+        zIndex: Int = 0
+    ) {
+        self.id = id
+        self.points = points
+        self.color = color
+        self.strokeWidth = strokeWidth
+        self.zIndex = zIndex
+    }
+
+    public func getBoundingBox() -> CGRect {
+        guard !points.isEmpty else { return .zero }
+        var minX = points[0].x, maxX = points[0].x
+        var minY = points[0].y, maxY = points[0].y
+        for p in points {
+            minX = min(minX, p.x); maxX = max(maxX, p.x)
+            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        }
+        let pad = strokeWidth / 2.0 + 4.0
+        return CGRect(x: minX - pad, y: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2)
+    }
+
+    public func contains(point: CGPoint) -> Bool {
+        guard points.count >= 2 else { return false }
+        let threshold = strokeWidth / 2.0 + 4.0
+        for i in 0..<(points.count - 1) {
+            let a = points[i]
+            let b = points[i + 1]
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            let lenSq = dx * dx + dy * dy
+            if lenSq < 0.001 {
+                if hypot(point.x - a.x, point.y - a.y) <= threshold { return true }
+                continue
+            }
+            let t = max(0, min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lenSq))
+            let proj = CGPoint(x: a.x + t * dx, y: a.y + t * dy)
+            if hypot(point.x - proj.x, point.y - proj.y) <= threshold { return true }
+        }
+        return false
+    }
+
+    public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
+        guard !points.isEmpty else { return nil }
+        if hypot(point.x - points.first!.x, point.y - points.first!.y) <= radius { return 0 }
+        if hypot(point.x - points.last!.x, point.y - points.last!.y) <= radius { return points.count - 1 }
+        return nil
+    }
+
+    public func move(by delta: CGPoint) {
+        for i in 0..<points.count {
+            points[i].x += delta.x
+            points[i].y += delta.y
+        }
+    }
+
+    public func updateHandle(index: Int, to point: CGPoint) {
+        if index >= 0 && index < points.count {
+            points[index] = point
+        }
+    }
+
+    public func draw(in context: CGContext, scale: CGFloat) {
+        guard points.count >= 2 else { return }
+        context.saveGState()
+
+        // Translucent highlight blending
+        let baseColor = NSColor(hex: color)
+        context.setStrokeColor(baseColor.withAlphaComponent(0.40).cgColor)
+        context.setBlendMode(.multiply)
+        context.setLineWidth(strokeWidth)
+        context.setLineCap(.square)
+        context.setLineJoin(.round)
+
+        context.beginPath()
+        context.move(to: points[0])
+        for i in 1..<points.count {
+            context.addLine(to: points[i])
+        }
+        context.strokePath()
+
+        context.restoreGState()
+    }
+
+    public func clone() -> AnnotationLayer {
+        HighlighterLayer(
+            id: UUID(),
+            points: points,
+            color: color,
+            strokeWidth: strokeWidth,
+            zIndex: zIndex
+        )
+    }
+}
