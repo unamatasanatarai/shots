@@ -73,10 +73,21 @@ public struct AppTests {
             assert(settings.saveToDisk == true, "saveToDisk must default to true")
             assert(settings.copyToClipboard == true, "copyToClipboard must default to true")
             assert(!settings.saveDirectoryPath.isEmpty, "saveDirectoryPath must have default path")
+            assert(settings.scrollingCaptureSpeed == .normal, "scrollingCaptureSpeed must default to .normal")
 
             // Verify mutations persist
             settings.saveToDisk = false
             assert(testDefaults.bool(forKey: AppSettings.Keys.saveToDisk) == false, "UserDefaults must reflect mutation")
+
+            settings.scrollingCaptureSpeed = .slow
+            assert(testDefaults.string(forKey: AppSettings.Keys.scrollingCaptureSpeed) == ScrollingCaptureSpeed.slow.rawValue, "UserDefaults must store updated scrollingCaptureSpeed")
+            assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 500_000, "Slow speed must have 500ms step delay")
+            assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 45, "Slow speed must have 45px scroll delta")
+
+            settings.scrollingCaptureSpeed = .fast
+            assert(testDefaults.string(forKey: AppSettings.Keys.scrollingCaptureSpeed) == ScrollingCaptureSpeed.fast.rawValue, "UserDefaults must store fast scrollingCaptureSpeed")
+            assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 200_000, "Fast speed must have 200ms step delay")
+            assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 90, "Fast speed must have 90px scroll delta")
 
             settings.hotkeyKeyCode = UInt16(kVK_ANSI_2)
             assert(testDefaults.integer(forKey: AppSettings.Keys.hotkeyKeyCode) == Int(kVK_ANSI_2), "UserDefaults must store updated keyCode")

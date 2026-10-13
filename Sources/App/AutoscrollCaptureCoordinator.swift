@@ -73,7 +73,9 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             var accumulatedHeight = firstFrame.height
             let maxHeight = ScrollingCaptureService.maxAllowedHeight
             let maxSteps = 80 // Safety ceiling: prevents runaway loops on infinite feeds
-            let scrollPixels: Int32 = 60 // Gentle, controlled scroll cadence (~3-4 lines of code)
+            let speedConfig = AppSettings.shared.scrollingCaptureSpeed
+            let scrollPixels = speedConfig.scrollDeltaPixels
+            let stepDelay = speedConfig.stepDelayMicroseconds
 
             for _ in 0..<maxSteps {
                 guard !self.isCancelled else { break }
@@ -81,8 +83,8 @@ public final class AutoscrollCaptureCoordinator: NSObject {
                 // Post synthetic scroll event down targeted at the window center
                 self.postScrollEvent(deltaY: scrollPixels, at: targetCenterCG)
 
-                // Wait 350ms for content animation, inertial scrolling, and GPU redraw to completely settle
-                usleep(350_000)
+                // Wait configured settling pause for content animation, inertial scrolling, and GPU redraw
+                usleep(stepDelay)
 
                 guard !self.isCancelled else { break }
 

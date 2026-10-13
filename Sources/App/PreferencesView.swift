@@ -201,6 +201,34 @@ public struct PreferencesView: View {
                         .padding(10)
                     }
 
+                    // Scrolling Capture Box
+                    GroupBox(label: Label("Scrolling Capture", systemImage: "arrow.up.and.down.circle")) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Capture Speed")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Text("Controls scroll step distance and settling delay during automatic scrolling.")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+
+                            Picker("Scrolling Speed", selection: $settings.scrollingCaptureSpeed) {
+                                ForEach(ScrollingCaptureSpeed.allCases) { speed in
+                                    Text(speed.displayName).tag(speed)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text(settings.scrollingCaptureSpeed.detailDescription)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(10)
+                    }
+
                     // System Permissions Box
                     GroupBox(label: Label("System Permissions", systemImage: "lock.shield")) {
                         VStack(spacing: 12) {
@@ -289,7 +317,7 @@ public struct PreferencesView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(width: 480, height: 500)
+        .frame(width: 480, height: 530)
         .onDisappear {
             stopRecording()
         }

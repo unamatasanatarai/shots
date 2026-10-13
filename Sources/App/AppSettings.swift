@@ -18,6 +18,48 @@ public enum PostCaptureAction: String, CaseIterable, Identifiable {
     }
 }
 
+public enum ScrollingCaptureSpeed: String, CaseIterable, Identifiable {
+    case slow = "slow"
+    case normal = "normal"
+    case fast = "fast"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .slow: return "Slow"
+        case .normal: return "Normal"
+        case .fast: return "Fast"
+        }
+    }
+
+    public var detailDescription: String {
+        switch self {
+        case .slow: return "Step: 45 px • Pause: 500 ms (Gentle, ideal for heavy web pages and smooth inertial settling)"
+        case .normal: return "Step: 60 px • Pause: 350 ms (Balanced, recommended for editors and documents)"
+        case .fast: return "Step: 90 px • Pause: 200 ms (Rapid capture for simple native windows)"
+        }
+    }
+
+    /// Pause duration between scroll steps in microseconds for usleep
+    public var stepDelayMicroseconds: useconds_t {
+        switch self {
+        case .slow: return 500_000
+        case .normal: return 350_000
+        case .fast: return 200_000
+        }
+    }
+
+    /// Scroll delta in pixels per step
+    public var scrollDeltaPixels: Int32 {
+        switch self {
+        case .slow: return 45
+        case .normal: return 60
+        case .fast: return 90
+        }
+    }
+}
+
 public final class AppSettings: ObservableObject {
     public static let shared = AppSettings()
 
@@ -42,6 +84,7 @@ public final class AppSettings: ObservableObject {
         public static let imageFormat = "imageFormat"
         public static let jpgQuality = "jpgQuality"
         public static let launchAtLogin = "launchAtLogin"
+        public static let scrollingCaptureSpeed = "scrollingCaptureSpeed"
         public static let freezeScreenOnCapture = "freezeScreenOnCapture"
     }
 
@@ -219,6 +262,12 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    @Published public var scrollingCaptureSpeed: ScrollingCaptureSpeed {
+        didSet {
+            defaults.set(scrollingCaptureSpeed.rawValue, forKey: Keys.scrollingCaptureSpeed)
+        }
+    }
+
     public var jpgCompressionFactor: Double {
         max(0.01, min(1.0, Double(jpgQuality) / 100.0))
     }
@@ -336,6 +385,13 @@ public final class AppSettings: ObservableObject {
         }
 
         self.launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
+
+        if let speedRaw = defaults.string(forKey: Keys.scrollingCaptureSpeed),
+           let speed = ScrollingCaptureSpeed(rawValue: speedRaw) {
+            self.scrollingCaptureSpeed = speed
+        } else {
+            self.scrollingCaptureSpeed = .normal
+        }
 
         defaults.removeObject(forKey: Keys.freezeScreenOnCapture)
 
