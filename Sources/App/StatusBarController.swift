@@ -7,6 +7,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var captureRegionMenuItem: NSMenuItem!
     private var captureFullscreenMenuItem: NSMenuItem!
     private var repeatScreenshotMenuItem: NSMenuItem!
+    private var ocrRecognitionMenuItem: NSMenuItem!
     private var revealLatestMenuItem: NSMenuItem!
     private var recentScreenshotsMenuItem: NSMenuItem!
     private var saveToDiskMenuItem: NSMenuItem!
@@ -118,7 +119,19 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(repeatScreenshotMenuItem)
 
-        // 4. Reveal Latest Screenshot
+        // 4. OCR Recognition
+        let ocrShortcut = AppSettings.shared.ocrShortcutDisplayString
+        ocrRecognitionMenuItem = NSMenuItem(
+            title: "OCR Recognition (\(ocrShortcut))",
+            action: #selector(ocrRecognitionAction),
+            keyEquivalent: ""
+        )
+        ocrRecognitionMenuItem.target = self
+        if let textIcon = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil) {
+            textIcon.isTemplate = true
+            ocrRecognitionMenuItem.image = textIcon
+        }
+        menu.addItem(ocrRecognitionMenuItem)
         revealLatestMenuItem = NSMenuItem(
             title: "Reveal Latest Screenshot",
             action: #selector(revealLatestScreenshotAction),
@@ -330,9 +343,11 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         let areaShortcut = settings.areaShortcutDisplayString
         let fsShortcut = settings.fullscreenShortcutDisplayString
         let repShortcut = settings.repeatShortcutDisplayString
+        let ocrShortcut = settings.ocrShortcutDisplayString
         captureRegionMenuItem.title = "Capture Region (\(areaShortcut))"
         captureFullscreenMenuItem.title = "Capture Fullscreen (\(fsShortcut))"
         repeatScreenshotMenuItem.title = "Repeat Previous Screenshot (\(repShortcut))"
+        ocrRecognitionMenuItem.title = "OCR Recognition (\(ocrShortcut))"
         repeatScreenshotMenuItem.isEnabled = (CaptureManager.shared.lastCapture != nil)
         revealLatestMenuItem.isEnabled = (SaveService.shared.resolveLatestScreenshotURL() != nil)
 
@@ -491,6 +506,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func repeatScreenshotAction() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.repeatPreviousScreenshot()
+        }
+    }
+
+    @objc public func ocrRecognitionAction() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            CaptureManager.shared.startOCRRecognition()
         }
     }
 

@@ -26,7 +26,7 @@
 
 ## 3. OCR & Code Recognition
 
-- [ ] **Unified Recognition Action** — Add a menu item named **OCR Recognition** that automatically detects the appropriate recognition mode based on the captured image.
+- [x] **Unified Recognition Action** — Add a menu item named **OCR Recognition** that automatically detects the appropriate recognition mode based on the captured image.
 - [x] **OCR Text Recognition**
   - Extract text from screenshots.
   - Support multiple languages, prioritizing English and Polish.

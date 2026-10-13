@@ -51,7 +51,7 @@ Implement recognition as a separate capability so it doesn't complicate the init
 - [x] 22\. QR Code Recognition — Detect and decode QR codes.
 - [x] 23\. Barcode Recognition — Detect and decode 1D barcodes.
 - [x] 24\. OCR Text Recognition — Extract text, prioritizing English and Polish.
-- 25\. Unified Recognition Action — Add an OCR Recognition menu item that chooses the appropriate recognition mode based on the image.
+- [x] 25\. Unified Recognition Action — Add an OCR Recognition menu item that chooses the appropriate recognition mode based on the image.
 
 Milestone: Users can extract text or decode supported codes directly from screenshots.
 

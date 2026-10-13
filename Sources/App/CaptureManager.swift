@@ -43,6 +43,42 @@ public final class CaptureManager {
         }
     }
 
+    public func startOCRRecognition(delay: Int? = nil, completion: ((RecognitionItem?) -> Void)? = nil) {
+        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
+        if delaySeconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+                self?.executeOCRRecognition(completion: completion)
+            }
+        } else {
+            executeOCRRecognition(completion: completion)
+        }
+    }
+
+    private func executeOCRRecognition(completion: ((RecognitionItem?) -> Void)? = nil) {
+        RegionSelectionCoordinator.shared.startSelection { capturedImage in
+            guard let image = capturedImage else {
+                completion?(nil)
+                return
+            }
+            RecognitionService.shared.recognizeUnifiedAsync(in: image) { result in
+                switch result {
+                case .success(let item):
+                    if let recognized = item {
+                        RecognitionService.shared.copyPayloadToPasteboard(recognized)
+                        NSLog("OCR Recognition succeeded (%@): %@", recognized.type.rawValue, recognized.payload)
+                    } else {
+                        NSSound.beep()
+                    }
+                    completion?(item)
+                case .failure(let err):
+                    NSLog("OCR Recognition error: %@", err.localizedDescription)
+                    NSSound.beep()
+                    completion?(nil)
+                }
+            }
+        }
+    }
+
     public func captureFullscreen(screen: NSScreen? = nil, delay: Int? = nil) {
         let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
         if delaySeconds > 0 {

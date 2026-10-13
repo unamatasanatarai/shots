@@ -1129,5 +1129,74 @@ public struct AppTests {
             let blankResults = try! service.recognizeText(in: plainCGImage)
             assert(blankResults.isEmpty, "Blank image must yield 0 text items")
         }
+
+        // MARK: - Unified Recognition Action Suite
+        testRunner("Unified Recognition Action - Auto-Detection of QR, Barcode, Text & Menu Item Integration") {
+            let service = RecognitionService.shared
+            let ciContext = CIContext()
+
+            // 1. Generate QR Code image -> verify Unified Recognition picks .qrCode
+            let qrFilter = CIFilter(name: "CIQRCodeGenerator")
+            let qrText = "https://shots.local/unified-qr"
+            qrFilter?.setValue(qrText.data(using: .utf8), forKey: "inputMessage")
+            let qrScaled = qrFilter!.outputImage!.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+            let qrCG = ciContext.createCGImage(qrScaled, from: qrScaled.extent)!
+
+            let unifiedQR = try! service.recognizeUnified(in: qrCG)
+            assert(unifiedQR != nil, "Unified recognition must find QR code")
+            assert(unifiedQR?.type == .qrCode, "Unified recognition must return .qrCode type (got \(String(describing: unifiedQR?.type)))")
+            assert(unifiedQR?.payload == qrText, "Payload must match QR content")
+
+            // 2. Generate 1D Barcode image -> verify Unified Recognition picks .barcode
+            let barFilter = CIFilter(name: "CICode128BarcodeGenerator")
+            let barText = "1234598760"
+            barFilter?.setValue(barText.data(using: .ascii), forKey: "inputMessage")
+            let barScaled = barFilter!.outputImage!.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+            let barCG = ciContext.createCGImage(barScaled, from: barScaled.extent)!
+
+            let unifiedBar = try! service.recognizeUnified(in: barCG)
+            assert(unifiedBar != nil, "Unified recognition must find Barcode")
+            assert(unifiedBar?.type == .barcode, "Unified recognition must return .barcode type (got \(String(describing: unifiedBar?.type)))")
+            assert(unifiedBar?.payload == barText, "Payload must match Barcode content")
+
+            // 3. Generate pure Text image -> verify Unified Recognition picks .text
+            let textImg = NSImage(size: NSSize(width: 300, height: 100))
+            textImg.lockFocus()
+            NSColor.white.setFill()
+            NSRect(origin: .zero, size: textImg.size).fill()
+            let font = NSFont.boldSystemFont(ofSize: 32)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
+            ("Unified OCR" as NSString).draw(at: NSPoint(x: 20, y: 20), withAttributes: attrs)
+            textImg.unlockFocus()
+            let textCG = textImg.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+
+            let unifiedText = try! service.recognizeUnified(in: textCG)
+            assert(unifiedText != nil, "Unified recognition must find Text")
+            assert(unifiedText?.type == .text, "Unified recognition must return .text type")
+            assert(unifiedText?.payload.contains("Unified") == true || unifiedText?.payload.contains("OCR") == true, "Text content must be extracted")
+
+            // 4. Test copyPayloadToPasteboard helper
+            if let item = unifiedQR {
+                let copySuccess = service.copyPayloadToPasteboard(item)
+                assert(copySuccess == true, "copyPayloadToPasteboard must succeed")
+                assert(NSPasteboard.general.string(forType: .string) == qrText, "Pasteboard string must match recognized payload")
+            }
+
+            // 5. Verify StatusBarController menu item presence and action wiring
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+            let ocrItem = menu.items.first(where: { $0.title.contains("OCR Recognition") })
+            assert(ocrItem != nil, "OCR Recognition item must exist in status menu")
+            assert(ocrItem?.action == #selector(controller.ocrRecognitionAction), "OCR Recognition action must be ocrRecognitionAction")
+            assert(ocrItem?.image != nil, "OCR Recognition item must have native symbol image")
+
+            // 6. Verify HotKeyManager OCR trigger callback
+            var hotkeyTriggered = false
+            HotKeyManager.shared.onOCRCaptureTrigger = {
+                hotkeyTriggered = true
+            }
+            HotKeyManager.shared.onOCRCaptureTrigger?()
+            assert(hotkeyTriggered == true, "onOCRCaptureTrigger must execute callback")
+        }
     }
 }

@@ -264,4 +264,65 @@ public final class RecognitionService {
             }
         }
     }
+
+    // MARK: - Unified Recognition Action
+
+    /// Inspects the image and automatically picks the appropriate recognition mode:
+    /// Prioritizes QR Codes, then 1D Barcodes, and falls back to OCR Text extraction.
+    public func recognizeUnified(in image: CGImage) throws -> RecognitionItem? {
+        // 1. Try QR Code Recognition
+        let qrCodes = try recognizeQRCodes(in: image)
+        if let topQR = qrCodes.first {
+            return topQR
+        }
+
+        // 2. Try 1D Barcode Recognition
+        let barcodes = try recognizeBarcodes(in: image)
+        if let topBarcode = barcodes.first {
+            return topBarcode
+        }
+
+        // 3. Fallback to OCR Text Extraction
+        let textItems = try recognizeText(in: image)
+        if !textItems.isEmpty {
+            let combinedText = textItems.map { $0.payload }.joined(separator: "\n")
+            let avgConfidence = textItems.reduce(0.0) { $0 + $1.confidence } / Float(textItems.count)
+            return RecognitionItem(
+                type: .text,
+                payload: combinedText,
+                confidence: avgConfidence,
+                symbology: nil
+            )
+        }
+
+        return nil
+    }
+
+    /// Asynchronously runs unified recognition on a background queue.
+    public func recognizeUnifiedAsync(
+        in image: CGImage,
+        completion: @escaping (Result<RecognitionItem?, Error>) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            do {
+                let item = try self.recognizeUnified(in: image)
+                DispatchQueue.main.async {
+                    completion(.success(item))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
+
+    /// Copies a recognized item payload to the system pasteboard.
+    @discardableResult
+    public func copyPayloadToPasteboard(_ item: RecognitionItem) -> Bool {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        return pb.setString(item.payload, forType: .string)
+    }
 }

@@ -28,6 +28,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeyManager.shared.onRepeatCaptureTrigger = {
             CaptureManager.shared.repeatPreviousScreenshot()
         }
+        HotKeyManager.shared.onOCRCaptureTrigger = {
+            CaptureManager.shared.startOCRRecognition()
+        }
         HotKeyManager.shared.onTrigger = {
             CaptureManager.shared.startRegionCapture()
         }
