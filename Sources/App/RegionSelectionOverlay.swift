@@ -42,6 +42,7 @@ public final class RegionSelectionCoordinator {
     private var liveIsDragging = false
     private var isCursorHidden = false
     private var cursorHideCount = 0
+    private var savedCursor: NSCursor?
 
     private init() {
         NotificationCenter.default.addObserver(
@@ -57,10 +58,17 @@ public final class RegionSelectionCoordinator {
         restoreSystemCursor()
     }
 
+    // MARK: - Temporary Custom Cursor Overlay Lifecycle (Hide, Draw, Track, Restore)
+
+    /// Step 1 & 2: Save the current cursor state and hide the system cursor.
     private func hideSystemCursor() {
         guard !isCursorHidden else { return }
         isCursorHidden = true
 
+        // 1. Save the current cursor state
+        savedCursor = NSCursor.current
+
+        // 2. Hide the system cursor (WindowServer display hardware + Cocoa cursor)
         hideDisplayCursors()
         cursorHideCount = 1
 
@@ -93,10 +101,12 @@ public final class RegionSelectionCoordinator {
         RegionSelectionView.invisibleCursor.set()
     }
 
+    /// Step 5: When the operation ends, hide the graphic and restore the system cursor.
     private func restoreSystemCursor() {
         guard isCursorHidden else { return }
         isCursorHidden = false
 
+        // 5. Restore the system cursor and saved cursor state
         NSCursor.pop()
         NSCursor.unhide()
 
@@ -104,6 +114,9 @@ public final class RegionSelectionCoordinator {
             showDisplayCursors()
             cursorHideCount -= 1
         }
+
+        savedCursor?.set()
+        savedCursor = nil
     }
 
     // MARK: - Public API
@@ -811,7 +824,7 @@ private final class RegionSelectionView: NSView {
         let text = "x: \(curX)\ny: \(curY)"
         let textSize = measureNumberText(text)
 
-        let offset: CGFloat = 18.0
+        let offset: CGFloat = 8.0
         let margin: CGFloat = 8.0
 
         // Default to bottom-right when hovering
@@ -852,7 +865,7 @@ private final class RegionSelectionView: NSView {
         let dimensionText = "\(pixelWidth)\n\(pixelHeight)"
         let textSize = measureNumberText(dimensionText)
 
-        let offset: CGFloat = 18.0
+        let offset: CGFloat = 8.0
         let margin: CGFloat = 8.0
 
         let curX = current.x
