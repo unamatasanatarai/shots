@@ -39,6 +39,7 @@ public final class RecognitionService {
 
     /// Creates and executes a generic Vision image request handler on a CGImage.
     public func performRequests(_ requests: [VNRequest], on image: CGImage, orientation: CGImagePropertyOrientation = .up) throws {
+        guard image.width > 0 && image.height > 0 else { return }
         let handler = VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:])
         try handler.perform(requests)
     }
@@ -69,6 +70,7 @@ public final class RecognitionService {
 
     /// Detects and decodes QR codes in the provided CGImage using Apple Vision.
     public func recognizeQRCodes(in image: CGImage) throws -> [RecognitionItem] {
+        guard image.width > 0 && image.height > 0 else { return [] }
         let request = VNDetectBarcodesRequest()
         request.symbologies = [.qr]
 
@@ -139,6 +141,7 @@ public final class RecognitionService {
 
     /// Detects and decodes 1D barcodes in the provided CGImage using Apple Vision.
     public func recognizeBarcodes(in image: CGImage) throws -> [RecognitionItem] {
+        guard image.width > 0 && image.height > 0 else { return [] }
         let request = VNDetectBarcodesRequest()
         request.symbologies = RecognitionService.oneDimensionalBarcodeSymbologies
 
@@ -217,6 +220,7 @@ public final class RecognitionService {
         in image: CGImage,
         languages: [String] = RecognitionService.defaultOCRLanguages
     ) throws -> [RecognitionItem] {
+        guard image.width > 0 && image.height > 0 else { return [] }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = languages

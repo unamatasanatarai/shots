@@ -614,6 +614,12 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func settingsDidChange() {
-        updateMenuItemsState()
+        if Thread.isMainThread {
+            updateMenuItemsState()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.updateMenuItemsState()
+            }
+        }
     }
 }

@@ -19,20 +19,21 @@ build:
 	@./scripts/build.sh
 
 ## run: Launch compiled $(APP_NAME).app
-run: build
-	@echo "==> Terminating existing $(APP_NAME) instances..."
-	@killall "$(APP_NAME)" 2>/dev/null || pkill -x "$(APP_NAME)" 2>/dev/null || true
-	@sleep 0.2
+run: build kill
 	@echo "==> Launching $(APP_NAME).app..."
 	@open "build/$(APP_NAME).app"
 
 ## launch: Open $(APP_NAME).app without rebuilding
-launch:
+launch: kill
+	@echo "==> Launching $(APP_NAME).app (no rebuild)..."
+	@open "build/$(APP_NAME).app"
+
+## kill running apps
+kill: 
 	@echo "==> Terminating existing $(APP_NAME) instances..."
 	@killall "$(APP_NAME)" 2>/dev/null || pkill -x "$(APP_NAME)" 2>/dev/null || true
 	@sleep 0.2
-	@echo "==> Launching $(APP_NAME).app (no rebuild)..."
-	@open "build/$(APP_NAME).app"
+
 
 ## test: Run native Swift unit test suite
 test:

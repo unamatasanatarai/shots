@@ -80,7 +80,7 @@ public final class CaptureService {
 
     /// Crops a full display CGImage to the selected screen region, handling Retina scale and coordinate flipping.
     public func cropImage(_ image: CGImage, to selRect: NSRect, in viewSize: NSSize) -> CGImage? {
-        guard viewSize.width > 0 && viewSize.height > 0 else { return nil }
+        guard viewSize.width > 0 && viewSize.height > 0 && selRect.width > 0 && selRect.height > 0 else { return nil }
 
         let scaleX = CGFloat(image.width) / viewSize.width
         let scaleY = CGFloat(image.height) / viewSize.height
@@ -111,6 +111,10 @@ public final class CaptureService {
         mouseLocation: NSPoint = NSEvent.mouseLocation,
         cursor: NSCursor = NSCursor.current
     ) -> CGImage? {
+        guard cursor.image.size.width > 0 && cursor.image.size.height > 0 else {
+            return baseImage
+        }
+
         let screenFrame = screen.frame
         let targetLogicalRect = cropRect.map {
             NSRect(

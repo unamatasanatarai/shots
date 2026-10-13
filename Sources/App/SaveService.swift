@@ -20,7 +20,22 @@ public enum ImageFormat: String, CaseIterable {
 public final class SaveService {
     public static let shared = SaveService()
 
-    public var latestSavedURL: URL?
+    private let lock = NSLock()
+    private var reservedPaths = Set<String>()
+    private var _latestSavedURL: URL?
+
+    public var latestSavedURL: URL? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _latestSavedURL
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _latestSavedURL = newValue
+        }
+    }
 
     public init() {}
 
@@ -57,6 +72,9 @@ public final class SaveService {
 
     /// Resolves unique destination URL in directory, handling same-second collisions with _1, _2 suffix.
     public func resolveUniqueDestinationURL(in directoryURL: URL, date: Date = Date(), format: ImageFormat = .png) -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd_HHmmss"
@@ -66,10 +84,11 @@ public final class SaveService {
 
         var destinationURL = directoryURL.appendingPathComponent("\(base).\(ext)")
         var collisionIndex = 1
-        while FileManager.default.fileExists(atPath: destinationURL.path) {
+        while FileManager.default.fileExists(atPath: destinationURL.path) || reservedPaths.contains(destinationURL.path) {
             destinationURL = directoryURL.appendingPathComponent("\(base)_\(collisionIndex).\(ext)")
             collisionIndex += 1
         }
+        reservedPaths.insert(destinationURL.path)
         return destinationURL
     }
 
@@ -80,9 +99,19 @@ public final class SaveService {
     public func saveImageData(_ data: Data, to directoryURL: URL, filename: String) throws -> URL {
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
         let destinationURL = directoryURL.appendingPathComponent(filename)
-        try data.write(to: destinationURL, options: .atomic)
-        latestSavedURL = destinationURL
-        return destinationURL
+        do {
+            try data.write(to: destinationURL, options: .atomic)
+            lock.lock()
+            reservedPaths.remove(destinationURL.path)
+            _latestSavedURL = destinationURL
+            lock.unlock()
+            return destinationURL
+        } catch {
+            lock.lock()
+            reservedPaths.remove(destinationURL.path)
+            lock.unlock()
+            throw error
+        }
     }
 
     /// Encodes a CGImage into JPEG data at the specified quality factor (0.01 - 1.0).
@@ -109,15 +138,18 @@ public final class SaveService {
 
     /// Copies a CGImage and optional raw PNG data to the general system pasteboard.
     public func copyToPasteboard(image: CGImage, pngData: Data? = nil, fileURL: URL? = nil) {
+        lock.lock()
+        defer { lock.unlock() }
+
         let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         let pb = NSPasteboard.general
         pb.clearContents()
 
-        pb.writeObjects([nsImage])
-
+        var objects: [NSPasteboardWriting] = [nsImage]
         if let fileURL = fileURL {
-            pb.writeObjects([fileURL as NSURL])
+            objects.append(fileURL as NSURL)
         }
+        pb.writeObjects(objects)
 
         if let data = pngData ?? encodePNG(image: image) {
             pb.setData(data, forType: .png)

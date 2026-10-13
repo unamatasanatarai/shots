@@ -11,7 +11,7 @@ struct TestMain {
         var failed = 0
         let totalStart = CFAbsoluteTimeGetCurrent()
 
-        func runTest(_ name: String, block: () throws -> Void) {
+        let runTest: (String, () throws -> Void) -> Void = { name, block in
             let start = CFAbsoluteTimeGetCurrent()
             do {
                 try block()
@@ -26,6 +26,9 @@ struct TestMain {
 
         print("\n--- [1] Application Configuration & State Suite ---")
         AppTests.run(testRunner: runTest)
+
+        print("\n--- [2] Comprehensive Stress Test Suite ---")
+        StressTests.run(testRunner: runTest)
 
         let totalElapsedMs = (CFAbsoluteTimeGetCurrent() - totalStart) * 1000.0
 

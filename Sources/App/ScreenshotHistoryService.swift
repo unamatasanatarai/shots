@@ -25,13 +25,22 @@ public final class ScreenshotHistoryService {
 
     public static let defaultMaxRecentCount = 10
 
-    public private(set) var recentItems: [ScreenshotHistoryItem] = []
+    private let lock = NSLock()
+    private var _recentItems: [ScreenshotHistoryItem] = []
+
+    public var recentItems: [ScreenshotHistoryItem] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _recentItems
+    }
 
     public init() {}
 
     /// Clears cached items (primarily for test isolation)
     public func reset() {
-        recentItems = []
+        lock.lock()
+        _recentItems = []
+        lock.unlock()
     }
 
     /// Discovers and returns the list of 5–10 most recent screenshots from the save directory.
@@ -47,38 +56,40 @@ public final class ScreenshotHistoryService {
             includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
-            recentItems = []
+            lock.lock()
+            _recentItems = []
+            lock.unlock()
             return []
         }
 
         let validExtensions = Set(["png", "jpg", "jpeg"])
-        let screenshotURLs = fileURLs.filter { url in
+        let fileMetadata: [(url: URL, modDate: Date)] = fileURLs.compactMap { url in
             let ext = url.pathExtension.lowercased()
-            return validExtensions.contains(ext) && url.lastPathComponent.hasPrefix("shot_")
+            guard validExtensions.contains(ext) && url.lastPathComponent.hasPrefix("shot_") else {
+                return nil
+            }
+            let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
+            return (url, modDate)
         }
 
-        let sortedURLs = screenshotURLs.sorted { u1, u2 in
-            let d1 = (try? u1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
-            let d2 = (try? u2.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
-            return d1 > d2
-        }
-
+        let sorted = fileMetadata.sorted { $0.modDate > $1.modDate }
         let clampedLimit = max(1, min(limit, 20))
-        let topSlice = sortedURLs.prefix(clampedLimit)
+        let topSlice = sorted.prefix(clampedLimit)
 
         var items: [ScreenshotHistoryItem] = []
-        for url in topSlice {
-            let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
-            let thumb = generateThumbnail(for: url, maxPixelSize: 36)
+        for entry in topSlice {
+            let thumb = generateThumbnail(for: entry.url, maxPixelSize: 36)
             items.append(ScreenshotHistoryItem(
-                fileURL: url,
-                filename: url.lastPathComponent,
-                modificationDate: modDate,
+                fileURL: entry.url,
+                filename: entry.url.lastPathComponent,
+                modificationDate: entry.modDate,
                 thumbnail: thumb
             ))
         }
 
-        self.recentItems = items
+        lock.lock()
+        self._recentItems = items
+        lock.unlock()
         return items
     }
 
@@ -110,12 +121,14 @@ public final class ScreenshotHistoryService {
             thumbnail: thumb
         )
 
-        var current = recentItems.filter { $0.fileURL.standardizedFileURL != fileURL.standardizedFileURL }
+        lock.lock()
+        var current = _recentItems.filter { $0.fileURL.standardizedFileURL != fileURL.standardizedFileURL }
         current.insert(newItem, at: 0)
         if current.count > ScreenshotHistoryService.defaultMaxRecentCount {
             current = Array(current.prefix(ScreenshotHistoryService.defaultMaxRecentCount))
         }
-        self.recentItems = current
+        self._recentItems = current
+        lock.unlock()
     }
 
     /// Reveals a selected screenshot file in macOS Finder, returning true on success.
@@ -134,6 +147,12 @@ public final class ScreenshotHistoryService {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return false
         }
+        if let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
+           let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            SaveService.shared.copyToPasteboard(image: cgImage, fileURL: fileURL)
+            return true
+        }
+
         guard let image = NSImage(contentsOf: fileURL),
               let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData),
