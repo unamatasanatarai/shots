@@ -93,21 +93,7 @@ public final class CaptureManager {
     }
 
     private func executeScrollingCapture(completion: ((CGImage?) -> Void)? = nil) {
-        RegionSelectionCoordinator.shared.startSelection { [weak self] firstFrame in
-            guard let initialImage = firstFrame else {
-                completion?(nil)
-                return
-            }
-
-            let frames = [initialImage]
-            if let stitched = ScrollingCaptureService.shared.stitchFrames(frames) {
-                self?.processCapturedImage(stitched)
-                completion?(stitched)
-            } else {
-                self?.processCapturedImage(initialImage)
-                completion?(initialImage)
-            }
-        }
+        AutoscrollCaptureCoordinator.shared.startAutoscrollCapture(completion: completion)
     }
 
     @discardableResult

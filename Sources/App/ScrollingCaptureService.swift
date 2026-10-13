@@ -40,30 +40,32 @@ public final class ScrollingCaptureService {
             return height
         }
 
-        var bestShift = height
-        var minDifference = Double.greatestFiniteMagnitude
-        var maxDifference = 0.0
+        // Bounded search range: require meaningful overlap to prevent false matches at the boundary
+        let minOverlap = max(1, min(40, height / 3))
+        let maxShift = max(1, min(height - minOverlap, max(500, height / 2)))
+        guard maxShift >= 1 else { return height }
 
-        // Search shifts from 1px to (height - 5)px
-        let step = max(1, height / 200)
-        let colStart = (width >= 10) ? 4 : 0
-        let colEnd = (width >= 10) ? (width - 4) : width
-        let colStep = max(1, (colEnd - colStart) / 20)
+        // Horizontal sample bounds:
+        // Inset by 10px on the left (gutter/line numbers) and 25px on the right (scrollbar thumb)
+        let colStart = (width >= 20) ? 10 : 0
+        let colEnd = (width >= 40) ? (width - 25) : width
+        let colStep = max(1, (colEnd - colStart) / 30)
 
-        for shift in stride(from: 1, to: height - 4, by: step) {
-            let overlapHeight = height - shift
+        func calcDiff(forShift s: Int) -> Double {
+            let overlapHeight = height - s
             var totalDiff = 0.0
             var sampleCount = 0
-
-            // Sample vertical overlap rows
             let rowStep = max(1, overlapHeight / 30)
+
             for y in stride(from: 0, to: overlapHeight, by: rowStep) {
-                let row1 = y + shift
+                let row1 = y + s
                 let row2 = y
+                let rowIdx1 = row1 * bpr1
+                let rowIdx2 = row2 * bpr2
 
                 for x in stride(from: colStart, to: colEnd, by: colStep) {
-                    let idx1 = row1 * bpr1 + x * 4
-                    let idx2 = row2 * bpr2 + x * 4
+                    let idx1 = rowIdx1 + x * 4
+                    let idx2 = rowIdx2 + x * 4
                     guard idx1 + 2 < len1 && idx2 + 2 < len2 else { continue }
                     let diff = abs(Double(ptr1[idx1]) - Double(ptr2[idx2])) +
                                abs(Double(ptr1[idx1 + 1]) - Double(ptr2[idx2 + 1])) +
@@ -72,9 +74,16 @@ public final class ScrollingCaptureService {
                     sampleCount += 1
                 }
             }
+            return sampleCount > 0 ? (totalDiff / Double(sampleCount)) : Double.greatestFiniteMagnitude
+        }
 
-            guard sampleCount > 0 else { continue }
-            let avgDiff = totalDiff / Double(sampleCount)
+        var bestShift = height
+        var minDifference = Double.greatestFiniteMagnitude
+        var maxDifference = 0.0
+
+        // Exact single-pixel precision search: tests every candidate shift
+        for shift in 1...maxShift {
+            let avgDiff = calcDiff(forShift: shift)
             if avgDiff < minDifference {
                 minDifference = avgDiff
                 bestShift = shift
@@ -84,13 +93,12 @@ public final class ScrollingCaptureService {
             }
         }
 
-        // If acceptable match found (low average difference AND contrast against non-matching shifts),
-        // preventing false 1px matches on flat uniform backgrounds
-        if minDifference < 25.0 && (maxDifference - minDifference >= 5.0) {
+        // Match validation: low average difference and distinct contrast against non-matching shifts
+        if minDifference < 35.0 && (maxDifference - minDifference >= 2.0) {
             return bestShift
         }
 
-        // Fallback: append full frame height if no clear overlap found
+        // Fallback: return full frame height if no overlap found
         return height
     }
 

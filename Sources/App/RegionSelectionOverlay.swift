@@ -2,6 +2,20 @@ import AppKit
 import Carbon
 import CoreGraphics
 
+// MARK: - Selected Region Data
+
+public struct SelectedRegionInfo: Equatable {
+    public let rect: NSRect
+    public let screen: NSScreen
+    public let displayID: CGDirectDisplayID
+
+    public init(rect: NSRect, screen: NSScreen, displayID: CGDirectDisplayID) {
+        self.rect = rect
+        self.screen = screen
+        self.displayID = displayID
+    }
+}
+
 // MARK: - Region Selection Coordinator
 
 public final class RegionSelectionCoordinator {
@@ -10,6 +24,7 @@ public final class RegionSelectionCoordinator {
     private var overlayPanels: [NSPanel] = []
     private var isSelecting = false
     private var completionHandler: ((CGImage?) -> Void)?
+    private var regionCompletionHandler: ((SelectedRegionInfo?) -> Void)?
     private var localKeyDownMonitor: Any?
 
     private var escapeHotKeyRef: EventHotKeyRef?
@@ -29,6 +44,12 @@ public final class RegionSelectionCoordinator {
     private init() {}
 
     // MARK: - Public API
+
+    public func startRegionSelection(completion: @escaping (SelectedRegionInfo?) -> Void) {
+        guard !isSelecting else { return }
+        regionCompletionHandler = completion
+        startSelection { _ in }
+    }
 
     public func startSelection(completion: @escaping (CGImage?) -> Void) {
         guard !isSelecting else { return }
@@ -127,6 +148,10 @@ public final class RegionSelectionCoordinator {
         let handler = completionHandler
         completionHandler = nil
         handler?(image)
+
+        let regHandler = regionCompletionHandler
+        regionCompletionHandler = nil
+        regHandler?(nil)
     }
 
     // MARK: - Consuming Event Tap (Live Mode)
@@ -335,6 +360,14 @@ public final class RegionSelectionCoordinator {
 
         let displayID = (targetScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID)
             ?? CGMainDisplayID()
+
+        if let regHandler = regionCompletionHandler {
+            regionCompletionHandler = nil
+            finish(with: nil)
+            let chosenRect = (selRect.width >= 6 && selRect.height >= 6) ? selRect : screenFrame
+            regHandler(SelectedRegionInfo(rect: chosenRect, screen: targetScreen, displayID: displayID))
+            return
+        }
 
         if selRect.width >= 6 && selRect.height >= 6 {
             CaptureManager.shared.lastCapture = LastCaptureRecord(

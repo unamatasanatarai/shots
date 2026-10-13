@@ -19,7 +19,7 @@ build:
 	@./scripts/build.sh
 
 ## run: Launch compiled $(APP_NAME).app
-run: build kill
+run: kill build
 	@echo "==> Launching $(APP_NAME).app..."
 	@open "build/$(APP_NAME).app"
 
