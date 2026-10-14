@@ -198,12 +198,7 @@ public final class CaptureManager {
         let saveService = SaveService.shared
         let format = settings.imageFormat
 
-        // Automatically open Impact with the captured screenshot
-        DispatchQueue.main.async {
-            ImpactLauncher.shared.openImpact(with: cgImage)
-        }
-
-        // Perform encoding and I/O off the main RunLoop to maintain ultra-low latency
+        // Perform encoding, save to destination, and launch Impact with the fresh file
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
@@ -213,14 +208,19 @@ public final class CaptureManager {
                 return
             }
 
-            var savedFileURL: URL?
+            // 2. Disk Persistence: save to destination folder
+            let savedFileURL = self.saveImageToDisk(data: encodedData, format: format, settings: settings)
 
-            // 2. Disk Persistence
-            if settings.saveToDisk {
-                savedFileURL = self.saveImageToDisk(data: encodedData, format: format, settings: settings)
+            // 3. Launch Impact with the freshly saved file (or fallback to memory image if disk save failed)
+            DispatchQueue.main.async {
+                if let fileURL = savedFileURL {
+                    ImpactLauncher.shared.openImageFile(url: fileURL)
+                } else {
+                    ImpactLauncher.shared.openImpact(with: cgImage)
+                }
             }
 
-            // 3. System Pasteboard Synchronization
+            // 4. System Pasteboard Synchronization
             if settings.copyToClipboard {
                 DispatchQueue.main.async {
                     saveService.copyToPasteboard(image: cgImage, fileURL: savedFileURL)
