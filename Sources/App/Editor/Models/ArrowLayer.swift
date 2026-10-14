@@ -64,7 +64,7 @@ public final class ArrowLayer: AnnotationLayer {
             }
         }
 
-        let padding = strokeWidth * 3.5 + 12.0
+        let padding = max(strokeWidth * 4.0 + 16.0, 48.0)
         return CGRect(
             x: minX - padding,
             y: minY - padding,
@@ -126,120 +126,137 @@ public final class ArrowLayer: AnnotationLayer {
             return
         }
 
-        // Tapered arrow geometry:
-        // Width starts small (e.g. 3.0 to 6.0) and grows wider as distance grows, capped at max 70px.
-        let baseStartWidth = max(2.5, min(8.0, strokeWidth * 0.75))
-        let targetEndWidth = min(70.0, max(8.0, totalDist * 0.16 + strokeWidth))
-        let headLength = min(max(16.0, targetEndWidth * 1.35), totalDist * 0.5)
+        // Tapered arrow geometry matching reference image:
+        // Flat perpendicular start cap, natural widening towards arrowhead (capped at 70px)
+        let baseStartWidth = max(5.0, min(32.0, strokeWidth * 4.2 + totalDist * 0.015))
+        let targetEndWidth = max(10.0, min(70.0, baseStartWidth * 1.35 + totalDist * 0.02))
 
-        // Find cut-off parameter tHead where arrowhead begins
-        // Approximate distance from end along curve
-        let tHead = max(0.2, min(0.92, 1.0 - (headLength / totalDist)))
-        let headBasePoint = pointOnCurve(t: tHead)
-        let headTangent = tangentAt(t: 1.0)
+        let headLength = min(max(24.0, targetEndWidth * 2.45), totalDist * 0.65)
+        let wingSpan = targetEndWidth * 2.95
+        let wingHalfSpan = wingSpan / 2.0
+        let recessDepth = headLength * 0.38
+        let cornerRadius = min(7.0, max(4.0, targetEndWidth * 0.18))
 
-        // Sample along curve from t = 0 to tHead to create tapered polygon outline
-        let steps = 24
+        // Find tHead along curve
+        let tHead = max(0.2, min(0.92, 1.0 - (headLength - recessDepth) / totalDist))
+        let endTangent = tangentAt(t: 1.0)
+        let forward = CGPoint(x: cos(endTangent), y: sin(endTangent))
+        let backward = CGPoint(x: -forward.x, y: -forward.y)
+        let perp = CGPoint(x: -sin(endTangent), y: cos(endTangent))
+
+        // Sampling shaft
+        let steps = 36
         var leftPoints: [CGPoint] = []
         var rightPoints: [CGPoint] = []
 
         for i in 0...steps {
             let t = (CGFloat(i) / CGFloat(steps)) * tHead
             let pt = pointOnCurve(t: t)
-            let tangent = tangentAt(t: t)
-            let perp = tangent + .pi / 2.0
+            let tang = tangentAt(t: t)
+            let pPerp = CGPoint(x: -sin(tang), y: cos(tang))
 
-            // Linearly interpolate width from start to tHead
-            let currentHalfWidth = ((baseStartWidth + (targetEndWidth - baseStartWidth) * (t / tHead))) / 2.0
-
-            let pLeft = CGPoint(
-                x: pt.x + currentHalfWidth * cos(perp),
-                y: pt.y + currentHalfWidth * sin(perp)
-            )
-            let pRight = CGPoint(
-                x: pt.x - currentHalfWidth * cos(perp),
-                y: pt.y - currentHalfWidth * sin(perp)
-            )
-
-            leftPoints.append(pLeft)
-            rightPoints.append(pRight)
+            let currentHalfWidth = (baseStartWidth + (targetEndWidth - baseStartWidth) * (t / tHead)) / 2.0
+            leftPoints.append(CGPoint(x: pt.x + currentHalfWidth * pPerp.x, y: pt.y + currentHalfWidth * pPerp.y))
+            rightPoints.append(CGPoint(x: pt.x - currentHalfWidth * pPerp.x, y: pt.y - currentHalfWidth * pPerp.y))
         }
 
-        // Build continuous tapered shaft path
+        // Arrowhead key points
+        let wingBase = CGPoint(
+            x: end.x + backward.x * headLength,
+            y: end.y + backward.y * headLength
+        )
+        let leftWingApex = CGPoint(
+            x: wingBase.x + perp.x * wingHalfSpan,
+            y: wingBase.y + perp.y * wingHalfSpan
+        )
+        let rightWingApex = CGPoint(
+            x: wingBase.x - perp.x * wingHalfSpan,
+            y: wingBase.y - perp.y * wingHalfSpan
+        )
+
+        let notchBase = CGPoint(
+            x: end.x + backward.x * (headLength - recessDepth),
+            y: end.y + backward.y * (headLength - recessDepth)
+        )
+        let leftNotch = CGPoint(
+            x: notchBase.x + perp.x * (targetEndWidth / 2.0),
+            y: notchBase.y + perp.y * (targetEndWidth / 2.0)
+        )
+        let rightNotch = CGPoint(
+            x: notchBase.x - perp.x * (targetEndWidth / 2.0),
+            y: notchBase.y - perp.y * (targetEndWidth / 2.0)
+        )
+
+        // Build unified continuous arrow path
         let path = CGMutablePath()
-        if let first = leftPoints.first {
-            path.move(to: first)
-            for p in leftPoints.dropFirst() {
-                path.addLine(to: p)
-            }
-            for p in rightPoints.reversed() {
-                path.addLine(to: p)
-            }
-            path.closeSubpath()
+
+        // 1. Tip
+        path.move(to: end)
+
+        // 2. Leading edge to left wing with rounded corner
+        path.addArc(tangent1End: leftWingApex, tangent2End: leftNotch, radius: cornerRadius)
+
+        // 3. Notch to shaft left side
+        path.addLine(to: leftNotch)
+
+        // 4. Trace down left side of shaft to tail
+        for pt in leftPoints.reversed() {
+            path.addLine(to: pt)
         }
+
+        // 5. Flat perpendicular tail cap
+        if let firstRight = rightPoints.first {
+            path.addLine(to: firstRight)
+        }
+
+        // 6. Trace up right side of shaft to right notch
+        for pt in rightPoints.dropFirst() {
+            path.addLine(to: pt)
+        }
+
+        // 7. Right notch to right wing with rounded corner
+        path.addLine(to: rightNotch)
+        path.addArc(tangent1End: rightWingApex, tangent2End: end, radius: cornerRadius)
+
+        // 8. Close back to tip
+        path.closeSubpath()
 
         context.addPath(path)
-        context.fillPath()
-
-        // Draw rounded start cap
-        let startCapRect = CGRect(
-            x: start.x - baseStartWidth / 2.0,
-            y: start.y - baseStartWidth / 2.0,
-            width: baseStartWidth,
-            height: baseStartWidth
-        )
-        context.fillEllipse(in: startCapRect)
-
-        // Draw Arrowhead at 'end'
-        let headAngle: CGFloat = .pi / 6.0 // 30 degrees
-        let flareWidth = targetEndWidth * 1.5
-
-        let leftWing = CGPoint(
-            x: end.x - headLength * cos(headTangent - headAngle) - (flareWidth * 0.25 * cos(headTangent + .pi / 2.0)),
-            y: end.y - headLength * sin(headTangent - headAngle) - (flareWidth * 0.25 * sin(headTangent + .pi / 2.0))
-        )
-        let rightWing = CGPoint(
-            x: end.x - headLength * cos(headTangent + headAngle) + (flareWidth * 0.25 * cos(headTangent + .pi / 2.0)),
-            y: end.y - headLength * sin(headTangent + headAngle) + (flareWidth * 0.25 * sin(headTangent + .pi / 2.0))
-        )
-
-        let headPath = CGMutablePath()
-        headPath.move(to: end)
-        headPath.addLine(to: leftWing)
-        headPath.addLine(to: headBasePoint)
-        headPath.addLine(to: rightWing)
-        headPath.closeSubpath()
-
-        context.addPath(headPath)
         context.fillPath()
 
         // If bidirectional, draw Arrowhead at 'start' pointing backwards
         if headType == .biDirectional {
             let startTangent = tangentAt(t: 0.0) + .pi
-            drawHead(at: start, angle: startTangent, in: context)
+            drawHead(at: start, angle: startTangent, width: baseStartWidth, in: context)
         }
 
         context.restoreGState()
     }
 
-    private func drawHead(at point: CGPoint, angle: CGFloat, in context: CGContext) {
-        let headLength = max(14.0, strokeWidth * 3.2)
-        let headAngle: CGFloat = .pi / 6.0
+    private func drawHead(at point: CGPoint, angle: CGFloat, width: CGFloat, in context: CGContext) {
+        let headLength = width * 2.45
+        let wingSpan = width * 2.95
+        let wingHalfSpan = wingSpan / 2.0
+        let recessDepth = headLength * 0.38
+        let cornerRadius = min(7.0, max(4.0, width * 0.18))
 
-        let left = CGPoint(
-            x: point.x - headLength * cos(angle - headAngle),
-            y: point.y - headLength * sin(angle - headAngle)
-        )
-        let right = CGPoint(
-            x: point.x - headLength * cos(angle + headAngle),
-            y: point.y - headLength * sin(angle + headAngle)
-        )
+        let forward = CGPoint(x: cos(angle), y: sin(angle))
+        let backward = CGPoint(x: -forward.x, y: -forward.y)
+        let perp = CGPoint(x: -sin(angle), y: cos(angle))
 
-        context.beginPath()
-        context.move(to: point)
-        context.addLine(to: left)
-        context.addLine(to: right)
-        context.closePath()
+        let wingBase = CGPoint(x: point.x + backward.x * headLength, y: point.y + backward.y * headLength)
+        let leftWingApex = CGPoint(x: wingBase.x + perp.x * wingHalfSpan, y: wingBase.y + perp.y * wingHalfSpan)
+        let rightWingApex = CGPoint(x: wingBase.x - perp.x * wingHalfSpan, y: wingBase.y - perp.y * wingHalfSpan)
+        let notchBase = CGPoint(x: point.x + backward.x * (headLength - recessDepth), y: point.y + backward.y * (headLength - recessDepth))
+
+        let path = CGMutablePath()
+        path.move(to: point)
+        path.addArc(tangent1End: leftWingApex, tangent2End: notchBase, radius: cornerRadius)
+        path.addLine(to: notchBase)
+        path.addArc(tangent1End: rightWingApex, tangent2End: point, radius: cornerRadius)
+        path.closeSubpath()
+
+        context.addPath(path)
         context.fillPath()
     }
 
