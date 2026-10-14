@@ -122,7 +122,11 @@ public final class DimensionLayer: AnnotationLayer {
         context.fillPath()
 
         // Text
+        let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
         attrString.draw(at: CGPoint(x: badgeRect.minX + 5.0, y: badgeRect.minY + 2.0))
+        NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
     }

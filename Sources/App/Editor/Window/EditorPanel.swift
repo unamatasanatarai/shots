@@ -33,7 +33,7 @@ public final class EditorPanel: NSPanel {
 
         super.init(
             contentRect: contentRect,
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -50,6 +50,9 @@ public final class EditorPanel: NSPanel {
         setupContentView()
         setupToolbarActions()
     }
+
+    override public var canBecomeKey: Bool { true }
+    override public var canBecomeMain: Bool { true }
 
     private func setupContentView() {
         guard let container = contentView else { return }

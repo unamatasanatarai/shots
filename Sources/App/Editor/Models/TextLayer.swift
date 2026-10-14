@@ -105,7 +105,12 @@ public final class TextLayer: AnnotationLayer {
         ]
 
         let attrString = NSAttributedString(string: text, attributes: textAttrs)
+
+        let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
         attrString.draw(at: origin)
+        NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
     }

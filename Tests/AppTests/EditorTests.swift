@@ -225,5 +225,59 @@ public enum EditorTests {
             assert(mag.targetCenter == CGPoint(x: 400, y: 350), "Target center must be moved independently")
             assert(mag.sourceCenter == CGPoint(x: 50, y: 70), "Source center must remain unchanged")
         }
+
+        testRunner("Editor - Text, Callout, and Counter Render Composition Verification") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let textLayer = TextLayer(origin: CGPoint(x: 50, y: 50), text: "Notice", color: "#FFCC00")
+            let callout = CalloutLayer(frame: CGRect(x: 100, y: 100, width: 140, height: 48), tailTip: CGPoint(x: 180, y: 180), color: "#FF3B30")
+            let counter = CounterLayer(center: CGPoint(x: 250, y: 80), value: 1, pointerAngle: 0.0, color: "#007AFF")
+
+            doc.addLayer(textLayer)
+            doc.addLayer(callout)
+            doc.addLayer(counter)
+
+            guard let rendered = doc.renderComposition() else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "renderComposition failed"])
+            }
+
+            assert(rendered.width >= cgImage.width, "Rendered composition must have valid dimensions")
+            assert(rendered.height >= cgImage.height, "Rendered composition must have valid dimensions")
+        }
+
+        testRunner("Editor - Counter Pointer Handle Drag Manipulation") {
+            let counter = CounterLayer(center: CGPoint(x: 100, y: 100), value: 3)
+            // Initial angle nil, hit test handle at 0 degrees
+            let handleIndex = counter.hitTestHandle(point: CGPoint(x: 100 + counter.radius + 12.0, y: 100))
+            assert(handleIndex == 0, "Counter handle 0 should be hit-testable")
+
+            // Drag handle to point downwards (0, 1) -> pi / 2
+            counter.updateHandle(index: 0, to: CGPoint(x: 100, y: 150))
+            assert(counter.pointerAngle != nil, "Pointer angle must be set after handle drag")
+            assert(abs(counter.pointerAngle! - (.pi / 2.0)) < 0.05, "Pointer angle should be ~pi/2 pointing down")
+        }
+
+        testRunner("Editor - Callout Tail Tip and Size Handle Drag") {
+            let callout = CalloutLayer(
+                frame: CGRect(x: 100, y: 100, width: 120, height: 40),
+                tailTip: CGPoint(x: 150, y: 200)
+            )
+
+            // Hit test handle 0 (tail tip)
+            assert(callout.hitTestHandle(point: CGPoint(x: 150, y: 200)) == 0, "Handle 0 must be tail tip")
+            callout.updateHandle(index: 0, to: CGPoint(x: 80, y: 220))
+            assert(callout.tailTip == CGPoint(x: 80, y: 220), "Tail tip must be updated to new drag point")
+
+            // Hit test handle 1 (bottom-right resize)
+            assert(callout.hitTestHandle(point: CGPoint(x: 220, y: 140)) == 1, "Handle 1 must be bottom-right resize")
+            callout.updateHandle(index: 1, to: CGPoint(x: 260, y: 180))
+            assert(callout.frame.width == 160, "Frame width must be updated to 160")
+            assert(callout.frame.height == 80, "Frame height must be updated to 80")
+        }
     }
 }

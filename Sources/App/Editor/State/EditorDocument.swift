@@ -201,12 +201,18 @@ public final class EditorDocument {
         let sorted = layers.filter { $0.isVisible }.sorted { $0.zIndex < $1.zIndex }
 
         // 5. Draw Vector Layers (Shapes, Arrows, Text)
+        let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+
         for layer in sorted {
             if let magnifier = layer as? MagnifierLayer {
                 magnifier.renderMagnifiedLens(from: originalImage, in: context)
             }
             layer.draw(in: context, scale: 1.0)
         }
+
+        NSGraphicsContext.restoreGraphicsState()
 
         return context.makeImage()
     }

@@ -50,14 +50,13 @@ public final class CounterLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        if let angle = pointerAngle {
-            let pointerTip = CGPoint(
-                x: center.x + (self.radius + 12.0) * cos(angle),
-                y: center.y + (self.radius + 12.0) * sin(angle)
-            )
-            if hypot(point.x - pointerTip.x, point.y - pointerTip.y) <= radius {
-                return 0
-            }
+        let angle = pointerAngle ?? 0.0
+        let pointerTip = CGPoint(
+            x: center.x + (self.radius + 12.0) * cos(angle),
+            y: center.y + (self.radius + 12.0) * sin(angle)
+        )
+        if hypot(point.x - pointerTip.x, point.y - pointerTip.y) <= radius {
+            return 0
         }
         return nil
     }
@@ -122,7 +121,11 @@ public final class CounterLayer: AnnotationLayer {
             y: center.y - textSize.height / 2.0
         )
 
+        let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
         attrString.draw(at: textOrigin)
+        NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
     }

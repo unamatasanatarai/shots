@@ -82,12 +82,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         allLayers.sort { $0.zIndex < $1.zIndex }
 
+        // 3. Draw Vector Layers (Shapes, Arrows, Text, Callout, Counter)
+        let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+
         for layer in allLayers {
             if let magnifier = layer as? MagnifierLayer {
                 magnifier.renderMagnifiedLens(from: document.originalImage, in: context)
             }
             layer.draw(in: context, scale: zoomScale)
         }
+
+        NSGraphicsContext.restoreGraphicsState()
 
         // 4. Draw Active Selection Handles & UI
         drawSelectionHandles(in: context)
@@ -137,6 +144,22 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 handlePoints = [arrow.start, arrow.control, arrow.end]
             } else if let line = layer as? LineLayer {
                 handlePoints = [line.start, line.end]
+            } else if let dim = layer as? DimensionLayer {
+                handlePoints = [dim.start, dim.end]
+            } else if let mag = layer as? MagnifierLayer {
+                handlePoints = [mag.sourceCenter, mag.targetCenter]
+            } else if let callout = layer as? CalloutLayer {
+                handlePoints = [callout.tailTip, CGPoint(x: callout.frame.maxX, y: callout.frame.maxY)]
+            } else if let counter = layer as? CounterLayer {
+                let angle = counter.pointerAngle ?? 0.0
+                let tip = CGPoint(
+                    x: counter.center.x + (counter.radius + 12.0) * cos(angle),
+                    y: counter.center.y + (counter.radius + 12.0) * sin(angle)
+                )
+                handlePoints = [tip]
+            } else if let textLayer = layer as? TextLayer {
+                let tBox = textLayer.getBoundingBox()
+                handlePoints = [CGPoint(x: tBox.maxX, y: tBox.maxY)]
             } else {
                 handlePoints = [
                     CGPoint(x: box.minX, y: box.minY),
@@ -260,13 +283,18 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             activeCreatingLayer = hl
 
         case .counter:
+            if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }), let counter = hit as? CounterLayer {
+                document.selectLayer(counter)
+                activeDraggingLayer = counter
+                activeHandleIndex = nil
+                return
+            }
             let counter = CounterLayer(
                 center: point,
                 value: document.counterStep,
                 color: document.activeColor
             )
-            document.counterStep += 1
-            document.addLayer(counter)
+            activeCreatingLayer = counter
 
         case .dimension:
             let dim = DimensionLayer(
@@ -279,26 +307,32 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         case .text:
             commitInlineEditor()
+            if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }), let textLayer = hit as? TextLayer {
+                document.selectLayer(textLayer)
+                beginInlineEditing(for: textLayer)
+                return
+            }
             let textLayer = TextLayer(
                 origin: point,
                 text: "Text",
                 fontSize: document.activeFontSize,
                 color: document.activeColor
             )
-            document.addLayer(textLayer)
-            document.selectLayer(textLayer)
-            beginInlineEditing(for: textLayer)
+            activeCreatingLayer = textLayer
 
         case .callout:
             commitInlineEditor()
+            if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }), let callout = hit as? CalloutLayer {
+                document.selectLayer(callout)
+                beginInlineEditing(for: callout)
+                return
+            }
             let bubble = CalloutLayer(
                 frame: CGRect(x: point.x - 60, y: point.y - 70, width: 120, height: 44),
                 tailTip: point,
                 color: document.activeColor
             )
-            document.addLayer(bubble)
-            document.selectLayer(bubble)
-            beginInlineEditing(for: bubble)
+            activeCreatingLayer = bubble
 
         case .magnifier:
             let mag = MagnifierLayer(
@@ -414,6 +448,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 dim.end = point
             } else if let callout = creating as? CalloutLayer {
                 callout.tailTip = point
+            } else if let counter = creating as? CounterLayer {
+                let dx = point.x - counter.center.x
+                let dy = point.y - counter.center.y
+                if hypot(dx, dy) >= 8.0 {
+                    counter.pointerAngle = atan2(dy, dx)
+                } else {
+                    counter.pointerAngle = nil
+                }
             } else if let filter = creating as? FilterLayer {
                 let r = CGRect(
                     x: min(dragStartPoint.x, point.x),
@@ -433,27 +475,41 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseUp(with event: NSEvent) {
         if let creating = activeCreatingLayer {
-            var isValidSize = true
+            if let counter = creating as? CounterLayer {
+                document.counterStep += 1
+                document.addLayer(counter)
+                document.selectLayer(counter)
+            } else if let textLayer = creating as? TextLayer {
+                document.addLayer(textLayer)
+                document.selectLayer(textLayer)
+                beginInlineEditing(for: textLayer)
+            } else if let callout = creating as? CalloutLayer {
+                document.addLayer(callout)
+                document.selectLayer(callout)
+                beginInlineEditing(for: callout)
+            } else {
+                var isValidSize = true
 
-            if let arrow = creating as? ArrowLayer {
-                isValidSize = hypot(arrow.end.x - arrow.start.x, arrow.end.y - arrow.start.y) >= 10.0
-            } else if let rect = creating as? RectangleLayer {
-                isValidSize = rect.rect.width >= 6.0 && rect.rect.height >= 6.0
-            } else if let ellipse = creating as? EllipseLayer {
-                isValidSize = ellipse.rect.width >= 6.0 && ellipse.rect.height >= 6.0
-            } else if let line = creating as? LineLayer {
-                isValidSize = hypot(line.end.x - line.start.x, line.end.y - line.start.y) >= 10.0
-            } else if let filter = creating as? FilterLayer {
-                isValidSize = filter.rects.first.map { $0.width >= 6.0 && $0.height >= 6.0 } ?? false
-            } else if let pen = creating as? PenLayer {
-                isValidSize = pen.points.count >= 2
-            } else if let hl = creating as? HighlighterLayer {
-                isValidSize = hl.points.count >= 2
-            }
+                if let arrow = creating as? ArrowLayer {
+                    isValidSize = hypot(arrow.end.x - arrow.start.x, arrow.end.y - arrow.start.y) >= 10.0
+                } else if let rect = creating as? RectangleLayer {
+                    isValidSize = rect.rect.width >= 6.0 && rect.rect.height >= 6.0
+                } else if let ellipse = creating as? EllipseLayer {
+                    isValidSize = ellipse.rect.width >= 6.0 && ellipse.rect.height >= 6.0
+                } else if let line = creating as? LineLayer {
+                    isValidSize = hypot(line.end.x - line.start.x, line.end.y - line.start.y) >= 10.0
+                } else if let filter = creating as? FilterLayer {
+                    isValidSize = filter.rects.first.map { $0.width >= 6.0 && $0.height >= 6.0 } ?? false
+                } else if let pen = creating as? PenLayer {
+                    isValidSize = pen.points.count >= 2
+                } else if let hl = creating as? HighlighterLayer {
+                    isValidSize = hl.points.count >= 2
+                }
 
-            if isValidSize {
-                document.addLayer(creating)
-                document.selectLayer(creating)
+                if isValidSize {
+                    document.addLayer(creating)
+                    document.selectLayer(creating)
+                }
             }
             activeCreatingLayer = nil
         }
@@ -559,6 +615,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         textField.delegate = self
 
         addSubview(textField)
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(textField)
         textField.selectText(nil)
         self.inlineEditor = textField
@@ -589,5 +647,16 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 extension EditorCanvasView: NSTextFieldDelegate {
     public func controlTextDidEndEditing(_ obj: Notification) {
         commitInlineEditor()
+    }
+
+    public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            commitInlineEditor()
+            return true
+        } else if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            commitInlineEditor()
+            return true
+        }
+        return false
     }
 }
