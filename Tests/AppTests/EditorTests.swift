@@ -192,5 +192,38 @@ public enum EditorTests {
             assert(box.width > 600, "Bezel bounding box must include shadow padding")
             assert(box.height > 400, "Bezel bounding box must include titlebar and shadow padding")
         }
+
+        testRunner("Editor - Color Swatch Updates Selected Layers") {
+            let arrow = ArrowLayer(start: CGPoint(x: 10, y: 10), end: CGPoint(x: 100, y: 100), color: "#FF3B30")
+            let doc = EditorDocument(image: CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithURL(resolveTestImageURL()! as CFURL, nil)!, 0, nil)!)
+            doc.addLayer(arrow)
+            doc.selectLayer(arrow)
+
+            assert(doc.getSelectedLayers().count == 1, "Arrow should be selected")
+            for layer in doc.getSelectedLayers() {
+                layer.color = "#007AFF"
+            }
+            assert(arrow.color == "#007AFF", "Selected layer color must be updated to swatch color")
+        }
+
+        testRunner("Editor - Magnifier Draggable Source & Target Handles") {
+            let mag = MagnifierLayer(
+                sourceCenter: CGPoint(x: 100, y: 100),
+                targetCenter: CGPoint(x: 250, y: 250),
+                radius: 40.0
+            )
+
+            // Hit test source handle (0) and move to a new independent location
+            assert(mag.hitTestHandle(point: CGPoint(x: 100, y: 100)) == 0, "Handle 0 must be source")
+            mag.updateHandle(index: 0, to: CGPoint(x: 50, y: 70))
+            assert(mag.sourceCenter == CGPoint(x: 50, y: 70), "Source center must be moved independently")
+            assert(mag.targetCenter == CGPoint(x: 250, y: 250), "Target center must remain unchanged")
+
+            // Hit test target handle (1) and move to a new independent location
+            assert(mag.hitTestHandle(point: CGPoint(x: 250, y: 250)) == 1, "Handle 1 must be target")
+            mag.updateHandle(index: 1, to: CGPoint(x: 400, y: 350))
+            assert(mag.targetCenter == CGPoint(x: 400, y: 350), "Target center must be moved independently")
+            assert(mag.sourceCenter == CGPoint(x: 50, y: 70), "Source center must remain unchanged")
+        }
     }
 }

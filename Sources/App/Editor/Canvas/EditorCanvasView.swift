@@ -13,6 +13,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var lastDragPoint: CGPoint = .zero
     private var isSpacePressed: Bool = false
     private var isShiftPressed: Bool = false
+    private var inlineEditor: NSTextField?
+    private var editingLayer: AnnotationLayer?
 
     // Zoom & Pan
     public var zoomScale: CGFloat = 1.0
@@ -56,8 +58,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         let offsetY = -document.activeCanvasBounds.origin.y
         context.translateBy(x: offsetX, y: offsetY)
 
-        // 1. Draw originalImage at (0, 0)
-        context.draw(document.originalImage, in: document.originalImageBounds)
+        // 1. Draw originalImage right-side up in flipped context
+        context.saveGState()
+        context.translateBy(x: 0, y: document.originalImageBounds.height)
+        context.scaleBy(x: 1.0, y: -1.0)
+        context.draw(document.originalImage, in: CGRect(x: document.originalImageBounds.origin.x, y: 0, width: document.originalImageBounds.width, height: document.originalImageBounds.height))
+        context.restoreGState()
 
         // 2. Draw Destructive / Masking Layers (Spotlight & Blur)
         for layer in document.layers where layer.isVisible {
@@ -169,6 +175,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         dragStartPoint = point
         lastDragPoint = point
 
+        commitInlineEditor()
+
+        // Handle double click to edit text or callout
+        if event.clickCount == 2 {
+            if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }) {
+                if hit is TextLayer || hit is CalloutLayer {
+                    document.selectLayer(hit)
+                    beginInlineEditing(for: hit)
+                    return
+                }
+            }
+        }
+
         // Check handle click on currently selected layer
         if let selected = document.getSelectedLayers().first,
            let handleIndex = selected.hitTestHandle(point: point) {
@@ -259,6 +278,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             activeCreatingLayer = dim
 
         case .text:
+            commitInlineEditor()
             let textLayer = TextLayer(
                 origin: point,
                 text: "Text",
@@ -266,14 +286,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 color: document.activeColor
             )
             document.addLayer(textLayer)
+            document.selectLayer(textLayer)
+            beginInlineEditing(for: textLayer)
 
         case .callout:
+            commitInlineEditor()
             let bubble = CalloutLayer(
-                frame: CGRect(x: point.x - 50, y: point.y - 40, width: 100, height: 44),
+                frame: CGRect(x: point.x - 60, y: point.y - 70, width: 120, height: 44),
                 tailTip: point,
                 color: document.activeColor
             )
-            activeCreatingLayer = bubble
+            document.addLayer(bubble)
+            document.selectLayer(bubble)
+            beginInlineEditing(for: bubble)
 
         case .magnifier:
             let mag = MagnifierLayer(
@@ -339,7 +364,18 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if let creating = activeCreatingLayer {
             if let arrow = creating as? ArrowLayer {
                 arrow.end = point
-                arrow.control = CGPoint(x: (arrow.start.x + point.x) / 2.0, y: (arrow.start.y + point.y) / 2.0)
+                let dx = point.x - arrow.start.x
+                let dy = point.y - arrow.start.y
+                let dist = hypot(dx, dy)
+                let mid = CGPoint(x: (arrow.start.x + point.x) / 2.0, y: (arrow.start.y + point.y) / 2.0)
+                if dist > 8.0 {
+                    // Default natural curve: perpendicular deflection of ~15% capped at 35px
+                    let perp = CGPoint(x: -dy / dist, y: dx / dist)
+                    let bendAmount = min(35.0, max(8.0, dist * 0.15))
+                    arrow.control = CGPoint(x: mid.x + perp.x * bendAmount, y: mid.y + perp.y * bendAmount)
+                } else {
+                    arrow.control = mid
+                }
             } else if let rect = creating as? RectangleLayer {
                 var w = point.x - dragStartPoint.x
                 var h = point.y - dragStartPoint.y
@@ -351,8 +387,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 rect.rect = CGRect(
                     x: min(dragStartPoint.x, dragStartPoint.x + w),
                     y: min(dragStartPoint.y, dragStartPoint.y + h),
-                    width: max(abs(w), 4.0),
-                    height: max(abs(h), 4.0)
+                    width: abs(w),
+                    height: abs(h)
                 )
             } else if let ellipse = creating as? EllipseLayer {
                 var w = point.x - dragStartPoint.x
@@ -365,8 +401,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 ellipse.rect = CGRect(
                     x: min(dragStartPoint.x, dragStartPoint.x + w),
                     y: min(dragStartPoint.y, dragStartPoint.y + h),
-                    width: max(abs(w), 4.0),
-                    height: max(abs(h), 4.0)
+                    width: abs(w),
+                    height: abs(h)
                 )
             } else if let line = creating as? LineLayer {
                 line.end = point
@@ -382,8 +418,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 let r = CGRect(
                     x: min(dragStartPoint.x, point.x),
                     y: min(dragStartPoint.y, point.y),
-                    width: max(abs(point.x - dragStartPoint.x), 4.0),
-                    height: max(abs(point.y - dragStartPoint.y), 4.0)
+                    width: abs(point.x - dragStartPoint.x),
+                    height: abs(point.y - dragStartPoint.y)
                 )
                 filter.rects = [r]
             }
@@ -397,7 +433,28 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseUp(with event: NSEvent) {
         if let creating = activeCreatingLayer {
-            document.addLayer(creating)
+            var isValidSize = true
+
+            if let arrow = creating as? ArrowLayer {
+                isValidSize = hypot(arrow.end.x - arrow.start.x, arrow.end.y - arrow.start.y) >= 10.0
+            } else if let rect = creating as? RectangleLayer {
+                isValidSize = rect.rect.width >= 6.0 && rect.rect.height >= 6.0
+            } else if let ellipse = creating as? EllipseLayer {
+                isValidSize = ellipse.rect.width >= 6.0 && ellipse.rect.height >= 6.0
+            } else if let line = creating as? LineLayer {
+                isValidSize = hypot(line.end.x - line.start.x, line.end.y - line.start.y) >= 10.0
+            } else if let filter = creating as? FilterLayer {
+                isValidSize = filter.rects.first.map { $0.width >= 6.0 && $0.height >= 6.0 } ?? false
+            } else if let pen = creating as? PenLayer {
+                isValidSize = pen.points.count >= 2
+            } else if let hl = creating as? HighlighterLayer {
+                isValidSize = hl.points.count >= 2
+            }
+
+            if isValidSize {
+                document.addLayer(creating)
+                document.selectLayer(creating)
+            }
             activeCreatingLayer = nil
         }
         activeDraggingLayer = nil
@@ -458,5 +515,79 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     // NSDraggingSource
     public func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         return .copy
+    }
+
+    // MARK: - Inline Text Editing (Section 2 & 4)
+
+    public func beginInlineEditing(for layer: AnnotationLayer) {
+        commitInlineEditor()
+
+        let initialText: String
+        let initialFont: NSFont
+        let textRect: CGRect
+
+        let offsetX = -document.activeCanvasBounds.origin.x
+        let offsetY = -document.activeCanvasBounds.origin.y
+
+        if let textLayer = layer as? TextLayer {
+            initialText = textLayer.text
+            initialFont = NSFont.systemFont(ofSize: textLayer.fontSize, weight: .semibold)
+            let box = textLayer.getBoundingBox()
+            textRect = CGRect(x: box.origin.x + offsetX, y: box.origin.y + offsetY, width: max(box.width, 100), height: max(box.height, 28))
+        } else if let callout = layer as? CalloutLayer {
+            initialText = callout.text
+            initialFont = NSFont.systemFont(ofSize: callout.fontSize, weight: .semibold)
+            let inset = callout.frame.insetBy(dx: 8, dy: 6)
+            textRect = CGRect(x: inset.origin.x + offsetX, y: inset.origin.y + offsetY, width: inset.width, height: inset.height)
+        } else {
+            return
+        }
+
+        editingLayer = layer
+        let textField = NSTextField(frame: textRect)
+        textField.stringValue = initialText
+        textField.font = initialFont
+        textField.isBordered = true
+        textField.isBezeled = true
+        textField.bezelStyle = .roundedBezel
+        textField.drawsBackground = true
+        textField.backgroundColor = NSColor(white: 0.15, alpha: 0.95)
+        textField.textColor = NSColor.white
+        textField.focusRingType = .none
+        textField.target = self
+        textField.action = #selector(editorAction(_:))
+        textField.delegate = self
+
+        addSubview(textField)
+        window?.makeFirstResponder(textField)
+        textField.selectText(nil)
+        self.inlineEditor = textField
+    }
+
+    public func commitInlineEditor() {
+        guard let tf = inlineEditor, let layer = editingLayer else { return }
+        let newText = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let textLayer = layer as? TextLayer {
+            textLayer.text = newText.isEmpty ? "Text" : newText
+        } else if let callout = layer as? CalloutLayer {
+            callout.text = newText.isEmpty ? "Callout" : newText
+        }
+
+        tf.removeFromSuperview()
+        self.inlineEditor = nil
+        self.editingLayer = nil
+        document.computeElasticBounds()
+        needsDisplay = true
+    }
+
+    @objc private func editorAction(_ sender: Any) {
+        commitInlineEditor()
+    }
+}
+
+extension EditorCanvasView: NSTextFieldDelegate {
+    public func controlTextDidEndEditing(_ obj: Notification) {
+        commitInlineEditor()
     }
 }

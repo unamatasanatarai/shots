@@ -117,20 +117,101 @@ public final class ArrowLayer: AnnotationLayer {
         context.saveGState()
 
         let strokeColor = NSColor(hex: color).cgColor
-        context.setStrokeColor(strokeColor)
         context.setFillColor(strokeColor)
-        context.setLineWidth(strokeWidth)
-        context.setLineCap(.round)
-        context.setLineJoin(.round)
+        context.setStrokeColor(strokeColor)
 
-        // Draw Quadratic Bezier curve
-        context.move(to: start)
-        context.addQuadCurve(to: end, control: control)
-        context.strokePath()
+        let totalDist = hypot(end.x - start.x, end.y - start.y)
+        guard totalDist > 4.0 else {
+            context.restoreGState()
+            return
+        }
+
+        // Tapered arrow geometry:
+        // Width starts small (e.g. 3.0 to 6.0) and grows wider as distance grows, capped at max 70px.
+        let baseStartWidth = max(2.5, min(8.0, strokeWidth * 0.75))
+        let targetEndWidth = min(70.0, max(8.0, totalDist * 0.16 + strokeWidth))
+        let headLength = min(max(16.0, targetEndWidth * 1.35), totalDist * 0.5)
+
+        // Find cut-off parameter tHead where arrowhead begins
+        // Approximate distance from end along curve
+        let tHead = max(0.2, min(0.92, 1.0 - (headLength / totalDist)))
+        let headBasePoint = pointOnCurve(t: tHead)
+        let headTangent = tangentAt(t: 1.0)
+
+        // Sample along curve from t = 0 to tHead to create tapered polygon outline
+        let steps = 24
+        var leftPoints: [CGPoint] = []
+        var rightPoints: [CGPoint] = []
+
+        for i in 0...steps {
+            let t = (CGFloat(i) / CGFloat(steps)) * tHead
+            let pt = pointOnCurve(t: t)
+            let tangent = tangentAt(t: t)
+            let perp = tangent + .pi / 2.0
+
+            // Linearly interpolate width from start to tHead
+            let currentHalfWidth = ((baseStartWidth + (targetEndWidth - baseStartWidth) * (t / tHead))) / 2.0
+
+            let pLeft = CGPoint(
+                x: pt.x + currentHalfWidth * cos(perp),
+                y: pt.y + currentHalfWidth * sin(perp)
+            )
+            let pRight = CGPoint(
+                x: pt.x - currentHalfWidth * cos(perp),
+                y: pt.y - currentHalfWidth * sin(perp)
+            )
+
+            leftPoints.append(pLeft)
+            rightPoints.append(pRight)
+        }
+
+        // Build continuous tapered shaft path
+        let path = CGMutablePath()
+        if let first = leftPoints.first {
+            path.move(to: first)
+            for p in leftPoints.dropFirst() {
+                path.addLine(to: p)
+            }
+            for p in rightPoints.reversed() {
+                path.addLine(to: p)
+            }
+            path.closeSubpath()
+        }
+
+        context.addPath(path)
+        context.fillPath()
+
+        // Draw rounded start cap
+        let startCapRect = CGRect(
+            x: start.x - baseStartWidth / 2.0,
+            y: start.y - baseStartWidth / 2.0,
+            width: baseStartWidth,
+            height: baseStartWidth
+        )
+        context.fillEllipse(in: startCapRect)
 
         // Draw Arrowhead at 'end'
-        let tipTangent = tangentAt(t: 1.0)
-        drawHead(at: end, angle: tipTangent, in: context)
+        let headAngle: CGFloat = .pi / 6.0 // 30 degrees
+        let flareWidth = targetEndWidth * 1.5
+
+        let leftWing = CGPoint(
+            x: end.x - headLength * cos(headTangent - headAngle) - (flareWidth * 0.25 * cos(headTangent + .pi / 2.0)),
+            y: end.y - headLength * sin(headTangent - headAngle) - (flareWidth * 0.25 * sin(headTangent + .pi / 2.0))
+        )
+        let rightWing = CGPoint(
+            x: end.x - headLength * cos(headTangent + headAngle) + (flareWidth * 0.25 * cos(headTangent + .pi / 2.0)),
+            y: end.y - headLength * sin(headTangent + headAngle) + (flareWidth * 0.25 * sin(headTangent + .pi / 2.0))
+        )
+
+        let headPath = CGMutablePath()
+        headPath.move(to: end)
+        headPath.addLine(to: leftWing)
+        headPath.addLine(to: headBasePoint)
+        headPath.addLine(to: rightWing)
+        headPath.closeSubpath()
+
+        context.addPath(headPath)
+        context.fillPath()
 
         // If bidirectional, draw Arrowhead at 'start' pointing backwards
         if headType == .biDirectional {
@@ -143,7 +224,7 @@ public final class ArrowLayer: AnnotationLayer {
 
     private func drawHead(at point: CGPoint, angle: CGFloat, in context: CGContext) {
         let headLength = max(14.0, strokeWidth * 3.2)
-        let headAngle: CGFloat = .pi / 6.0 // 30 degrees
+        let headAngle: CGFloat = .pi / 6.0
 
         let left = CGPoint(
             x: point.x - headLength * cos(angle - headAngle),
@@ -154,22 +235,12 @@ public final class ArrowLayer: AnnotationLayer {
             y: point.y - headLength * sin(angle + headAngle)
         )
 
-        switch headType {
-        case .filled:
-            context.beginPath()
-            context.move(to: point)
-            context.addLine(to: left)
-            context.addLine(to: right)
-            context.closePath()
-            context.fillPath()
-
-        case .standard, .biDirectional:
-            context.beginPath()
-            context.move(to: left)
-            context.addLine(to: point)
-            context.addLine(to: right)
-            context.strokePath()
-        }
+        context.beginPath()
+        context.move(to: point)
+        context.addLine(to: left)
+        context.addLine(to: right)
+        context.closePath()
+        context.fillPath()
     }
 
     // MARK: - Math Helpers

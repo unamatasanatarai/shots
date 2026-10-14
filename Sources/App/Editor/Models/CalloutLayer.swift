@@ -144,11 +144,7 @@ public final class CalloutLayer: AnnotationLayer {
             height: textSize.height
         )
 
-        NSGraphicsContext.saveGraphicsState()
-        let nsCtx = NSGraphicsContext(cgContext: context, flipped: false)
-        NSGraphicsContext.current = nsCtx
         attrString.draw(in: textDrawRect)
-        NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
     }

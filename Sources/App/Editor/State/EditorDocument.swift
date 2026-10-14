@@ -61,6 +61,11 @@ public final class EditorDocument {
         onNeedsDisplay?()
     }
 
+    public func selectLayer(_ layer: AnnotationLayer) {
+        selectedLayerIDs = [layer.id]
+        onNeedsDisplay?()
+    }
+
     public func selectLayer(at point: CGPoint) -> AnnotationLayer? {
         // Reverse iterate to select top-most layer
         for layer in layers.reversed() {
@@ -178,8 +183,12 @@ public final class EditorDocument {
         let offsetY = -activeCanvasBounds.origin.y
         context.translateBy(x: offsetX, y: offsetY)
 
-        // 2. Draw originalImage bitmap at (0, 0)
-        context.draw(originalImage, in: originalImageBounds)
+        // 2. Draw originalImage right-side up in flipped context
+        context.saveGState()
+        context.translateBy(x: 0, y: originalImageBounds.height)
+        context.scaleBy(x: 1.0, y: -1.0)
+        context.draw(originalImage, in: CGRect(x: originalImageBounds.origin.x, y: 0, width: originalImageBounds.width, height: originalImageBounds.height))
+        context.restoreGState()
 
         // 3. Draw Destructive / Masking layers (Spotlight & Blur)
         for layer in layers where layer.isVisible {

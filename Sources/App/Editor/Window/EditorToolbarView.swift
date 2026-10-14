@@ -168,6 +168,18 @@ public final class EditorToolbarView: NSVisualEffectView {
         for btn in colorButtons {
             btn.layer?.borderColor = btn == sender ? NSColor.white.cgColor : (btn.identifier?.rawValue == "#FFFFFF" ? NSColor.gray.cgColor : NSColor.clear.cgColor)
         }
+
+        // Apply color change to currently selected layers
+        if let doc = canvasView?.document {
+            let selected = doc.getSelectedLayers()
+            if !selected.isEmpty {
+                doc.saveSnapshot()
+                for layer in selected {
+                    layer.color = hex
+                }
+                doc.onNeedsDisplay?()
+            }
+        }
     }
 
     @objc private func undoClicked() {

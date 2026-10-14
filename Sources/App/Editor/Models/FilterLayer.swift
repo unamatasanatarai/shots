@@ -139,13 +139,14 @@ public final class FilterLayer: AnnotationLayer {
         maskContext.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.45))
         maskContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
-        // 2. Set blend mode to .clear (or .destinationOut) to punch holes
+        // 2. Set blend mode to .clear to punch holes in flipped coordinates
         maskContext.setBlendMode(.clear)
         for r in rects {
-            // Adjust to maskContext coordinates
+            // Adjust to maskContext coordinates where (0,0) is bottom-left of canvasBounds
+            let localY = canvasBounds.height - (r.origin.y - canvasBounds.origin.y) - r.height
             let localRect = CGRect(
                 x: r.origin.x - canvasBounds.origin.x,
-                y: r.origin.y - canvasBounds.origin.y,
+                y: localY,
                 width: r.width,
                 height: r.height
             )
@@ -154,10 +155,12 @@ public final class FilterLayer: AnnotationLayer {
             maskContext.fillPath()
         }
 
-        // 4. Draw buffer back onto main context
+        // 3. Draw buffer back onto main context right-side up
         if let maskImage = maskContext.makeImage() {
             context.saveGState()
-            context.draw(maskImage, in: canvasBounds)
+            context.translateBy(x: canvasBounds.origin.x, y: canvasBounds.origin.y + canvasBounds.height)
+            context.scaleBy(x: 1.0, y: -1.0)
+            context.draw(maskImage, in: CGRect(x: 0, y: 0, width: canvasBounds.width, height: canvasBounds.height))
             context.restoreGState()
         }
     }
@@ -175,6 +178,11 @@ public final class FilterLayer: AnnotationLayer {
             let intersect = rect.intersection(CGRect(x: 0, y: 0, width: imgW, height: imgH))
             guard intersect.width > 2 && intersect.height > 2 else { continue }
 
+            // Since originalImage's CGImage internal coordinate system is unflipped (y=0 at bottom),
+            // the crop rect corresponding to canvas coordinate (intersect) has y = imgH - intersect.maxY
+            let cropY = imgH - intersect.maxY
+            let imageCropRect = CGRect(x: intersect.origin.x, y: cropY, width: intersect.width, height: intersect.height)
+
             context.saveGState()
             context.clip(to: intersect)
 
@@ -185,23 +193,27 @@ public final class FilterLayer: AnnotationLayer {
                 let lowH = max(1, Int(intersect.height / factor))
                 let colorSpace = CGColorSpaceCreateDeviceRGB()
 
-                if let crop = originalImage.cropping(to: intersect),
+                if let crop = originalImage.cropping(to: imageCropRect),
                    let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
                     lowCtx.interpolationQuality = .none
                     lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
                     if let pixelatedImage = lowCtx.makeImage() {
+                        context.saveGState()
+                        context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
+                        context.scaleBy(x: 1.0, y: -1.0)
                         context.interpolationQuality = .none
-                        context.draw(pixelatedImage, in: intersect)
+                        context.draw(pixelatedImage, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
+                        context.restoreGState()
                     }
                 }
             } else {
                 // Gaussian blur / translucent frosted overlay
-                context.setFillColor(CGColor(red: 0.9, green: 0.9, blue: 0.9, alpha: 0.85))
+                context.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 0.85))
                 context.fill(intersect)
 
                 // Mosaic pattern overlay for privacy
                 let colorSpace = CGColorSpaceCreateDeviceRGB()
-                if let crop = originalImage.cropping(to: intersect) {
+                if let crop = originalImage.cropping(to: imageCropRect) {
                     let factor: CGFloat = 8.0
                     let lowW = max(1, Int(intersect.width / factor))
                     let lowH = max(1, Int(intersect.height / factor))
@@ -209,8 +221,12 @@ public final class FilterLayer: AnnotationLayer {
                         lowCtx.interpolationQuality = .none
                         lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
                         if let lowImage = lowCtx.makeImage() {
+                            context.saveGState()
+                            context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
+                            context.scaleBy(x: 1.0, y: -1.0)
                             context.interpolationQuality = .low
-                            context.draw(lowImage, in: intersect)
+                            context.draw(lowImage, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
+                            context.restoreGState()
                         }
                     }
                 }

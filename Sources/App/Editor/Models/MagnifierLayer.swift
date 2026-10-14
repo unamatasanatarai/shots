@@ -46,12 +46,14 @@ public final class MagnifierLayer: AnnotationLayer {
 
     public func contains(point: CGPoint) -> Bool {
         return hypot(point.x - targetCenter.x, point.y - targetCenter.y) <= radius ||
-               hypot(point.x - sourceCenter.x, point.y - sourceCenter.y) <= 16.0
+               hypot(point.x - sourceCenter.x, point.y - sourceCenter.y) <= 18.0
     }
 
-    public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        if hypot(point.x - sourceCenter.x, point.y - sourceCenter.y) <= radius { return 0 }
-        if hypot(point.x - targetCenter.x, point.y - targetCenter.y) <= radius { return 1 }
+    public func hitTestHandle(point: CGPoint, radius: CGFloat = 16.0) -> Int? {
+        // Handle 0: Source sampling ring (small circle)
+        if hypot(point.x - sourceCenter.x, point.y - sourceCenter.y) <= max(radius, 18.0) { return 0 }
+        // Handle 1: Target magnification lens center (big circle)
+        if hypot(point.x - targetCenter.x, point.y - targetCenter.y) <= self.radius { return 1 }
         return nil
     }
 
@@ -63,8 +65,11 @@ public final class MagnifierLayer: AnnotationLayer {
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
-        if index == 0 { sourceCenter = point }
-        else if index == 1 { targetCenter = point }
+        if index == 0 {
+            sourceCenter = point
+        } else if index == 1 {
+            targetCenter = point
+        }
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
@@ -121,10 +126,18 @@ public final class MagnifierLayer: AnnotationLayer {
         context.addPath(clipPath)
         context.clip()
 
-        // 2. Draw sampled pixels scaled by zoomFactor
-        if let cropped = originalImage.cropping(to: sourceRect) {
+        // 2. Sample from originalImage (flipped vertically for CGImage coordinates)
+        let imgH = CGFloat(originalImage.height)
+        let cropY = imgH - sourceRect.maxY
+        let imageCropRect = CGRect(x: sourceRect.origin.x, y: cropY, width: sourceRect.width, height: sourceRect.height)
+
+        if let cropped = originalImage.cropping(to: imageCropRect) {
+            context.saveGState()
+            context.translateBy(x: lensRect.origin.x, y: lensRect.origin.y + lensRect.height)
+            context.scaleBy(x: 1.0, y: -1.0)
             context.interpolationQuality = .high
-            context.draw(cropped, in: lensRect)
+            context.draw(cropped, in: CGRect(x: 0, y: 0, width: lensRect.width, height: lensRect.height))
+            context.restoreGState()
         }
 
         context.restoreGState()
