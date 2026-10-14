@@ -298,16 +298,44 @@ public enum EditorTests {
             callout.text = "multiline\nmulti\nline"
             assert(callout.frame.height > initialSize.height, "Height must automatically grow for multiline content")
 
-            // Hit test handle: only handle 0 (tail tip) is adjustable
+            // Single line change dynamically resizes back
+            callout.text = "short"
+            assert(callout.frame.height < initialSize.height || callout.frame.width < initialSize.width, "Dimensions strictly dictated by entered text")
+
+            // Hit test handle: only handle 0 (tail tip) is adjustable; user cannot manually resize bounding box
             assert(callout.hitTestHandle(point: CGPoint(x: 120, y: 160)) == 0, "Handle 0 must be tail tip")
             assert(callout.hitTestHandle(point: CGPoint(x: callout.frame.maxX, y: callout.frame.maxY)) == nil, "Bounding box resize handle must be excluded")
 
-            // Move tail tip far to the right -> edge snapping to right side
-            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.maxX + 120, y: callout.frame.midY))
-            assert(callout.tailTip == CGPoint(x: callout.frame.maxX + 120, y: callout.frame.midY), "Tail tip must update to new position")
+            // Variable tail length & orientation: snap to right
+            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.maxX + 150, y: callout.frame.midY))
+            assert(callout.tailTip == CGPoint(x: callout.frame.maxX + 150, y: callout.frame.midY), "Tail tip must update to new position")
+            let pathRight = callout.pathForCallout()
+            assert(!pathRight.isEmpty, "Path for right-snapped callout must be valid")
 
-            let path = callout.pathForCallout()
-            assert(!path.isEmpty, "Path for callout with edge snapped tail must not be empty")
+            // Variable tail length & orientation: snap to top
+            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.midX, y: callout.frame.minY - 100))
+            let pathTop = callout.pathForCallout()
+            assert(!pathTop.isEmpty, "Path for top-snapped callout must be valid")
+
+            // Variable tail length & orientation: snap to left
+            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.minX - 120, y: callout.frame.midY))
+            let pathLeft = callout.pathForCallout()
+            assert(!pathLeft.isEmpty, "Path for left-snapped callout must be valid")
+
+            // Variable tail length: very short nub (5px) to long pointer (400px)
+            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.midX, y: callout.frame.maxY + 5))
+            assert(!callout.pathForCallout().isEmpty, "Short nub tail must render valid path")
+
+            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.midX + 300, y: callout.frame.maxY + 350))
+            assert(!callout.pathForCallout().isEmpty, "Long pointer tail must render valid path")
+
+            // Hit testing: contains point inside body and inside tail
+            assert(callout.contains(point: CGPoint(x: callout.frame.midX, y: callout.frame.midY)), "Body center must be contained")
+            assert(callout.contains(point: callout.tailTip), "Tail tip must be contained")
+
+            // Bounding box encompasses the entire extended tail
+            let bbox = callout.getBoundingBox()
+            assert(bbox.contains(callout.tailTip), "Bounding box must encompass extended tail tip")
         }
 
         testRunner("Editor - 4-Directional Move Cursor & Hit Testing") {
