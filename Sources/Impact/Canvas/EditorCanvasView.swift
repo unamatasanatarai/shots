@@ -9,6 +9,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var activeCreatingLayer: AnnotationLayer?
     private var activeDraggingLayer: AnnotationLayer?
     private var activeHandleIndex: Int?
+    private var initialRectForDrag: CGRect?
     private var dragStartPoint: CGPoint = .zero
     private var lastDragPoint: CGPoint = .zero
     private var isSpacePressed: Bool = false
@@ -301,6 +302,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             document.saveSnapshot()
             activeDraggingLayer = selected
             activeHandleIndex = handleIndex
+            initialRectForDrag = (selected as? RectangleLayer)?.rect
+            if document.activeTool != .select {
+                document.activeTool = .select
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+            }
             return
         }
         for layer in document.layers.reversed() where layer.isVisible {
@@ -309,6 +315,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.selectLayer(layer)
                 activeDraggingLayer = layer
                 activeHandleIndex = handleIndex
+                initialRectForDrag = (layer as? RectangleLayer)?.rect
+                if document.activeTool != .select {
+                    document.activeTool = .select
+                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                }
                 return
             }
         }
@@ -325,8 +336,26 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.saveSnapshot()
                 activeDraggingLayer = selected
                 activeHandleIndex = nil
+                if document.activeTool != .select {
+                    document.activeTool = .select
+                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                }
                 return
             }
+        }
+
+        // If clicking any existing visible annotation element while an annotation tool is active,
+        // do not add a new element; immediately select it and revert activeTool to pointer (.select)
+        if let hit = document.layers.reversed().first(where: { $0.isVisible && ($0.contains(point: point) || (($0 as? RectangleLayer)?.rect.contains(point) ?? false)) }) {
+            document.saveSnapshot()
+            document.selectLayer(hit)
+            activeDraggingLayer = hit
+            activeHandleIndex = nil
+            if document.activeTool != .select {
+                document.activeTool = .select
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+            }
+            return
         }
 
         switch document.activeTool {
@@ -337,6 +366,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 activeHandleIndex = nil
             } else {
                 document.selectedLayerIDs.removeAll()
+                if document.activeTool != .select {
+                    document.activeTool = .select
+                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                }
             }
 
         case .arrow:
@@ -406,7 +439,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 return
             }
             let counter = CounterLayer(
-                center: point,
+                tip: point,
                 value: document.nextCounterValue(),
                 color: document.activeColor
             )
@@ -500,7 +533,41 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // 1. Moving an existing selected layer or handle
         if let dragging = activeDraggingLayer {
             if let handleIdx = activeHandleIndex {
-                dragging.updateHandle(index: handleIdx, to: point)
+                if let rectLayer = dragging as? RectangleLayer, let initRect = initialRectForDrag {
+                    let oppX: CGFloat
+                    let oppY: CGFloat
+                    switch handleIdx {
+                    case 0: oppX = initRect.maxX; oppY = initRect.maxY
+                    case 1: oppX = initRect.maxX; oppY = initRect.maxY
+                    case 2: oppX = initRect.minX; oppY = initRect.maxY
+                    case 3: oppX = initRect.minX; oppY = initRect.maxY
+                    case 4: oppX = initRect.minX; oppY = initRect.minY
+                    case 5: oppX = initRect.minX; oppY = initRect.minY
+                    case 6: oppX = initRect.maxX; oppY = initRect.minY
+                    case 7: oppX = initRect.maxX; oppY = initRect.minY
+                    default: oppX = initRect.maxX; oppY = initRect.maxY
+                    }
+
+                    switch handleIdx {
+                    case 1, 5:
+                        let newY = min(point.y, oppY)
+                        let newH = max(4.0, abs(point.y - oppY))
+                        rectLayer.rect = CGRect(x: initRect.minX, y: newY, width: initRect.width, height: newH)
+                    case 7, 3:
+                        let newX = min(point.x, oppX)
+                        let newW = max(4.0, abs(point.x - oppX))
+                        rectLayer.rect = CGRect(x: newX, y: initRect.minY, width: newW, height: initRect.height)
+                    default:
+                        // Corner handles (0, 2, 4, 6)
+                        let newX = min(point.x, oppX)
+                        let newW = max(4.0, abs(point.x - oppX))
+                        let newY = min(point.y, oppY)
+                        let newH = max(4.0, abs(point.y - oppY))
+                        rectLayer.rect = CGRect(x: newX, y: newY, width: newW, height: newH)
+                    }
+                } else {
+                    dragging.updateHandle(index: handleIdx, to: point)
+                }
             } else {
                 dragging.move(by: delta)
                 NSCursor.fourDirectionalMove.set()
@@ -515,18 +582,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if let creating = activeCreatingLayer {
             if let arrow = creating as? ArrowLayer {
                 arrow.end = point
-                let dx = point.x - arrow.start.x
-                let dy = point.y - arrow.start.y
-                let dist = hypot(dx, dy)
-                let mid = CGPoint(x: (arrow.start.x + point.x) / 2.0, y: (arrow.start.y + point.y) / 2.0)
-                if dist > 8.0 {
-                    // Default natural curve: perpendicular deflection of ~15% capped at 35px
-                    let perp = CGPoint(x: -dy / dist, y: dx / dist)
-                    let bendAmount = min(35.0, max(8.0, dist * 0.15))
-                    arrow.control = CGPoint(x: mid.x + perp.x * bendAmount, y: mid.y + perp.y * bendAmount)
-                } else {
-                    arrow.control = mid
-                }
+                // Always start with straight: control point is collinear midpoint
+                arrow.control = CGPoint(x: (arrow.start.x + point.x) / 2.0, y: (arrow.start.y + point.y) / 2.0)
             } else if let rect = creating as? RectangleLayer {
                 rect.rect = CGRect(
                     x: min(dragStartPoint.x, point.x),
@@ -632,6 +689,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         activeDraggingLayer = nil
         activeHandleIndex = nil
+        initialRectForDrag = nil
         updateCursorForPoint(canvasPoint(from: event))
         needsDisplay = true
     }
@@ -851,6 +909,31 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             (window as? EditorPanel)?.zoomOut()
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "0" {
             (window as? EditorPanel)?.resetZoom()
+        } else if inlineEditor == nil && !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
+            let key = (event.charactersIgnoringModifiers ?? "").lowercased()
+            if key == "v" {
+                document.activeTool = .select
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "a" {
+                document.activeTool = .arrow
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "r" {
+                document.activeTool = .rectangle
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "c" {
+                document.activeTool = .counter
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "h" {
+                document.activeTool = .highlighter
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else {
+                super.keyDown(with: event)
+            }
         } else {
             super.keyDown(with: event)
         }

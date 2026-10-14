@@ -10,7 +10,14 @@ public final class EditorDocument {
     public var layers: [AnnotationLayer] = []
     public var selectedLayerIDs: Set<UUID> = []
 
-    public var activeTool: LayerType = .arrow
+    public var activeTool: LayerType = .select {
+        didSet {
+            if activeTool != oldValue {
+                selectedLayerIDs.removeAll()
+                onNeedsDisplay?()
+            }
+        }
+    }
     public var activeColor: String = "#FF3B30"
     public var activeStrokeWidth: CGFloat = 4.0
     public var activeFontSize: CGFloat = 16.0

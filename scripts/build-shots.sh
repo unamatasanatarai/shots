@@ -21,6 +21,22 @@ fi
 IFS= read -r sdk_path <"$sdk_file"
 rm -f "$sdk_file"
 
+# Increment and track build number
+build_num_file="${project_dir}/BUILD_NUMBER"
+if [[ -f "$build_num_file" ]]; then
+    IFS= read -r current_build <"$build_num_file"
+    current_build="${current_build//[[:space:]]/}"
+    if [[ "$current_build" =~ ^[0-9]+$ ]]; then
+        build_number=$((current_build + 1))
+    else
+        build_number=1
+    fi
+else
+    build_number=1
+fi
+printf '%s\n' "$build_number" >"$build_num_file"
+export BUILD_NUMBER="$build_number"
+
 build_dir="build"
 app_name="Shots"
 bundle_id="com.local.Shots"
@@ -38,13 +54,14 @@ fi
 if [[ -f "VERSION" ]]; then
     cp "VERSION" "${resources_dir}/VERSION"
 fi
+printf '%s\n' "$build_number" >"${resources_dir}/BUILD_NUMBER"
 
 sources=()
 while IFS= read -r file; do
     sources+=("$file")
 done < <(find Sources/Shots -type f -name "*.swift" | sort)
 
-printf '%s\n' "Compiling ${app_name} (${#sources[@]} source files)..."
+printf '%s\n' "Compiling ${app_name} v${VERSION} (Build ${BUILD_NUMBER}) (${#sources[@]} source files)..."
 swiftc -sdk "$sdk_path" \
     -O \
     -whole-module-optimization \
@@ -69,7 +86,7 @@ cat <<EOF >"${contents_dir}/Info.plist"
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_NUMBER}</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon.icns</string>
     <key>CFBundleIconName</key>

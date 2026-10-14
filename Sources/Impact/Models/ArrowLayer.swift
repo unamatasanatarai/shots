@@ -120,6 +120,9 @@ public final class ArrowLayer: AnnotationLayer {
         context.setFillColor(strokeColor)
         context.setStrokeColor(strokeColor)
 
+        // Refined soft natural shadow for depth and polish
+        context.setShadow(offset: CGSize(width: 0, height: -1.5), blur: 3.0, color: NSColor.black.withAlphaComponent(0.25).cgColor)
+
         let totalDist = hypot(end.x - start.x, end.y - start.y)
         guard totalDist > 4.0 else {
             context.restoreGState()
@@ -146,102 +149,121 @@ public final class ArrowLayer: AnnotationLayer {
             return CGMutablePath()
         }
 
-        let baseStartWidth = max(5.0, min(32.0, strokeWidth * 4.2 + totalDist * 0.015))
-        let targetEndWidth = max(10.0, min(70.0, baseStartWidth * 1.35 + totalDist * 0.02))
+        // Tapered arrow starting cleanly at 1px tail
+        let baseStartWidth: CGFloat = 1.0
 
-        let headLength = min(max(24.0, targetEndWidth * 2.45), totalDist * 0.65)
-        let wingSpan = targetEndWidth * 2.95
-        let wingHalfSpan = wingSpan / 2.0
-        let recessDepth = headLength * 0.38
-        let cornerRadius = min(7.0, max(4.0, targetEndWidth * 0.18))
+        // Attractive, balanced arrowhead proportions
+        let headLength = min(max(18.0, totalDist * 0.15), 50.0)
+        let wingHalfSpan = headLength * 0.36
+        let targetEndWidth = max(3.5, wingHalfSpan * 0.38) // Shaft width at head junction
 
-        let tHead = max(0.2, min(0.92, 1.0 - (headLength - recessDepth) / totalDist))
+        // Shaft meets arrowhead notch at ~0.72 of head length
+        let junctionDist = headLength * 0.72
+        let tHead = max(0.1, min(0.96, 1.0 - junctionDist / totalDist))
         let endTangent = tangentAt(t: 1.0)
         let forward = CGPoint(x: cos(endTangent), y: sin(endTangent))
-        let backward = CGPoint(x: -forward.x, y: -forward.y)
         let perp = CGPoint(x: -sin(endTangent), y: cos(endTangent))
 
-        let steps = 36
+        let steps = 40
         var leftPoints: [CGPoint] = []
         var rightPoints: [CGPoint] = []
 
         for i in 0...steps {
-            let t = (CGFloat(i) / CGFloat(steps)) * tHead
+            let tProg = CGFloat(i) / CGFloat(steps)
+            let t = tProg * tHead
             let pt = pointOnCurve(t: t)
             let tang = tangentAt(t: t)
             let pPerp = CGPoint(x: -sin(tang), y: cos(tang))
 
-            let currentHalfWidth = (baseStartWidth + (targetEndWidth - baseStartWidth) * (t / tHead)) / 2.0
+            // Non-linear taper progression for quick, organic thickening
+            let factor = pow(tProg, 0.62)
+            let currentHalfWidth = (baseStartWidth + (targetEndWidth - baseStartWidth) * factor) / 2.0
             leftPoints.append(CGPoint(x: pt.x + currentHalfWidth * pPerp.x, y: pt.y + currentHalfWidth * pPerp.y))
             rightPoints.append(CGPoint(x: pt.x - currentHalfWidth * pPerp.x, y: pt.y - currentHalfWidth * pPerp.y))
         }
 
-        let wingBase = CGPoint(
-            x: end.x + backward.x * headLength,
-            y: end.y + backward.y * headLength
-        )
-        let leftWingApex = CGPoint(
-            x: wingBase.x + perp.x * wingHalfSpan,
-            y: wingBase.y + perp.y * wingHalfSpan
-        )
-        let rightWingApex = CGPoint(
-            x: wingBase.x - perp.x * wingHalfSpan,
-            y: wingBase.y - perp.y * wingHalfSpan
-        )
-
-        let notchBase = CGPoint(
-            x: end.x + backward.x * (headLength - recessDepth),
-            y: end.y + backward.y * (headLength - recessDepth)
-        )
-        let leftNotch = CGPoint(
-            x: notchBase.x + perp.x * (targetEndWidth / 2.0),
-            y: notchBase.y + perp.y * (targetEndWidth / 2.0)
-        )
-        let rightNotch = CGPoint(
-            x: notchBase.x - perp.x * (targetEndWidth / 2.0),
-            y: notchBase.y - perp.y * (targetEndWidth / 2.0)
-        )
+        // Helper to map normalized coordinates to canvas points
+        func headPoint(nx: CGFloat, ny: CGFloat) -> CGPoint {
+            let dx = nx * headLength
+            let dy = ny * wingHalfSpan
+            return CGPoint(
+                x: end.x + forward.x * dx + perp.x * dy,
+                y: end.y + forward.y * dx + perp.y * dy
+            )
+        }
 
         let path = CGMutablePath()
+
+        // 1. Tip
         path.move(to: end)
-        path.addArc(tangent1End: leftWingApex, tangent2End: leftNotch, radius: cornerRadius)
-        path.addLine(to: leftNotch)
-        for pt in leftPoints.reversed() {
+
+        // 2. Bottom wing outer curve: smooth, aerodynamic curve from tip to bottom barb
+        path.addCurve(
+            to: headPoint(nx: -1.0, ny: 1.0),
+            control1: headPoint(nx: -0.30, ny: 0.28),
+            control2: headPoint(nx: -0.68, ny: 0.75)
+        )
+
+        // 3. Bottom barb notch: curves back into shaft junction
+        path.addCurve(
+            to: headPoint(nx: -0.72, ny: 0.38),
+            control1: headPoint(nx: -0.95, ny: 0.78),
+            control2: headPoint(nx: -0.84, ny: 0.52)
+        )
+
+        // 4. Right/Bottom shaft down to 1-pixel start tail
+        for pt in rightPoints.reversed() {
             path.addLine(to: pt)
         }
-        if let firstRight = rightPoints.first {
-            path.addLine(to: firstRight)
-        }
-        for pt in rightPoints.dropFirst() {
+
+        // 5. Tail
+        path.addLine(to: start)
+
+        // 6. Left/Top shaft up to top junction
+        for pt in leftPoints {
             path.addLine(to: pt)
         }
-        path.addLine(to: rightNotch)
-        path.addArc(tangent1End: rightWingApex, tangent2End: end, radius: cornerRadius)
+
+        // 7. Top barb notch: curves from shaft junction out to top barb
+        path.addCurve(
+            to: headPoint(nx: -1.0, ny: -1.0),
+            control1: headPoint(nx: -0.84, ny: -0.52),
+            control2: headPoint(nx: -0.95, ny: -0.78)
+        )
+
+        // 8. Top wing outer curve: from top barb back to tip
+        path.addCurve(
+            to: end,
+            control1: headPoint(nx: -0.68, ny: -0.75),
+            control2: headPoint(nx: -0.30, ny: -0.28)
+        )
+
         path.closeSubpath()
         return path
     }
 
     private func drawHead(at point: CGPoint, angle: CGFloat, width: CGFloat, in context: CGContext) {
-        let headLength = width * 2.45
-        let wingSpan = width * 2.95
-        let wingHalfSpan = wingSpan / 2.0
-        let recessDepth = headLength * 0.38
-        let cornerRadius = min(7.0, max(4.0, width * 0.18))
-
+        let headLength = max(18.0, min(55.0, width * 2.2))
+        let wingHalfSpan = headLength * 0.238
         let forward = CGPoint(x: cos(angle), y: sin(angle))
-        let backward = CGPoint(x: -forward.x, y: -forward.y)
         let perp = CGPoint(x: -sin(angle), y: cos(angle))
 
-        let wingBase = CGPoint(x: point.x + backward.x * headLength, y: point.y + backward.y * headLength)
-        let leftWingApex = CGPoint(x: wingBase.x + perp.x * wingHalfSpan, y: wingBase.y + perp.y * wingHalfSpan)
-        let rightWingApex = CGPoint(x: wingBase.x - perp.x * wingHalfSpan, y: wingBase.y - perp.y * wingHalfSpan)
-        let notchBase = CGPoint(x: point.x + backward.x * (headLength - recessDepth), y: point.y + backward.y * (headLength - recessDepth))
+        func headPt(nx: CGFloat, ny: CGFloat) -> CGPoint {
+            let dx = nx * headLength
+            let dy = ny * wingHalfSpan
+            return CGPoint(x: point.x + forward.x * dx + perp.x * dy, y: point.y + forward.y * dx + perp.y * dy)
+        }
 
         let path = CGMutablePath()
         path.move(to: point)
-        path.addArc(tangent1End: leftWingApex, tangent2End: notchBase, radius: cornerRadius)
-        path.addLine(to: notchBase)
-        path.addArc(tangent1End: rightWingApex, tangent2End: point, radius: cornerRadius)
+        path.addCurve(to: headPt(nx: -0.3761, ny: 0.4653), control1: headPt(nx: -0.0029, ny: 0.1198), control2: headPt(nx: -0.1737, ny: 0.2167))
+        path.addCurve(to: headPt(nx: -0.9954, ny: 1.0114), control1: headPt(nx: -0.6716, ny: 0.8283), control2: headPt(nx: -0.9507, ny: 1.1727))
+        path.addCurve(to: headPt(nx: -0.9424, ny: 0.6339), control1: headPt(nx: -1.0212, ny: 0.9181), control2: headPt(nx: -1.0334, ny: 0.8326))
+        path.addCurve(to: headPt(nx: -0.8588, ny: 0.0), control1: headPt(nx: -0.9197, ny: 0.3), control2: headPt(nx: -0.89, ny: 0.1))
+        path.addCurve(to: headPt(nx: -0.9424, ny: -0.6339), control1: headPt(nx: -0.89, ny: -0.1), control2: headPt(nx: -0.9197, ny: -0.3))
+        path.addCurve(to: headPt(nx: -0.9954, ny: -1.0114), control1: headPt(nx: -1.0334, ny: -0.8326), control2: headPt(nx: -1.0212, ny: -0.9181))
+        path.addCurve(to: headPt(nx: -0.3761, ny: -0.4653), control1: headPt(nx: -0.9507, ny: -1.1727), control2: headPt(nx: -0.6716, ny: -0.8283))
+        path.addCurve(to: point, control1: headPt(nx: -0.1737, ny: -0.2167), control2: headPt(nx: -0.0029, ny: -0.1198))
         path.closeSubpath()
 
         context.addPath(path)

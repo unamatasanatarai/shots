@@ -93,10 +93,37 @@ public final class EditorPanel: NSPanel {
         toolbarView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(toolbarView)
 
-        // 3. Header Info Bar at the top (Meta info: dimensions, zoom, color)
+        // Resolve version and build number
+        let versionStr = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let buildStr: String = {
+            if let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String, !b.isEmpty {
+                return b
+            }
+            if let resURL = Bundle.main.url(forResource: "BUILD_NUMBER", withExtension: nil),
+               let content = try? String(contentsOf: resURL, encoding: .utf8) {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+            if let projURL = URL(string: "file:///Users/citizen/dev/shots/BUILD_NUMBER"),
+               let content = try? String(contentsOf: projURL, encoding: .utf8) {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+            return "1"
+        }()
+
+        self.title = "\(title) — Build \(buildStr)"
+
+        // 3. Header Info Bar at the top (Title + Build number on left, dimensions/zoom on right)
         let headerView = NSView()
         headerView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(headerView)
+
+        let titleLabel = NSTextField(labelWithString: "Impact v\(versionStr) (Build \(buildStr))")
+        titleLabel.font = NSFont.systemFont(ofSize: 11.0, weight: .semibold)
+        titleLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        headerView.addSubview(titleLabel)
 
         let meta = NSTextField(labelWithString: "\(Int(document.originalImageBounds.width)) × \(Int(document.originalImageBounds.height)) px")
         meta.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .medium)
@@ -110,6 +137,10 @@ public final class EditorPanel: NSPanel {
             headerView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             headerView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             headerView.heightAnchor.constraint(equalToConstant: 32),
+
+            // Left padding 76px clears the standard macOS traffic lights (close/minimize/zoom)
+            titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 76),
 
             meta.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
             meta.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
@@ -210,9 +241,16 @@ public final class EditorPanel: NSPanel {
             let savePanel = NSSavePanel()
             savePanel.allowedContentTypes = [.png, .jpeg]
             savePanel.nameFieldStringValue = "Annotation_\(Int(Date().timeIntervalSince1970)).png"
-            if savePanel.runModal() == .OK, let url = savePanel.url {
-                let format: NSBitmapImageRep.FileType = url.pathExtension.lowercased() == "jpg" || url.pathExtension.lowercased() == "jpeg" ? .jpeg : .png
-                self.canvasView.saveCompositionToFile(url: url, format: format)
+            savePanel.beginSheetModal(for: self) { [weak self] response in
+                guard let self = self else { return }
+                if response == .OK, let url = savePanel.url {
+                    let format: NSBitmapImageRep.FileType = url.pathExtension.lowercased() == "jpg" || url.pathExtension.lowercased() == "jpeg" ? .jpeg : .png
+                    self.canvasView.saveCompositionToFile(url: url, format: format)
+                    NSSound(named: "Tink")?.play()
+                }
+                // Explicitly keep the editor panel key and in front whether saved or cancelled
+                self.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
             }
         }
 

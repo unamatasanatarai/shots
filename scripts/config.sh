@@ -20,3 +20,14 @@ if [[ -f "$version_file" ]]; then
     fi
 fi
 export VERSION="${VERSION:-1.0.0}"
+
+# Resolve Build Number from BUILD_NUMBER file if present
+build_num_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/BUILD_NUMBER"
+if [[ -f "$build_num_file" ]]; then
+    IFS= read -r file_build <"$build_num_file"
+    file_build="${file_build//[[:space:]]/}"
+    if [[ -n "$file_build" ]]; then
+        export BUILD_NUMBER="${BUILD_NUMBER:-$file_build}"
+    fi
+fi
+export BUILD_NUMBER="${BUILD_NUMBER:-1}"

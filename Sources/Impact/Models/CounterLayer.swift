@@ -39,6 +39,36 @@ public final class CounterLayer: AnnotationLayer {
         self.zIndex = zIndex
     }
 
+    /// Convenience initializer positioning the counter such that its pointer tip is exactly at `tip`
+    public convenience init(
+        tip: CGPoint,
+        radius: CGFloat = 16.0,
+        value: Int = 1,
+        pointerAngle: CGFloat? = nil,
+        tailDistance: CGFloat? = nil,
+        color: String = "#FF3B30",
+        strokeWidth: CGFloat = 2.0,
+        zIndex: Int = 0
+    ) {
+        let angle: CGFloat = pointerAngle ?? (3.0 * .pi / 4.0)
+        let tDist: CGFloat = tailDistance ?? (radius * 1.68)
+        let dist = max(radius * 1.35, tDist)
+        let computedCenter = CGPoint(
+            x: tip.x - dist * cos(angle),
+            y: tip.y - dist * sin(angle)
+        )
+        self.init(
+            center: computedCenter,
+            radius: radius,
+            value: value,
+            pointerAngle: angle,
+            tailDistance: tDist,
+            color: color,
+            strokeWidth: strokeWidth,
+            zIndex: zIndex
+        )
+    }
+
     public func getPeakPoint() -> CGPoint {
         let angle = pointerAngle
         let dist = max(radius * 1.35, tailDistance)

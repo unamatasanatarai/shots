@@ -52,11 +52,13 @@ public final class EditorToolbarView: NSVisualEffectView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
 
-        // Tool buttons: Counter, Pointer (Arrow), Highlighter
+        // Tool buttons: Pointer (V), Arrow (A), Rectangle (R), Counter (C), Highlighter (H)
         let tools: [(LayerType, String, String)] = [
-            (.counter, "1.circle", "Counter"),
-            (.arrow, "arrow.up.right", "Pointer"),
-            (.highlighter, "highlighter", "Highlighter")
+            (.select, "cursorarrow", "Pointer (V)"),
+            (.arrow, "arrow.up.right", "Arrow (A)"),
+            (.rectangle, "rectangle", "Rectangle (R)"),
+            (.counter, "1.circle", "Counter (C)"),
+            (.highlighter, "highlighter", "Highlighter (H)")
         ]
 
         for (type, icon, tooltip) in tools {
@@ -214,8 +216,8 @@ public final class EditorToolbarView: NSVisualEffectView {
         onPinToggle?(isPinned)
     }
 
-    private func updateSelectedToolVisuals() {
-        let current = canvasView?.document.activeTool ?? .arrow
+    public func updateSelectedToolVisuals() {
+        let current = canvasView?.document.activeTool ?? .select
         for (type, btn) in toolButtons {
             btn.contentTintColor = (type == current) ? NSColor(srgbRed: 0.0, green: 0.58, blue: 1.0, alpha: 1.0) : NSColor(white: 0.9, alpha: 1.0)
         }

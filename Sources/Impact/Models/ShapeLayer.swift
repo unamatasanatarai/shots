@@ -31,7 +31,7 @@ public final class RectangleLayer: AnnotationLayer {
     public init(
         id: UUID = UUID(),
         rect: CGRect,
-        cornerRadius: CGFloat = 10.0,
+        cornerRadius: CGFloat = 6.0,
         color: String = "#FF3B30",
         strokeWidth: CGFloat = 4.0,
         fillStyle: ShapeFillStyle = .outline,
