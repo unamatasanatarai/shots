@@ -204,10 +204,10 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         // 3. Quick Toggles
         saveToDiskMenuItem = NSMenuItem(
             title: "Save to Folder",
-            action: #selector(toggleSaveToDisk),
+            action: nil,
             keyEquivalent: ""
         )
-        saveToDiskMenuItem.target = self
+        saveToDiskMenuItem.toolTip = "Saving to disk is mandatory for all screenshots"
         if let folderIcon = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
             folderIcon.isTemplate = true
             saveToDiskMenuItem.image = folderIcon
@@ -398,7 +398,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             button.toolTip = "Shots — Click for options or press \(areaShortcut)"
         }
 
-        saveToDiskMenuItem.state = settings.saveToDisk ? .on : .off
+        saveToDiskMenuItem.state = .on
         copyToClipboardMenuItem.state = settings.copyToClipboard ? .on : .off
         includeCursorMenuItem.state = settings.includeCursor ? .on : .off
 

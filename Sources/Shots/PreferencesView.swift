@@ -365,18 +365,33 @@ private struct CaptureTab: View {
     var body: some View {
         VStack(spacing: 12) {
             // Post-Capture Action Card
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("After capture")
-                        .font(.system(size: 13, weight: .regular))
-                    Spacer()
-                    Picker("", selection: $settings.postCaptureAction) {
-                        Text("Save Only").tag(PostCaptureAction.saveToDisk)
-                        Text("Copy Only").tag(PostCaptureAction.copyToClipboard)
-                        Text("Save & Copy").tag(PostCaptureAction.both)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Save to folder")
+                            .font(.system(size: 13, weight: .regular))
+                        Text("Mandatory for all captures; opens automatically in Impact")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.secondary)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 250)
+                    Spacer()
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.accentColor)
+                }
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Copy to clipboard")
+                            .font(.system(size: 13, weight: .regular))
+                        Text("Automatically copy screenshot image to clipboard")
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $settings.copyToClipboard)
+                        .labelsHidden()
                 }
             }
             .padding(12)
