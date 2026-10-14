@@ -147,7 +147,6 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         for layer in selectedLayers {
             let box = layer.getBoundingBox()
-            context.stroke(box)
 
             // Draw circular handles
             let handleRadius: CGFloat = 4.5
