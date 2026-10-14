@@ -16,6 +16,12 @@ public final class EditorDocument {
     public var activeFontSize: CGFloat = 16.0
     public var counterStep: Int = 1
 
+    /// Computes the next integer in sequence by reading highest existing counter value
+    public func nextCounterValue() -> Int {
+        let maxExisting = layers.compactMap { ($0 as? CounterLayer)?.value }.max() ?? 0
+        return max(counterStep, maxExisting + 1)
+    }
+
     // Undo / Redo
     private var undoStack: [[AnnotationLayer]] = []
     private var redoStack: [[AnnotationLayer]] = []

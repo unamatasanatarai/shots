@@ -256,9 +256,32 @@ public enum EditorTests {
             let handleIndex = counter.hitTestHandle(point: peak)
             assert(handleIndex == 0, "Counter handle 0 should be hit-testable")
 
-            // Drag handle to point downwards (0, 1) -> pi / 2
-            counter.updateHandle(index: 0, to: CGPoint(x: 100, y: 150))
+            // Drag handle far away (x: 100, y: 300) -> pointer angle should be pi/2 and distance should remain locked to radius * 1.68
+            counter.updateHandle(index: 0, to: CGPoint(x: 100, y: 300))
             assert(abs(counter.pointerAngle - (.pi / 2.0)) < 0.05, "Pointer angle should be ~pi/2 pointing down")
+            assert(abs(counter.tailDistance - (counter.radius * 1.68)) < 0.001, "Tip distance must remain locked at constant radial distance")
+            let updatedPeak = counter.getPeakPoint()
+            let computedDist = hypot(updatedPeak.x - counter.center.x, updatedPeak.y - counter.center.y)
+            assert(abs(computedDist - (counter.radius * 1.68)) < 0.001, "Peak radial distance must be fixed")
+        }
+
+        testRunner("Editor - Sequential Counter Auto-Increment From Highest Value") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            assert(doc.nextCounterValue() == 1, "Initial nextCounterValue must be 1")
+
+            let c1 = CounterLayer(center: CGPoint(x: 50, y: 50), value: 1)
+            doc.addLayer(c1)
+            assert(doc.nextCounterValue() == 2, "Next counter value must increment to 2")
+
+            let c2 = CounterLayer(center: CGPoint(x: 100, y: 100), value: 5) // Custom higher value
+            doc.addLayer(c2)
+            assert(doc.nextCounterValue() == 6, "Next counter value must read highest existing value (5) and assign 6")
         }
 
         testRunner("Editor - Callout Tail Tip and Size Handle Drag") {

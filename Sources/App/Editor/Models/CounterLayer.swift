@@ -109,7 +109,8 @@ public final class CounterLayer: AnnotationLayer {
             let dx = point.x - center.x
             let dy = point.y - center.y
             pointerAngle = atan2(dy, dx)
-            tailDistance = max(radius * 1.45, min(radius * 3.0, hypot(dx, dy)))
+            // Fixed tip distance locked at constant radial distance
+            tailDistance = radius * 1.68
         }
     }
 

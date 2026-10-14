@@ -15,6 +15,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var isShiftPressed: Bool = false
     private var inlineEditor: NSTextField?
     private var editingLayer: AnnotationLayer?
+    private var hoveredLayer: AnnotationLayer?
     private var canvasTrackingArea: NSTrackingArea?
 
     // Zoom & Pan
@@ -153,14 +154,17 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     private func drawSelectionHandles(in context: CGContext) {
-        let selectedLayers = document.getSelectedLayers()
-        guard !selectedLayers.isEmpty else { return }
+        var layersToHandle = document.getSelectedLayers()
+        if let hovered = hoveredLayer, !layersToHandle.contains(where: { $0.id == hovered.id }) {
+            layersToHandle.append(hovered)
+        }
+        guard !layersToHandle.isEmpty else { return }
 
         context.saveGState()
         context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 1.0).cgColor)
         context.setLineWidth(1.5)
 
-        for layer in selectedLayers {
+        for layer in layersToHandle {
             let box = layer.getBoundingBox()
 
             // Draw circular handles
@@ -238,13 +242,22 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
         }
 
-        // Check handle click on currently selected layer
+        // Check handle click on currently selected layer or any visible layer
         if let selected = document.getSelectedLayers().first,
            let handleIndex = selected.hitTestHandle(point: point) {
             document.saveSnapshot()
             activeDraggingLayer = selected
             activeHandleIndex = handleIndex
             return
+        }
+        for layer in document.layers.reversed() where layer.isVisible {
+            if let handleIndex = layer.hitTestHandle(point: point) {
+                document.saveSnapshot()
+                document.selectLayer(layer)
+                activeDraggingLayer = layer
+                activeHandleIndex = handleIndex
+                return
+            }
         }
 
         switch document.activeTool {
@@ -318,7 +331,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
             let counter = CounterLayer(
                 center: point,
-                value: document.counterStep,
+                value: document.nextCounterValue(),
                 color: document.activeColor
             )
             activeCreatingLayer = counter
@@ -480,9 +493,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 let dx = point.x - counter.center.x
                 let dy = point.y - counter.center.y
                 counter.pointerAngle = atan2(dy, dx)
-                if hypot(dx, dy) >= counter.radius * 1.45 {
-                    counter.tailDistance = min(counter.radius * 3.0, hypot(dx, dy))
-                }
+                counter.tailDistance = counter.radius * 1.68
             } else if let filter = creating as? FilterLayer {
                 let r = CGRect(
                     x: min(dragStartPoint.x, point.x),
@@ -503,7 +514,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     override public func mouseUp(with event: NSEvent) {
         if let creating = activeCreatingLayer {
             if let counter = creating as? CounterLayer {
-                document.counterStep += 1
+                document.counterStep = counter.value + 1
                 document.addLayer(counter)
                 document.selectLayer(counter)
             } else if let textLayer = creating as? TextLayer {
@@ -560,6 +571,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseMoved(with event: NSEvent) {
         let point = canvasPoint(from: event)
+        let newlyHovered = document.layers.reversed().first { layer in
+            layer.isVisible && (layer.contains(point: point) || layer.hitTestHandle(point: point) != nil)
+        }
+        if newlyHovered?.id != hoveredLayer?.id {
+            hoveredLayer = newlyHovered
+            needsDisplay = true
+        }
         updateCursorForPoint(point)
     }
 
@@ -578,6 +596,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // If dragging or hovering over a handle, use appropriate handle cursor
         if let selected = document.getSelectedLayers().first,
            selected.hitTestHandle(point: point) != nil {
+            NSCursor.crosshair.set()
+            return
+        }
+        if let hovered = hoveredLayer, hovered.hitTestHandle(point: point) != nil {
             NSCursor.crosshair.set()
             return
         }
