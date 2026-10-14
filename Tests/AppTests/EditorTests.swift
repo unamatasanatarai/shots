@@ -341,5 +341,38 @@ public enum EditorTests {
             // Verify hole 1 remains untouched
             assert(spotlight.rects[0].origin == CGPoint(x: 20, y: 20), "First hole must remain unaffected")
         }
+
+        testRunner("Editor - Arrow Annotation Tool 3-Point Control System") {
+            let arrow = ArrowLayer(
+                start: CGPoint(x: 50, y: 50),
+                control: CGPoint(x: 150, y: 80),
+                end: CGPoint(x: 250, y: 50),
+                strokeWidth: 4.0
+            )
+
+            // Exactly three interactive control handles:
+            // Handle 0: Start Point (tail)
+            // Handle 1: Bend Point (central control node)
+            // Handle 2: End Point (arrowhead tip)
+            assert(arrow.hitTestHandle(point: CGPoint(x: 50, y: 50)) == 0, "Handle 0 must be Start Point at arrow tail")
+            assert(arrow.hitTestHandle(point: CGPoint(x: 150, y: 80)) == 1, "Handle 1 must be Bend Point at central control node")
+            assert(arrow.hitTestHandle(point: CGPoint(x: 250, y: 50)) == 2, "Handle 2 must be End Point at arrowhead tip")
+
+            // Test independent Start Point repositioning (leaving end and control intact)
+            arrow.updateHandle(index: 0, to: CGPoint(x: 20, y: 60))
+            assert(arrow.start == CGPoint(x: 20, y: 60), "Start point must update to (20, 60)")
+            assert(arrow.end == CGPoint(x: 250, y: 50), "End point must remain anchored")
+
+            // Test independent Bend Point pulling path into curve
+            arrow.updateHandle(index: 1, to: CGPoint(x: 150, y: 140))
+            assert(arrow.control == CGPoint(x: 150, y: 140), "Bend point must update to (150, 140)")
+            assert(arrow.start == CGPoint(x: 20, y: 60), "Start point must remain anchored during bend adjustment")
+            assert(arrow.end == CGPoint(x: 250, y: 50), "End point must remain anchored during bend adjustment")
+
+            // Test independent End Point repositioning
+            arrow.updateHandle(index: 2, to: CGPoint(x: 300, y: 100))
+            assert(arrow.end == CGPoint(x: 300, y: 100), "End point must update to (300, 100)")
+            assert(arrow.start == CGPoint(x: 20, y: 60), "Start point must remain anchored")
+        }
     }
 }
