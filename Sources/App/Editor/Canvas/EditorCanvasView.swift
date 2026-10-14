@@ -183,7 +183,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let mag = layer as? MagnifierLayer {
                 handlePoints = [mag.sourceCenter, mag.targetCenter]
             } else if let callout = layer as? CalloutLayer {
-                handlePoints = [callout.tailTip, CGPoint(x: callout.frame.maxX, y: callout.frame.maxY)]
+                handlePoints = [callout.tailTip]
             } else if let counter = layer as? CounterLayer {
                 handlePoints = [counter.getPeakPoint()]
             } else if let textLayer = layer as? TextLayer {
@@ -709,9 +709,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             textRect = CGRect(x: box.origin.x + offsetX, y: box.origin.y + offsetY, width: max(box.width, 100), height: max(box.height, 28))
         } else if let callout = layer as? CalloutLayer {
             initialText = callout.text
-            initialFont = NSFont.systemFont(ofSize: callout.fontSize, weight: .semibold)
-            let inset = callout.frame.insetBy(dx: 8, dy: 6)
-            textRect = CGRect(x: inset.origin.x + offsetX, y: inset.origin.y + offsetY, width: inset.width, height: inset.height)
+            initialFont = NSFont.systemFont(ofSize: callout.fontSize, weight: .bold)
+            let f = callout.frame
+            textRect = CGRect(x: f.origin.x + offsetX, y: f.origin.y + offsetY, width: max(f.width, 100), height: max(f.height, 36))
         } else {
             return
         }
@@ -727,6 +727,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         textField.backgroundColor = NSColor(white: 0.15, alpha: 0.95)
         textField.textColor = NSColor.white
         textField.focusRingType = .none
+        textField.cell?.wraps = true
+        textField.cell?.isScrollable = false
         textField.target = self
         textField.action = #selector(editorAction(_:))
         textField.delegate = self
@@ -768,6 +770,11 @@ extension EditorCanvasView: NSTextFieldDelegate {
 
     public func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            // Shift+Enter or Alt+Enter inserts newline for multiline callout text; Enter alone commits
+            if NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.option) {
+                textView.insertNewlineIgnoringFieldEditor(nil)
+                return true
+            }
             commitInlineEditor()
             return true
         } else if commandSelector == #selector(NSResponder.cancelOperation(_:)) {

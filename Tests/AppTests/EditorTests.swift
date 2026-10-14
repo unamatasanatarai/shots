@@ -284,22 +284,30 @@ public enum EditorTests {
             assert(doc.nextCounterValue() == 6, "Next counter value must read highest existing value (5) and assign 6")
         }
 
-        testRunner("Editor - Callout Tail Tip and Size Handle Drag") {
+        testRunner("Editor - Text Callout Auto-Sizing & Edge Snapped Tail") {
             let callout = CalloutLayer(
-                frame: CGRect(x: 100, y: 100, width: 120, height: 40),
-                tailTip: CGPoint(x: 150, y: 200)
+                origin: CGPoint(x: 100, y: 100),
+                text: "one line",
+                tailTip: CGPoint(x: 120, y: 160)
             )
 
-            // Hit test handle 0 (tail tip)
-            assert(callout.hitTestHandle(point: CGPoint(x: 150, y: 200)) == 0, "Handle 0 must be tail tip")
-            callout.updateHandle(index: 0, to: CGPoint(x: 80, y: 220))
-            assert(callout.tailTip == CGPoint(x: 80, y: 220), "Tail tip must be updated to new drag point")
+            let initialSize = callout.frame.size
+            assert(initialSize.width > 0 && initialSize.height > 0, "Initial size must be auto-calculated")
 
-            // Hit test handle 1 (bottom-right resize)
-            assert(callout.hitTestHandle(point: CGPoint(x: 220, y: 140)) == 1, "Handle 1 must be bottom-right resize")
-            callout.updateHandle(index: 1, to: CGPoint(x: 260, y: 180))
-            assert(callout.frame.width == 160, "Frame width must be updated to 160")
-            assert(callout.frame.height == 80, "Frame height must be updated to 80")
+            // Test dynamic auto-sizing when multiline text is provided
+            callout.text = "multiline\nmulti\nline"
+            assert(callout.frame.height > initialSize.height, "Height must automatically grow for multiline content")
+
+            // Hit test handle: only handle 0 (tail tip) is adjustable
+            assert(callout.hitTestHandle(point: CGPoint(x: 120, y: 160)) == 0, "Handle 0 must be tail tip")
+            assert(callout.hitTestHandle(point: CGPoint(x: callout.frame.maxX, y: callout.frame.maxY)) == nil, "Bounding box resize handle must be excluded")
+
+            // Move tail tip far to the right -> edge snapping to right side
+            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.maxX + 120, y: callout.frame.midY))
+            assert(callout.tailTip == CGPoint(x: callout.frame.maxX + 120, y: callout.frame.midY), "Tail tip must update to new position")
+
+            let path = callout.pathForCallout()
+            assert(!path.isEmpty, "Path for callout with edge snapped tail must not be empty")
         }
 
         testRunner("Editor - 4-Directional Move Cursor & Hit Testing") {
