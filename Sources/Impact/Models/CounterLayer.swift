@@ -31,7 +31,8 @@ public final class CounterLayer: AnnotationLayer {
         self.center = center
         self.radius = radius
         self.value = value
-        self.pointerAngle = pointerAngle ?? (-.pi / 4.0)
+        // Default peak direction is 7:30pm (bottom-left, 135 degrees = 3*pi/4 radians in flipped canvas coordinates)
+        self.pointerAngle = pointerAngle ?? (3.0 * .pi / 4.0)
         self.tailDistance = tailDistance ?? (radius * 1.68)
         self.color = color
         self.strokeWidth = strokeWidth
@@ -40,40 +41,73 @@ public final class CounterLayer: AnnotationLayer {
 
     public func getPeakPoint() -> CGPoint {
         let angle = pointerAngle
-        let dist = max(radius * 1.45, tailDistance)
+        let dist = max(radius * 1.35, tailDistance)
         return CGPoint(x: center.x + dist * cos(angle), y: center.y + dist * sin(angle))
     }
 
     public func pathForTeardrop() -> CGPath {
         let angle = pointerAngle
-        let dist = max(radius * 1.45, tailDistance)
+        let dist = max(radius * 1.35, tailDistance)
         let peak = CGPoint(x: center.x + dist * cos(angle), y: center.y + dist * sin(angle))
 
-        let cosBeta = min(1.0, max(-1.0, radius / dist))
-        let beta = acos(cosBeta)
-
+        // Departure angle beta from peak axis to flank base on circle (~48 deg = 0.84 rad)
+        let beta: CGFloat = 0.84
+        let t1Angle = angle - beta
         let t2Angle = angle + beta
+
+        let p1 = CGPoint(x: center.x + radius * cos(t1Angle), y: center.y + radius * sin(t1Angle))
+        let p2 = CGPoint(x: center.x + radius * cos(t2Angle), y: center.y + radius * sin(t2Angle))
+
+        let tipR = max(1.5, radius * 0.055)
+        let perpAngle = angle + .pi / 2.0
+        let tip1 = CGPoint(x: peak.x - tipR * cos(perpAngle), y: peak.y - tipR * sin(perpAngle))
+        let tip2 = CGPoint(x: peak.x + tipR * cos(perpAngle), y: peak.y + tipR * sin(perpAngle))
+
+        let handleLen = (dist - radius) * 0.55
+        let c1P1 = CGPoint(
+            x: p1.x + handleLen * cos(t1Angle + .pi / 2.0),
+            y: p1.y + handleLen * sin(t1Angle + .pi / 2.0)
+        )
+        let c2Tip1 = CGPoint(
+            x: tip1.x - handleLen * 0.7 * cos(angle - 0.15),
+            y: tip1.y - handleLen * 0.7 * sin(angle - 0.15)
+        )
+
+        let c1P2 = CGPoint(
+            x: p2.x + handleLen * cos(t2Angle - .pi / 2.0),
+            y: p2.y + handleLen * sin(t2Angle - .pi / 2.0)
+        )
+        let c2Tip2 = CGPoint(
+            x: tip2.x - handleLen * 0.7 * cos(angle + 0.15),
+            y: tip2.y - handleLen * 0.7 * sin(angle + 0.15)
+        )
 
         let path = CGMutablePath()
 
-        // Circular back arc from t2Angle to t1Angle passing through angle + .pi
+        // 1. Circular back arc along the body from t2Angle around back to t1Angle
+        let arcSpan = 2.0 * .pi - 2.0 * beta
         let steps = 36
-        let arcSpan = 2 * .pi - 2 * beta
-        for i in 0...steps {
+        path.move(to: p2)
+        for i in 1...steps {
             let frac = CGFloat(i) / CGFloat(steps)
             let a = t2Angle + frac * arcSpan
             let pt = CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a))
-            if i == 0 {
-                path.move(to: pt)
-            } else {
-                path.addLine(to: pt)
-            }
+            path.addLine(to: pt)
         }
 
-        // Tangent towards peak with rounded tip, then back to t2
-        let t2 = CGPoint(x: center.x + radius * cos(t2Angle), y: center.y + radius * sin(t2Angle))
-        path.addArc(tangent1End: peak, tangent2End: t2, radius: 3.5)
-        path.addLine(to: t2)
+        // 2. Smooth bezier flank from p1 to tip1
+        path.addCurve(to: tip1, control1: c1P1, control2: c2Tip1)
+
+        // 3. Rounded peak cap
+        let capSteps = 8
+        for i in 1...capSteps {
+            let a = perpAngle - .pi + (CGFloat(i) / CGFloat(capSteps)) * .pi
+            let pt = CGPoint(x: peak.x + tipR * cos(a), y: peak.y + tipR * sin(a))
+            path.addLine(to: pt)
+        }
+
+        // 4. Smooth bezier flank from tip2 back to p2
+        path.addCurve(to: p2, control1: c2Tip2, control2: c1P2)
         path.closeSubpath()
 
         return path

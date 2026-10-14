@@ -79,7 +79,7 @@ if [[ "$dry_run" -eq 1 ]]; then
     printf '%s\n' "DMG Artifact:       ${dmg_path}"
     printf '%s\n' "Git Enabled:        $([[ $is_git_repo -eq 1 ]] && echo 'Yes' || echo 'No (not a git repo)')"
     printf '%s\n' "Steps that would run:"
-    printf '%s\n' "  1. Execute unit test suite (./scripts/test.sh)"
+    printf '%s\n' "  1. Execute unit test suites (./scripts/test-shots.sh & ./scripts/test-impact.sh)"
     printf '%s\n' "  2. Update VERSION to ${version}"
     if [[ "$is_git_repo" -eq 1 ]]; then
         printf '%s\n' "  3. Commit VERSION and create git tag v${version}"
@@ -94,7 +94,8 @@ if [[ "$dry_run" -eq 1 ]]; then
 fi
 
 printf '%s\n' "Running unit tests before release..."
-"${script_dir}/test.sh"
+"${script_dir}/test-shots.sh"
+"${script_dir}/test-impact.sh"
 
 printf '%s\n' "Updating VERSION to ${version}..."
 printf '%s\n' "$version" >"VERSION"

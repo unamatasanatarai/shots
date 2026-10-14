@@ -377,7 +377,7 @@ public struct StressTests {
     private static func testRecognitionConcurrentBackgroundRequests() throws {
         guard RecognitionService.shared.isVisionSupported else { return }
 
-        let testImage = createTextBitmap(text: "Shots! Stress Test", width: 300, height: 100)
+        let testImage = createTextBitmap(text: "Shots Stress Test", width: 300, height: 100)
         let group = DispatchGroup()
         let count = 20
         var successCount = 0

@@ -12,12 +12,14 @@ public final class EditorToolbarView: NSVisualEffectView {
     public var onPinToggle: ((Bool) -> Void)?
     public var onSaveRequested: (() -> Void)?
     public var onCopyRequested: (() -> Void)?
+    public var onZoomInRequested: (() -> Void)?
+    public var onZoomOutRequested: (() -> Void)?
 
     private var isPinned: Bool = false
 
     public init(canvasView: EditorCanvasView) {
         self.canvasView = canvasView
-        super.init(frame: NSRect(x: 0, y: 0, width: 720, height: 48))
+        super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 48))
         material = .hudWindow
         state = .active
         blendingMode = .withinWindow
@@ -50,21 +52,10 @@ public final class EditorToolbarView: NSVisualEffectView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
 
-        // Tool buttons
+        // Tool buttons: Counter, Pointer (Arrow), Highlighter
         let tools: [(LayerType, String, String)] = [
-            (.select, "cursorarrow", "Select"),
-            (.arrow, "arrow.up.right", "Arrow"),
-            (.rectangle, "rectangle", "Rectangle"),
-            (.ellipse, "circle", "Circle"),
-            (.line, "line.diagonal", "Line"),
-            (.pen, "pencil", "Pen"),
-            (.text, "textformat", "Text"),
-            (.callout, "bubble.left", "Callout"),
-            (.counter, "1.circle", "Step Counter"),
-            (.dimension, "ruler", "Dimension"),
-            (.magnifier, "plus.magnifyingglass", "Magnifier"),
-            (.spotlight, "sun.max", "Spotlight"),
-            (.blur, "drop.fill", "Blur / Pixelate"),
+            (.counter, "1.circle", "Counter"),
+            (.arrow, "arrow.up.right", "Pointer"),
             (.highlighter, "highlighter", "Highlighter")
         ]
 
@@ -99,6 +90,20 @@ public final class EditorToolbarView: NSVisualEffectView {
             colorButtons.append(colBtn)
             stack.addArrangedSubview(colBtn)
         }
+
+        // Separator
+        stack.addArrangedSubview(createSeparator())
+
+        // Zoom Controls: Zoom Out (-), Zoom In (+)
+        let zoomOutBtn = createIconButton(systemName: "minus.magnifyingglass", tooltip: "Zoom Out (Cmd -)")
+        zoomOutBtn.target = self
+        zoomOutBtn.action = #selector(zoomOutClicked)
+        stack.addArrangedSubview(zoomOutBtn)
+
+        let zoomInBtn = createIconButton(systemName: "plus.magnifyingglass", tooltip: "Zoom In (Cmd +)")
+        zoomInBtn.target = self
+        zoomInBtn.action = #selector(zoomInClicked)
+        stack.addArrangedSubview(zoomInBtn)
 
         // Separator
         stack.addArrangedSubview(createSeparator())
@@ -180,6 +185,14 @@ public final class EditorToolbarView: NSVisualEffectView {
                 doc.onNeedsDisplay?()
             }
         }
+    }
+
+    @objc private func zoomInClicked() {
+        onZoomInRequested?()
+    }
+
+    @objc private func zoomOutClicked() {
+        onZoomOutRequested?()
     }
 
     @objc private func undoClicked() {

@@ -211,7 +211,7 @@ public final class RegionSelectionCoordinator {
         ) {
             eventTap = tap
         } else {
-            NSLog("Shots!: Consuming event tap unavailable. Prompting Accessibility permission and falling back to listen-only.")
+            NSLog("Shots: Consuming event tap unavailable. Prompting Accessibility permission and falling back to listen-only.")
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
 

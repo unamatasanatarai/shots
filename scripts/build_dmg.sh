@@ -12,14 +12,17 @@ cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/${APP_NAME,,}"
 mkdir -p "$cache_dir"
 
 build_dir="build"
-app_bundle="${build_dir}/${APP_NAME}.app"
-dmg_name="${APP_NAME}-${VERSION}.dmg"
+app_bundle="${build_dir}/Shots.app"
+dmg_name="Shots-${VERSION}.dmg"
 dmg_path="${build_dir}/${dmg_name}"
 tmp_dmg="${build_dir}/tmp_rw.dmg"
 
-if [[ ! -d "$app_bundle" ]]; then
-    printf '%s\n' "Application bundle not found. Building ${APP_NAME}..."
-    "${script_dir}/build.sh"
+impact_bundle="${build_dir}/Impact.app"
+
+if [[ ! -d "$app_bundle" || ! -d "$impact_bundle" ]]; then
+    printf '%s\n' "Application bundles not found. Building Shots and Impact..."
+    "${script_dir}/build-shots.sh"
+    "${script_dir}/build-impact.sh"
 fi
 
 if [[ ! -f "Resources/dmg_background.png" || ! -f "Resources/dmg_background@2x.png" ]]; then
@@ -34,14 +37,14 @@ hdi_info_file="${cache_dir}/hdiutil_info.tmp"
 hdiutil info >"$hdi_info_file" 2>/dev/null || true
 if [[ -f "$hdi_info_file" ]]; then
     while IFS= read -r line; do
-        if [[ "$line" =~ (/Volumes/${APP_NAME}( [0-9]+)?)[[:space:]]*$ ]]; then
+        if [[ "$line" =~ (/Volumes/Shots( [0-9]+)?)[[:space:]]*$ ]]; then
             hdiutil detach "${BASH_REMATCH[1]}" -force >/dev/null 2>&1 || true
         fi
     done <"$hdi_info_file"
     rm -f "$hdi_info_file"
 fi
 
-printf '%s\n' "Creating styled DMG package for ${APP_NAME} v${VERSION}..."
+printf '%s\n' "Creating styled DMG package for Shots & Impact v${VERSION}..."
 rm -rf "${build_dir}/dmg_root" "$tmp_dmg" "$dmg_path"
 mkdir -p "${build_dir}/dmg_root/.background"
 
@@ -55,16 +58,17 @@ if [[ -f "Resources/dmg_background.png" ]]; then
 fi
 
 cp -R "$app_bundle" "${build_dir}/dmg_root/"
+cp -R "$impact_bundle" "${build_dir}/dmg_root/"
 ln -s /Applications "${build_dir}/dmg_root/Applications"
 
-hdiutil create -volname "$APP_NAME" -srcfolder "${build_dir}/dmg_root" -format UDRW -ov "$tmp_dmg" >/dev/null
+hdiutil create -volname "Shots" -srcfolder "${build_dir}/dmg_root" -format UDRW -ov "$tmp_dmg" >/dev/null
 
 attach_file="${cache_dir}/hdiutil_attach.tmp"
 hdiutil attach -readwrite -noverify -noautoopen "$tmp_dmg" >"$attach_file" 2>/dev/null
 
 mount_point=""
 while IFS= read -r line; do
-    if [[ "$line" =~ (/Volumes/${APP_NAME}( [0-9]+)?)[[:space:]]*$ ]]; then
+    if [[ "$line" =~ (/Volumes/Shots( [0-9]+)?)[[:space:]]*$ ]]; then
         mount_point="${BASH_REMATCH[1]}"
         break
     fi
@@ -78,20 +82,21 @@ fi
 
 osascript <<APPLESCRIPT >/dev/null 2>&1 || true
 tell application "Finder"
-    tell disk "$APP_NAME"
+    tell disk "Shots"
         open
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
-        set the bounds of container window to {400, 100, 1060, 520}
+        set the bounds of container window to {350, 100, 1150, 520}
         set theViewOptions to the icon view options of container window
         set arrangement of theViewOptions to not arranged
-        set icon size of theViewOptions to 128
+        set icon size of theViewOptions to 110
         if exists file ".background:background.tiff" then
             set background picture of theViewOptions to file ".background:background.tiff"
         end if
-        set position of item "${APP_NAME}.app" of container window to {160, 205}
-        set position of item "Applications" of container window to {500, 205}
+        set position of item "Shots.app" of container window to {140, 205}
+        set position of item "Impact.app" of container window to {320, 205}
+        set position of item "Applications" of container window to {560, 205}
         update without registering applications
         delay 1
         close

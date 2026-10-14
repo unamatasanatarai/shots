@@ -48,13 +48,13 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             if let assetImage = NSImage(named: "StatusBarIcon") {
                 assetImage.isTemplate = true
                 button.image = assetImage
-            } else if let symbolImage = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Shots!") {
+            } else if let symbolImage = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Shots") {
                 symbolImage.isTemplate = true
                 button.image = symbolImage
             } else {
                 button.image = createFallbackIcon()
             }
-            button.toolTip = "Shots! — Click for options or press \(AppSettings.shared.hotkeyDisplayString)"
+            button.toolTip = "Shots — Click for options or press \(AppSettings.shared.hotkeyDisplayString)"
         }
     }
 
@@ -174,22 +174,22 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // 6. Editor Options
-        let openEditorMenuItem = NSMenuItem(
-            title: "Open Image in Editor...",
-            action: #selector(openImageInEditorAction),
+        // 6. Impact Options
+        let openImpactMenuItem = NSMenuItem(
+            title: "Open Image in Impact...",
+            action: #selector(openImageInImpactAction),
             keyEquivalent: "o"
         )
-        openEditorMenuItem.target = self
+        openImpactMenuItem.target = self
         if let editIcon = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil) {
             editIcon.isTemplate = true
-            openEditorMenuItem.image = editIcon
+            openImpactMenuItem.image = editIcon
         }
-        menu.addItem(openEditorMenuItem)
+        menu.addItem(openImpactMenuItem)
 
         let openTestImageMenuItem = NSMenuItem(
-            title: "Open Test Image in Editor",
-            action: #selector(openTestImageInEditorAction),
+            title: "Open Test Image in Impact",
+            action: #selector(openTestImageInImpactAction),
             keyEquivalent: ""
         )
         openTestImageMenuItem.target = self
@@ -362,9 +362,9 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // 6. Quit Shots!
+        // 6. Quit Shots
         let quitItem = NSMenuItem(
-            title: "Quit Shots!",
+            title: "Quit Shots",
             action: #selector(quitAction),
             keyEquivalent: "q"
         )
@@ -395,7 +395,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         revealLatestMenuItem.isEnabled = (SaveService.shared.resolveLatestScreenshotURL() != nil)
 
         if let button = statusItem.button {
-            button.toolTip = "Shots! — Click for options or press \(areaShortcut)"
+            button.toolTip = "Shots — Click for options or press \(areaShortcut)"
         }
 
         saveToDiskMenuItem.state = settings.saveToDisk ? .on : .off
@@ -463,21 +463,21 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                     menuItem.image = fallback
                 }
 
-                // Submenu for explicit actions: Open in Editor, Reveal in Finder and Copy to Clipboard
+                // Submenu for explicit actions: Open in Impact, Reveal in Finder and Copy to Clipboard
                 let actionSubmenu = NSMenu()
 
-                let openInEditorSubItem = NSMenuItem(
-                    title: "Open in Editor",
-                    action: #selector(openRecentInEditorAction(_:)),
+                let openInImpactSubItem = NSMenuItem(
+                    title: "Open in Impact",
+                    action: #selector(openRecentInImpactAction(_:)),
                     keyEquivalent: ""
                 )
-                openInEditorSubItem.target = self
-                openInEditorSubItem.representedObject = item.fileURL
+                openInImpactSubItem.target = self
+                openInImpactSubItem.representedObject = item.fileURL
                 if let editIcon = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil) {
                     editIcon.isTemplate = true
-                    openInEditorSubItem.image = editIcon
+                    openInImpactSubItem.image = editIcon
                 }
-                actionSubmenu.addItem(openInEditorSubItem)
+                actionSubmenu.addItem(openInImpactSubItem)
 
                 let revealSubItem = NSMenuItem(
                     title: "Reveal in Finder",
@@ -546,17 +546,17 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
-    @objc private func openImageInEditorAction() {
-        EditorCoordinator.shared.openImageFileDialog()
+    @objc private func openImageInImpactAction() {
+        ImpactLauncher.shared.openImageFileDialog()
     }
 
-    @objc private func openTestImageInEditorAction() {
-        EditorCoordinator.shared.openTestImage()
+    @objc private func openTestImageInImpactAction() {
+        ImpactLauncher.shared.openTestImage()
     }
 
-    @objc public func openRecentInEditorAction(_ sender: NSMenuItem) {
+    @objc public func openRecentInImpactAction(_ sender: NSMenuItem) {
         guard let fileURL = sender.representedObject as? URL else { return }
-        EditorCoordinator.shared.openImageFile(url: fileURL)
+        ImpactLauncher.shared.openImageFile(url: fileURL)
     }
 
     @objc private func captureRegionAction() {

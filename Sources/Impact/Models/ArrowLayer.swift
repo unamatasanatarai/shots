@@ -126,8 +126,26 @@ public final class ArrowLayer: AnnotationLayer {
             return
         }
 
-        // Tapered arrow geometry matching reference image:
-        // Flat perpendicular start cap, natural widening towards arrowhead (capped at 70px)
+        let path = pathForArrow()
+        context.addPath(path)
+        context.fillPath()
+
+        // If bidirectional, draw Arrowhead at 'start' pointing backwards
+        if headType == .biDirectional {
+            let baseStartWidth = max(5.0, min(32.0, strokeWidth * 4.2 + totalDist * 0.015))
+            let startTangent = tangentAt(t: 0.0) + .pi
+            drawHead(at: start, angle: startTangent, width: baseStartWidth, in: context)
+        }
+
+        context.restoreGState()
+    }
+
+    public func pathForArrow() -> CGPath {
+        let totalDist = hypot(end.x - start.x, end.y - start.y)
+        guard totalDist > 4.0 else {
+            return CGMutablePath()
+        }
+
         let baseStartWidth = max(5.0, min(32.0, strokeWidth * 4.2 + totalDist * 0.015))
         let targetEndWidth = max(10.0, min(70.0, baseStartWidth * 1.35 + totalDist * 0.02))
 
@@ -137,14 +155,12 @@ public final class ArrowLayer: AnnotationLayer {
         let recessDepth = headLength * 0.38
         let cornerRadius = min(7.0, max(4.0, targetEndWidth * 0.18))
 
-        // Find tHead along curve
         let tHead = max(0.2, min(0.92, 1.0 - (headLength - recessDepth) / totalDist))
         let endTangent = tangentAt(t: 1.0)
         let forward = CGPoint(x: cos(endTangent), y: sin(endTangent))
         let backward = CGPoint(x: -forward.x, y: -forward.y)
         let perp = CGPoint(x: -sin(endTangent), y: cos(endTangent))
 
-        // Sampling shaft
         let steps = 36
         var leftPoints: [CGPoint] = []
         var rightPoints: [CGPoint] = []
@@ -160,7 +176,6 @@ public final class ArrowLayer: AnnotationLayer {
             rightPoints.append(CGPoint(x: pt.x - currentHalfWidth * pPerp.x, y: pt.y - currentHalfWidth * pPerp.y))
         }
 
-        // Arrowhead key points
         let wingBase = CGPoint(
             x: end.x + backward.x * headLength,
             y: end.y + backward.y * headLength
@@ -187,50 +202,23 @@ public final class ArrowLayer: AnnotationLayer {
             y: notchBase.y - perp.y * (targetEndWidth / 2.0)
         )
 
-        // Build unified continuous arrow path
         let path = CGMutablePath()
-
-        // 1. Tip
         path.move(to: end)
-
-        // 2. Leading edge to left wing with rounded corner
         path.addArc(tangent1End: leftWingApex, tangent2End: leftNotch, radius: cornerRadius)
-
-        // 3. Notch to shaft left side
         path.addLine(to: leftNotch)
-
-        // 4. Trace down left side of shaft to tail
         for pt in leftPoints.reversed() {
             path.addLine(to: pt)
         }
-
-        // 5. Flat perpendicular tail cap
         if let firstRight = rightPoints.first {
             path.addLine(to: firstRight)
         }
-
-        // 6. Trace up right side of shaft to right notch
         for pt in rightPoints.dropFirst() {
             path.addLine(to: pt)
         }
-
-        // 7. Right notch to right wing with rounded corner
         path.addLine(to: rightNotch)
         path.addArc(tangent1End: rightWingApex, tangent2End: end, radius: cornerRadius)
-
-        // 8. Close back to tip
         path.closeSubpath()
-
-        context.addPath(path)
-        context.fillPath()
-
-        // If bidirectional, draw Arrowhead at 'start' pointing backwards
-        if headType == .biDirectional {
-            let startTangent = tangentAt(t: 0.0) + .pi
-            drawHead(at: start, angle: startTangent, width: baseStartWidth, in: context)
-        }
-
-        context.restoreGState()
+        return path
     }
 
     private func drawHead(at point: CGPoint, angle: CGFloat, width: CGFloat, in context: CGContext) {

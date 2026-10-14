@@ -16,10 +16,15 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var inlineEditor: NSTextField?
     private var editingLayer: AnnotationLayer?
     private var hoveredLayer: AnnotationLayer?
+    private var hoverOutlineLayer: AnnotationLayer?
+    private var hoverAlpha: CGFloat = 0.0
+    private var hoverTimer: Timer?
     private var canvasTrackingArea: NSTrackingArea?
 
     // Zoom & Pan
     public var zoomScale: CGFloat = 1.0
+    private var isRightPanning: Bool = false
+    private var rightPanStartWindowPoint: NSPoint = .zero
 
     public init(document: EditorDocument) {
         self.document = document
@@ -154,20 +159,53 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     private func drawSelectionHandles(in context: CGContext) {
-        var layersToHandle = document.getSelectedLayers()
-        if let hovered = hoveredLayer, !layersToHandle.contains(where: { $0.id == hovered.id }) {
-            layersToHandle.append(hovered)
-        }
-        guard !layersToHandle.isEmpty else { return }
+        let selectedLayers = document.getSelectedLayers()
 
         context.saveGState()
+
+        // 1. Soft glowing bluish/whiteish hover indicator for solid elements (Counter, Arrow)
+        if let target = hoverOutlineLayer, hoverAlpha > 0.001, !selectedLayers.contains(where: { $0.id == target.id }) {
+            let hoverPath: CGPath?
+            if let counter = target as? CounterLayer {
+                hoverPath = counter.pathForTeardrop()
+            } else if let arrow = target as? ArrowLayer {
+                hoverPath = arrow.pathForArrow()
+            } else {
+                hoverPath = nil
+            }
+
+            if let path = hoverPath {
+                context.saveGState()
+
+                // Soft outer bluish glow
+                let glowColor = NSColor(srgbRed: 0.35, green: 0.70, blue: 1.0, alpha: 0.85 * hoverAlpha).cgColor
+                context.setShadow(offset: .zero, blur: 5.5, color: glowColor)
+
+                // Soft translucent bluish-white stroke
+                let strokeColor = NSColor(srgbRed: 0.88, green: 0.94, blue: 1.0, alpha: 0.80 * hoverAlpha).cgColor
+                context.setStrokeColor(strokeColor)
+                context.setLineWidth(2.0)
+                context.setLineJoin(.round)
+                context.setLineCap(.round)
+                context.addPath(path)
+                context.strokePath()
+
+                context.restoreGState()
+            }
+        }
+
+        guard !selectedLayers.isEmpty else {
+            context.restoreGState()
+            return
+        }
+
         context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 1.0).cgColor)
         context.setLineWidth(1.5)
 
-        for layer in layersToHandle {
+        for layer in selectedLayers {
             let box = layer.getBoundingBox()
 
-            // Draw circular handles
+            // Draw handles
             let handleRadius: CGFloat = 4.5
             let handlePoints: [CGPoint]
             if let rectLayer = layer as? RectangleLayer {
@@ -185,7 +223,21 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let callout = layer as? CalloutLayer {
                 handlePoints = [callout.tailTip]
             } else if let counter = layer as? CounterLayer {
-                handlePoints = [counter.getPeakPoint()]
+                // Square rounded handle located on the tip of the peak
+                let p = counter.getPeakPoint()
+                let side: CGFloat = 8.5
+                let handleRect = CGRect(x: p.x - side / 2.0, y: p.y - side / 2.0, width: side, height: side)
+                let handlePath = CGPath(roundedRect: handleRect, cornerWidth: 2.0, cornerHeight: 2.0, transform: nil)
+
+                context.setFillColor(NSColor.white.cgColor)
+                context.addPath(handlePath)
+                context.fillPath()
+
+                context.setStrokeColor(NSColor(white: 0.25, alpha: 0.9).cgColor)
+                context.setLineWidth(1.2)
+                context.addPath(handlePath)
+                context.strokePath()
+                continue
             } else if let textLayer = layer as? TextLayer {
                 let tBox = textLayer.getBoundingBox()
                 handlePoints = [CGPoint(x: tBox.maxX, y: tBox.maxY)]
@@ -230,6 +282,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         lastDragPoint = point
 
         commitInlineEditor()
+        animateHoverOutline(to: nil)
 
         // Handle double click to edit text or callout
         if event.clickCount == 2 {
@@ -287,6 +340,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
 
         case .arrow:
+            if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }) {
+                document.saveSnapshot()
+                document.selectLayer(hit)
+                activeDraggingLayer = hit
+                activeHandleIndex = nil
+                return
+            }
             let arrow = ArrowLayer(
                 start: point,
                 control: point,
@@ -498,11 +558,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 dim.end = point
             } else if let callout = creating as? CalloutLayer {
                 callout.tailTip = point
-            } else if let counter = creating as? CounterLayer {
-                let dx = point.x - counter.center.x
-                let dy = point.y - counter.center.y
-                counter.pointerAngle = atan2(dy, dx)
-                counter.tailDistance = counter.radius * 1.68
+            } else if creating is CounterLayer {
+                // Peak direction is fixed at default (7:30pm) upon placement.
+                // Changing peak direction can only happen when grabbing the point located on the tip of the peak.
             } else if let filter = creating as? FilterLayer {
                 let r = CGRect(
                     x: min(dragStartPoint.x, point.x),
@@ -578,16 +636,102 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         needsDisplay = true
     }
 
+    // MARK: - Right-Click Pan Support
+
+    override public func rightMouseDown(with event: NSEvent) {
+        isRightPanning = true
+        rightPanStartWindowPoint = event.locationInWindow
+        NSCursor.closedHand.set()
+    }
+
+    override public func rightMouseDragged(with event: NSEvent) {
+        guard isRightPanning, let clipView = enclosingScrollView?.contentView else { return }
+        let currentWindowPoint = event.locationInWindow
+        let dx = currentWindowPoint.x - rightPanStartWindowPoint.x
+        let dy = currentWindowPoint.y - rightPanStartWindowPoint.y
+        rightPanStartWindowPoint = currentWindowPoint
+
+        // Dragging right moves view content right (i.e. scroll origin x decreases)
+        // Dragging down in window coordinates moves view content down (i.e. scroll origin y decreases)
+        var newOrigin = clipView.bounds.origin
+        newOrigin.x -= dx
+        newOrigin.y -= dy
+
+        clipView.scroll(to: clipView.constrainBoundsRect(NSRect(origin: newOrigin, size: clipView.bounds.size)).origin)
+        enclosingScrollView?.reflectScrolledClipView(clipView)
+        NSCursor.closedHand.set()
+    }
+
+    override public func rightMouseUp(with event: NSEvent) {
+        isRightPanning = false
+        updateCursorForPoint(canvasPoint(from: event))
+    }
+
     override public func mouseMoved(with event: NSEvent) {
         let point = canvasPoint(from: event)
         let newlyHovered = document.layers.reversed().first { layer in
             layer.isVisible && (layer.contains(point: point) || layer.hitTestHandle(point: point) != nil)
         }
-        if newlyHovered?.id != hoveredLayer?.id {
-            hoveredLayer = newlyHovered
-            needsDisplay = true
-        }
+        updateHoverState(to: newlyHovered)
         updateCursorForPoint(point)
+    }
+
+    private func updateHoverState(to newLayer: AnnotationLayer?) {
+        let isSolid = (newLayer is CounterLayer || newLayer is ArrowLayer)
+        let candidate = isSolid ? newLayer : nil
+
+        if candidate?.id != hoveredLayer?.id {
+            hoveredLayer = candidate
+            animateHoverOutline(to: candidate)
+        }
+    }
+
+    private func animateHoverOutline(to targetLayer: AnnotationLayer?) {
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+
+        if let target = targetLayer {
+            // Fade In quickly (approx 120ms total)
+            hoverOutlineLayer = target
+            let step: CGFloat = 0.15
+            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] timer in
+                guard let self = self else {
+                    timer.invalidate()
+                    return
+                }
+                self.hoverAlpha = min(1.0, self.hoverAlpha + step)
+                self.needsDisplay = true
+                if self.hoverAlpha >= 1.0 {
+                    timer.invalidate()
+                    self.hoverTimer = nil
+                }
+            }
+        } else {
+            // Fade Out quickly
+            let step: CGFloat = 0.15
+            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] timer in
+                guard let self = self else {
+                    timer.invalidate()
+                    return
+                }
+                self.hoverAlpha = max(0.0, self.hoverAlpha - step)
+                self.needsDisplay = true
+                if self.hoverAlpha <= 0.0 {
+                    self.hoverOutlineLayer = nil
+                    timer.invalidate()
+                    self.hoverTimer = nil
+                }
+            }
+        }
+    }
+
+    private func clearHoverStateImmediately() {
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        hoveredLayer = nil
+        hoverOutlineLayer = nil
+        hoverAlpha = 0.0
+        needsDisplay = true
     }
 
     override public func cursorUpdate(with event: NSEvent) {
@@ -596,6 +740,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     private func updateCursorForPoint(_ point: CGPoint) {
+        if isRightPanning {
+            NSCursor.closedHand.set()
+            return
+        }
+
         // While actively dragging a layer's body, maintain the 4-directional move cursor
         if activeDraggingLayer != nil && activeHandleIndex == nil {
             NSCursor.fourDirectionalMove.set()
@@ -687,6 +836,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             isSpacePressed = true
         } else if event.keyCode == 51 { // Delete / Backspace
             document.removeSelectedLayers()
+            clearHoverStateImmediately()
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "z" {
             if event.modifierFlags.contains(.shift) {
                 document.redo()
@@ -695,6 +845,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "c" {
             copyCompositionToClipboard()
+        } else if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "=" || event.charactersIgnoringModifiers == "+") {
+            (window as? EditorPanel)?.zoomIn()
+        } else if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "-" || event.charactersIgnoringModifiers == "_") {
+            (window as? EditorPanel)?.zoomOut()
+        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "0" {
+            (window as? EditorPanel)?.resetZoom()
         } else {
             super.keyDown(with: event)
         }
@@ -703,6 +859,24 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     override public func keyUp(with event: NSEvent) {
         if event.keyCode == 49 { // Spacebar
             isSpacePressed = false
+        }
+    }
+
+    // MARK: - macOS Pinch-to-Zoom Gesture
+
+    override public func magnify(with event: NSEvent) {
+        if let sv = enclosingScrollView {
+            let oldMag = sv.magnification
+            let factor = 1.0 + event.magnification
+            let newMag = max(sv.minMagnification, min(sv.maxMagnification, oldMag * factor))
+            
+            // Magnify centered at cursor location in clipView
+            let clipPoint = sv.contentView.convert(event.locationInWindow, from: nil)
+            sv.setMagnification(newMag, centeredAt: clipPoint)
+            zoomScale = sv.magnification
+            (window as? EditorPanel)?.updateMetaLabel()
+        } else {
+            super.magnify(with: event)
         }
     }
 

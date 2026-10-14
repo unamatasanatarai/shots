@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generates high-resolution macOS application icons and crisp status bar template icons
-for "Shots!" based directly on the user's marquee frame & cursive exclamation mark design.
+for "Shots" based directly on the user's marquee frame & cursive exclamation mark design.
 """
 
 import os

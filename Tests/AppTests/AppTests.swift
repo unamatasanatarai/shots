@@ -11,7 +11,7 @@ public struct AppTests {
 
         // MARK: - AppConfig Suite
         testRunner("AppConfig - Properties and Defaults") {
-            assert(AppConfig.appName == "Shots!", "App name should be Shots!")
+            assert(AppConfig.appName == "Shots", "App name should be Shots")
             assert(!AppConfig.version.isEmpty, "App version should not be empty")
             assert(AppConfig.bundleIdentifier == "com.local.Shots", "Bundle ID should be com.local.Shots")
             assert(!AppConfig.minSystemVersion.isEmpty, "Minimum system version should be defined")
@@ -519,7 +519,7 @@ public struct AppTests {
 
             assert(button.image != nil, "Status item button must have an icon")
             assert(button.image?.isTemplate == true, "Status item icon must be in template mode for native dark/light menu bars")
-            assert(button.toolTip?.contains("Shots!") == true, "Status button tooltip must contain app name")
+            assert(button.toolTip?.contains("Shots") == true, "Status button tooltip must contain app name")
 
             let menu = controller.currentMenu
             let titles = menu.items.map { $0.title }
@@ -538,7 +538,7 @@ public struct AppTests {
             assert(titles.contains("Preferences & Hotkeys..."), "Menu must contain Preferences item")
             assert(titles.contains("Open Screenshots Folder"), "Menu must contain Open Screenshots Folder item")
             assert(titles.contains("Change Save Location..."), "Menu must contain Change Save Location item")
-            assert(titles.contains("Quit Shots!"), "Menu must contain Quit item")
+            assert(titles.contains("Quit Shots"), "Menu must contain Quit item")
 
             // Verify submenus have children
             let delayItem = menu.items.first(where: { $0.title == "Capture Delay" })

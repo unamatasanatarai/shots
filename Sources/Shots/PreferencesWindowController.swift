@@ -13,7 +13,7 @@ public final class PreferencesWindowController: NSWindowController {
             defer: false
         )
         window.center()
-        window.title = "Shots! Preferences"
+        window.title = "Shots Preferences"
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         window.level = .floating

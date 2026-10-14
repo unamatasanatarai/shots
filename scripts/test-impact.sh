@@ -8,7 +8,7 @@ cd "$project_dir"
 
 source "${script_dir}/config.sh"
 
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/${APP_NAME,,}"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/impact"
 mkdir -p "$cache_dir"
 
 sdk_file="${cache_dir}/sdk_path.tmp"
@@ -22,31 +22,25 @@ IFS= read -r sdk_path <"$sdk_file"
 rm -f "$sdk_file"
 
 test_dir="${XDG_RUNTIME_DIR:-/tmp}"
-test_bin="${test_dir}/RunSwiftTests_${RANDOM}"
+test_bin="${test_dir}/RunImpactTests_${RANDOM}"
 
-# Collect app sources excluding entry points with @main (e.g. Main.swift)
+# Collect Impact app sources excluding entry points with @main (e.g. ImpactMain.swift)
 sources=()
 while IFS= read -r file; do
     if ! grep -q "@main" "$file" 2>/dev/null; then
         sources+=("$file")
     fi
-done < <(find Sources -type f -name "*.swift" | sort)
+done < <(find Sources/Impact -type f -name "*.swift" | sort)
 
-# Collect all test sources
-tests=()
-while IFS= read -r file; do
-    tests+=("$file")
-done < <(find Tests -type f -name "*.swift" | sort)
+impact_tests=(
+    "Tests/AppTests/EditorTests.swift"
+    "Tests/EditorTestMain.swift"
+)
 
-if [[ ${#tests[@]} -eq 0 ]]; then
-    printf '%s\n' "Error: No test files found under Tests" >&2
-    exit 1
-fi
-
-printf '%s\n' "Compiling unit test suite..."
+printf '%s\n' "Compiling Impact test suite..."
 swiftc -sdk "$sdk_path" \
     "${sources[@]}" \
-    "${tests[@]}" \
+    "${impact_tests[@]}" \
     -o "$test_bin"
 
 test_status=0
@@ -54,6 +48,6 @@ test_status=0
 rm -f "$test_bin"
 
 if [[ "$test_status" -ne 0 ]]; then
-    printf '%s\n' "Error: Swift unit tests failed with status ${test_status}" >&2
+    printf '%s\n' "Error: Impact unit tests failed with status ${test_status}" >&2
     exit "$test_status"
 fi

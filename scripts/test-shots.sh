@@ -22,25 +22,32 @@ IFS= read -r sdk_path <"$sdk_file"
 rm -f "$sdk_file"
 
 test_dir="${XDG_RUNTIME_DIR:-/tmp}"
-test_bin="${test_dir}/RunEditorTests_${RANDOM}"
+test_bin="${test_dir}/RunSwiftTests_${RANDOM}"
 
-# Collect app sources excluding entry points with @main (e.g. Main.swift)
+# Collect Shots app sources excluding entry points with @main (e.g. Main.swift)
 sources=()
 while IFS= read -r file; do
     if ! grep -q "@main" "$file" 2>/dev/null; then
         sources+=("$file")
     fi
-done < <(find Sources -type f -name "*.swift" | sort)
+done < <(find Sources/Shots -type f -name "*.swift" | sort)
 
-editor_tests=(
-    "Tests/AppTests/EditorTests.swift"
-    "Tests/EditorTestMain.swift"
+# Collect Shots test sources
+tests=(
+    "Tests/AppTests/AppTests.swift"
+    "Tests/AppTests/StressTests.swift"
+    "Tests/AppTests/TestMain.swift"
 )
 
-printf '%s\n' "Compiling Editor test suite..."
+if [[ ${#tests[@]} -eq 0 ]]; then
+    printf '%s\n' "Error: No test files found under Tests" >&2
+    exit 1
+fi
+
+printf '%s\n' "Compiling unit test suite..."
 swiftc -sdk "$sdk_path" \
     "${sources[@]}" \
-    "${editor_tests[@]}" \
+    "${tests[@]}" \
     -o "$test_bin"
 
 test_status=0
@@ -48,6 +55,6 @@ test_status=0
 rm -f "$test_bin"
 
 if [[ "$test_status" -ne 0 ]]; then
-    printf '%s\n' "Error: Editor unit tests failed with status ${test_status}" >&2
+    printf '%s\n' "Error: Swift unit tests failed with status ${test_status}" >&2
     exit "$test_status"
 fi

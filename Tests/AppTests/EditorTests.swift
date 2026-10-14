@@ -170,6 +170,7 @@ public enum EditorTests {
             let counter2 = CounterLayer(center: CGPoint(x: 160, y: 80), value: 2, pointerAngle: .pi / 4.0)
 
             assert(counter1.value == 1, "Counter 1 value must be 1")
+            assert(abs(counter1.pointerAngle - (3.0 * .pi / 4.0)) < 0.01, "Default pointer angle must be 7:30pm (3*pi/4 radians)")
             assert(counter2.value == 2, "Counter 2 value must be 2")
             assert(abs(counter2.pointerAngle - (.pi / 4.0)) < 0.01, "Pointer angle must be set")
         }
@@ -507,6 +508,62 @@ public enum EditorTests {
             // Whole line translation
             line.move(by: CGPoint(x: 10, y: 20))
             assert(line.start == CGPoint(x: 40, y: 100) && line.end == CGPoint(x: 310, y: 100), "Move must translate entire line uniformly")
+        }
+
+        testRunner("Editor - Window Deactivation, Cmd-Tab & Scale-To-Fit") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let panel = EditorPanel(document: doc)
+
+            // 1. Window must NOT hide on deactivate (clicking away does not close it)
+            assert(!panel.hidesOnDeactivate, "EditorPanel hidesOnDeactivate must be false so clicking away does not close/hide it")
+
+            // 2. Cmd-Tab window collection behavior
+            assert(panel.collectionBehavior.contains(.participatesInCycle), "EditorPanel must participate in window cycle")
+            assert(panel.collectionBehavior.contains(.managed), "EditorPanel must be managed for standard window switching")
+            assert(panel.level == .normal, "EditorPanel initial level must be .normal for standard window ordering")
+
+            // 3. Window Sizing: minimum width is width of tool panel (600), default height 400
+            assert(panel.minSize.width == 600.0, "EditorPanel minSize.width must equal tool panel width (600.0)")
+            assert(panel.minSize.height == 400.0, "EditorPanel minSize.height must be 400.0")
+
+            // 4. Large image best-fit scaling
+            panel.scaleToFit()
+            if let sv = panel.scrollView {
+                assert(sv.allowsMagnification, "NSScrollView allowsMagnification must be true")
+                assert(sv.magnification > 0.0 && sv.magnification <= 1.0, "Scale to fit must compute a positive scale <= 1.0")
+                assert(sv.contentView is CenteringClipView, "ScrollView clipView must be CenteringClipView")
+
+                // Test Zoom In / Zoom Out methods
+                let initialMag = sv.magnification
+                panel.zoomIn()
+                assert(sv.magnification > initialMag, "Zoom in must increase magnification")
+                panel.zoomOut()
+                assert(abs(sv.magnification - initialMag) < 0.01, "Zoom out must decrease magnification back")
+            }
+
+            // 5. Small image: if image is smaller than viewport, center at 100% (1.0) scale
+            let smallContext = CGContext(
+                data: nil,
+                width: 100,
+                height: 80,
+                bitsPerComponent: 8,
+                bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let smallImage = smallContext.makeImage()!
+            let smallDoc = EditorDocument(image: smallImage)
+            let smallPanel = EditorPanel(document: smallDoc)
+            smallPanel.scaleToFit()
+            if let smallSV = smallPanel.scrollView {
+                assert(smallSV.magnification == 1.0, "Smaller image must scale to 100% (1.0) and be centered")
+            }
         }
     }
 }

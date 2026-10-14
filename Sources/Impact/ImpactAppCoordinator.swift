@@ -1,18 +1,16 @@
 import Foundation
 import CoreGraphics
 import AppKit
-import ImageIO
+import UniformTypeIdentifiers
 
-public final class EditorCoordinator {
-    public static let shared = EditorCoordinator()
+public final class ImpactAppCoordinator {
+    public static let shared = ImpactAppCoordinator()
 
     public private(set) var activePanel: EditorPanel?
 
     private init() {}
 
-    // MARK: - Open In Editor (Step 1 & Additional Functionality)
-
-    public func openEditor(with image: CGImage, title: String = "Shots Editor") {
+    public func openEditor(with image: CGImage, title: String = "Impact") {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
@@ -22,15 +20,22 @@ public final class EditorCoordinator {
             self.activePanel?.close()
             self.activePanel = panel
 
+            panel.onClose = { [weak self] in
+                if self?.activePanel === panel {
+                    self?.activePanel = nil
+                }
+            }
+
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            panel.scaleToFit()
         }
     }
 
     public func openImageFile(url: URL) {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
               let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            NSLog("EditorCoordinator: Failed to load image from %@", url.path)
+            NSLog("ImpactAppCoordinator: Failed to load image from %@", url.path)
             NSSound.beep()
             return
         }
@@ -46,7 +51,7 @@ public final class EditorCoordinator {
             openPanel.canChooseDirectories = false
             openPanel.allowsMultipleSelection = false
             openPanel.allowedContentTypes = [.png, .jpeg, .tiff, .heic]
-            openPanel.prompt = "Open in Editor"
+            openPanel.prompt = "Open in Impact"
 
             if openPanel.runModal() == .OK, let selectedURL = openPanel.url {
                 self.openImageFile(url: selectedURL)
@@ -68,7 +73,7 @@ public final class EditorCoordinator {
                 return
             }
         }
-        NSLog("EditorCoordinator: test-image.jpg not found")
+        NSLog("ImpactAppCoordinator: test-image.jpg not found")
         NSSound.beep()
     }
 

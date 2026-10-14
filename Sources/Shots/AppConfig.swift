@@ -2,7 +2,7 @@ import Foundation
 
 public struct AppConfig {
     public static var appName: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Shots!"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Shots"
     }
 
     public static var version: String {

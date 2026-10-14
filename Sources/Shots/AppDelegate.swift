@@ -42,23 +42,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController = StatusBarController()
 
         // Handle CLI or initial test arguments
-        if CommandLine.arguments.contains("--test-editor") {
+        if CommandLine.arguments.contains("--test-impact") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                EditorCoordinator.shared.openTestImage()
+                ImpactLauncher.shared.openTestImage()
             }
-        } else if let editorIdx = CommandLine.arguments.firstIndex(of: "--editor"),
-                  editorIdx + 1 < CommandLine.arguments.count {
-            let path = CommandLine.arguments[editorIdx + 1]
+        } else if let impactIdx = CommandLine.arguments.firstIndex(of: "--impact"),
+                  impactIdx + 1 < CommandLine.arguments.count {
+            let path = CommandLine.arguments[impactIdx + 1]
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                EditorCoordinator.shared.openImageFile(url: URL(fileURLWithPath: path))
+                ImpactLauncher.shared.openImageFile(url: URL(fileURLWithPath: path))
             }
         }
 
-        NSLog("Shots! app initialized successfully. Global hotkey active: %@", AppSettings.shared.hotkeyDisplayString)
+        NSLog("Shots app initialized successfully. Global hotkey active: %@", AppSettings.shared.hotkeyDisplayString)
     }
 
     public func application(_ application: NSApplication, openFile filename: String) -> Bool {
-        EditorCoordinator.shared.openImageFile(url: URL(fileURLWithPath: filename))
+        ImpactLauncher.shared.openImageFile(url: URL(fileURLWithPath: filename))
         return true
     }
 

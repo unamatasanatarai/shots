@@ -198,9 +198,9 @@ public final class CaptureManager {
         let saveService = SaveService.shared
         let format = settings.imageFormat
 
-        // Automatically open the editor with the captured screenshot
+        // Automatically open Impact with the captured screenshot
         DispatchQueue.main.async {
-            EditorCoordinator.shared.openEditor(with: cgImage)
+            ImpactLauncher.shared.openImpact(with: cgImage)
         }
 
         // Perform encoding and I/O off the main RunLoop to maintain ultra-low latency
