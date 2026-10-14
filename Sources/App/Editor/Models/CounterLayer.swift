@@ -13,15 +13,17 @@ public final class CounterLayer: AnnotationLayer {
     public var center: CGPoint
     public var radius: CGFloat
     public var value: Int
-    public var pointerAngle: CGFloat? // Optional pointer tip angle in radians
+    public var pointerAngle: CGFloat // Radians for the teardrop peak
+    public var tailDistance: CGFloat
 
     public init(
         id: UUID = UUID(),
         center: CGPoint,
-        radius: CGFloat = 14.0,
+        radius: CGFloat = 16.0,
         value: Int = 1,
         pointerAngle: CGFloat? = nil,
-        color: String = "#007AFF",
+        tailDistance: CGFloat? = nil,
+        color: String = "#FF3B30",
         strokeWidth: CGFloat = 2.0,
         zIndex: Int = 0
     ) {
@@ -29,33 +31,69 @@ public final class CounterLayer: AnnotationLayer {
         self.center = center
         self.radius = radius
         self.value = value
-        self.pointerAngle = pointerAngle
+        self.pointerAngle = pointerAngle ?? (-.pi / 4.0)
+        self.tailDistance = tailDistance ?? (radius * 1.68)
         self.color = color
         self.strokeWidth = strokeWidth
         self.zIndex = zIndex
     }
 
+    public func getPeakPoint() -> CGPoint {
+        let angle = pointerAngle
+        let dist = max(radius * 1.45, tailDistance)
+        return CGPoint(x: center.x + dist * cos(angle), y: center.y + dist * sin(angle))
+    }
+
+    public func pathForTeardrop() -> CGPath {
+        let angle = pointerAngle
+        let dist = max(radius * 1.45, tailDistance)
+        let peak = CGPoint(x: center.x + dist * cos(angle), y: center.y + dist * sin(angle))
+
+        let cosBeta = min(1.0, max(-1.0, radius / dist))
+        let beta = acos(cosBeta)
+
+        let t2Angle = angle + beta
+
+        let path = CGMutablePath()
+
+        // Circular back arc from t2Angle to t1Angle passing through angle + .pi
+        let steps = 36
+        let arcSpan = 2 * .pi - 2 * beta
+        for i in 0...steps {
+            let frac = CGFloat(i) / CGFloat(steps)
+            let a = t2Angle + frac * arcSpan
+            let pt = CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a))
+            if i == 0 {
+                path.move(to: pt)
+            } else {
+                path.addLine(to: pt)
+            }
+        }
+
+        // Tangent towards peak with rounded tip, then back to t2
+        let t2 = CGPoint(x: center.x + radius * cos(t2Angle), y: center.y + radius * sin(t2Angle))
+        path.addArc(tangent1End: peak, tangent2End: t2, radius: 3.5)
+        path.addLine(to: t2)
+        path.closeSubpath()
+
+        return path
+    }
+
     public func getBoundingBox() -> CGRect {
-        let pad = radius * 1.6 + 6.0
-        return CGRect(
-            x: center.x - pad,
-            y: center.y - pad,
-            width: pad * 2,
-            height: pad * 2
-        )
+        let peak = getPeakPoint()
+        let circleBox = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        let peakBox = CGRect(x: peak.x - 4, y: peak.y - 4, width: 8, height: 8)
+        return circleBox.union(peakBox).insetBy(dx: -6.0, dy: -6.0)
     }
 
     public func contains(point: CGPoint) -> Bool {
-        return hypot(point.x - center.x, point.y - center.y) <= radius + 6.0
+        let path = pathForTeardrop()
+        return path.contains(point) || hypot(point.x - center.x, point.y - center.y) <= radius + 4.0
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        let angle = pointerAngle ?? 0.0
-        let pointerTip = CGPoint(
-            x: center.x + (self.radius + 12.0) * cos(angle),
-            y: center.y + (self.radius + 12.0) * sin(angle)
-        )
-        if hypot(point.x - pointerTip.x, point.y - pointerTip.y) <= radius {
+        let peak = getPeakPoint()
+        if hypot(point.x - peak.x, point.y - peak.y) <= max(radius, 10.0) {
             return 0
         }
         return nil
@@ -68,48 +106,28 @@ public final class CounterLayer: AnnotationLayer {
 
     public func updateHandle(index: Int, to point: CGPoint) {
         if index == 0 {
-            pointerAngle = atan2(point.y - center.y, point.x - center.x)
+            let dx = point.x - center.x
+            let dy = point.y - center.y
+            pointerAngle = atan2(dy, dx)
+            tailDistance = max(radius * 1.45, min(radius * 3.0, hypot(dx, dy)))
         }
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
-        let badgeNSColor = NSColor(hex: color)
-        let badgeCGColor = badgeNSColor.cgColor
+        let badgeColor = NSColor(hex: color).cgColor
+        context.setFillColor(badgeColor)
 
-        // Draw pointer if angle is set
-        if let angle = pointerAngle {
-            let tipDistance = radius + 12.0
-            let tip = CGPoint(x: center.x + tipDistance * cos(angle), y: center.y + tipDistance * sin(angle))
-            let p1 = CGPoint(x: center.x + radius * cos(angle - .pi / 5.0), y: center.y + radius * sin(angle - .pi / 5.0))
-            let p2 = CGPoint(x: center.x + radius * cos(angle + .pi / 5.0), y: center.y + radius * sin(angle + .pi / 5.0))
+        // Draw solid teardrop / waterdrop shape
+        let path = pathForTeardrop()
+        context.addPath(path)
+        context.fillPath()
 
-            let pointerPath = CGMutablePath()
-            pointerPath.move(to: p1)
-            pointerPath.addLine(to: tip)
-            pointerPath.addLine(to: p2)
-            pointerPath.closeSubpath()
-
-            context.setFillColor(badgeCGColor)
-            context.addPath(pointerPath)
-            context.fillPath()
-        }
-
-        // Draw circular badge
-        let circleRect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-        context.setFillColor(badgeCGColor)
-        context.fillEllipse(in: circleRect)
-
-        // White border
-        context.setStrokeColor(NSColor.white.cgColor)
-        context.setLineWidth(strokeWidth)
-        context.strokeEllipse(in: circleRect)
-
-        // Draw number text in pure white
+        // Draw number text in pure white, bold and centered in the circular body
         let text = "\(value)"
-        let fontSize = max(10.0, radius * 1.1)
-        let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .bold)
+        let fontSize = max(11.0, radius * 1.1)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
         let textAttrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor.white
@@ -137,6 +155,7 @@ public final class CounterLayer: AnnotationLayer {
             radius: radius,
             value: value,
             pointerAngle: pointerAngle,
+            tailDistance: tailDistance,
             color: color,
             strokeWidth: strokeWidth,
             zIndex: zIndex

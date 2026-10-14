@@ -171,7 +171,7 @@ public enum EditorTests {
 
             assert(counter1.value == 1, "Counter 1 value must be 1")
             assert(counter2.value == 2, "Counter 2 value must be 2")
-            assert(counter2.pointerAngle != nil, "Pointer angle must be set")
+            assert(abs(counter2.pointerAngle - (.pi / 4.0)) < 0.01, "Pointer angle must be set")
         }
 
         testRunner("Editor - Dimension Line Pixel Distance") {
@@ -251,15 +251,14 @@ public enum EditorTests {
         }
 
         testRunner("Editor - Counter Pointer Handle Drag Manipulation") {
-            let counter = CounterLayer(center: CGPoint(x: 100, y: 100), value: 3)
-            // Initial angle nil, hit test handle at 0 degrees
-            let handleIndex = counter.hitTestHandle(point: CGPoint(x: 100 + counter.radius + 12.0, y: 100))
+            let counter = CounterLayer(center: CGPoint(x: 100, y: 100), value: 3, pointerAngle: 0.0)
+            let peak = counter.getPeakPoint()
+            let handleIndex = counter.hitTestHandle(point: peak)
             assert(handleIndex == 0, "Counter handle 0 should be hit-testable")
 
             // Drag handle to point downwards (0, 1) -> pi / 2
             counter.updateHandle(index: 0, to: CGPoint(x: 100, y: 150))
-            assert(counter.pointerAngle != nil, "Pointer angle must be set after handle drag")
-            assert(abs(counter.pointerAngle! - (.pi / 2.0)) < 0.05, "Pointer angle should be ~pi/2 pointing down")
+            assert(abs(counter.pointerAngle - (.pi / 2.0)) < 0.05, "Pointer angle should be ~pi/2 pointing down")
         }
 
         testRunner("Editor - Callout Tail Tip and Size Handle Drag") {

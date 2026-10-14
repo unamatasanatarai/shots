@@ -151,12 +151,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let callout = layer as? CalloutLayer {
                 handlePoints = [callout.tailTip, CGPoint(x: callout.frame.maxX, y: callout.frame.maxY)]
             } else if let counter = layer as? CounterLayer {
-                let angle = counter.pointerAngle ?? 0.0
-                let tip = CGPoint(
-                    x: counter.center.x + (counter.radius + 12.0) * cos(angle),
-                    y: counter.center.y + (counter.radius + 12.0) * sin(angle)
-                )
-                handlePoints = [tip]
+                handlePoints = [counter.getPeakPoint()]
             } else if let textLayer = layer as? TextLayer {
                 let tBox = textLayer.getBoundingBox()
                 handlePoints = [CGPoint(x: tBox.maxX, y: tBox.maxY)]
@@ -451,10 +446,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let counter = creating as? CounterLayer {
                 let dx = point.x - counter.center.x
                 let dy = point.y - counter.center.y
-                if hypot(dx, dy) >= 8.0 {
-                    counter.pointerAngle = atan2(dy, dx)
-                } else {
-                    counter.pointerAngle = nil
+                counter.pointerAngle = atan2(dy, dx)
+                if hypot(dx, dy) >= counter.radius * 1.45 {
+                    counter.tailDistance = min(counter.radius * 3.0, hypot(dx, dy))
                 }
             } else if let filter = creating as? FilterLayer {
                 let r = CGRect(
