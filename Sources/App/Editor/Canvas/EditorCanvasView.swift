@@ -260,6 +260,22 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
         }
 
+        // If clicking on or inside an already selected layer (e.g. Rectangle), drag-move it
+        if let selected = document.getSelectedLayers().first {
+            let isInsideOrOnBorder: Bool
+            if let rectLayer = selected as? RectangleLayer {
+                isInsideOrOnBorder = rectLayer.rect.contains(point) || rectLayer.contains(point: point)
+            } else {
+                isInsideOrOnBorder = selected.contains(point: point)
+            }
+            if isInsideOrOnBorder {
+                document.saveSnapshot()
+                activeDraggingLayer = selected
+                activeHandleIndex = nil
+                return
+            }
+        }
+
         switch document.activeTool {
         case .select:
             if let layer = document.selectLayer(at: point) {
@@ -452,18 +468,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     arrow.control = mid
                 }
             } else if let rect = creating as? RectangleLayer {
-                var w = point.x - dragStartPoint.x
-                var h = point.y - dragStartPoint.y
-                if isShiftPressed {
-                    let side = max(abs(w), abs(h))
-                    w = w >= 0 ? side : -side
-                    h = h >= 0 ? side : -side
-                }
                 rect.rect = CGRect(
-                    x: min(dragStartPoint.x, dragStartPoint.x + w),
-                    y: min(dragStartPoint.y, dragStartPoint.y + h),
-                    width: abs(w),
-                    height: abs(h)
+                    x: min(dragStartPoint.x, point.x),
+                    y: min(dragStartPoint.y, point.y),
+                    width: abs(point.x - dragStartPoint.x),
+                    height: abs(point.y - dragStartPoint.y)
                 )
             } else if let ellipse = creating as? EllipseLayer {
                 var w = point.x - dragStartPoint.x
@@ -595,13 +604,41 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // If dragging or hovering over a handle, use appropriate handle cursor
         if let selected = document.getSelectedLayers().first,
-           selected.hitTestHandle(point: point) != nil {
-            NSCursor.crosshair.set()
-            return
+           let handleIndex = selected.hitTestHandle(point: point) {
+            if selected is RectangleLayer {
+                switch handleIndex {
+                case 1, 5:
+                    NSCursor.resizeUpDown.set()
+                    return
+                case 3, 7:
+                    NSCursor.resizeLeftRight.set()
+                    return
+                default:
+                    NSCursor.crosshair.set()
+                    return
+                }
+            } else {
+                NSCursor.crosshair.set()
+                return
+            }
         }
-        if let hovered = hoveredLayer, hovered.hitTestHandle(point: point) != nil {
-            NSCursor.crosshair.set()
-            return
+        if let hovered = hoveredLayer, let handleIndex = hovered.hitTestHandle(point: point) {
+            if hovered is RectangleLayer {
+                switch handleIndex {
+                case 1, 5:
+                    NSCursor.resizeUpDown.set()
+                    return
+                case 3, 7:
+                    NSCursor.resizeLeftRight.set()
+                    return
+                default:
+                    NSCursor.crosshair.set()
+                    return
+                }
+            } else {
+                NSCursor.crosshair.set()
+                return
+            }
         }
 
         // When in select mode, check if hovering over any movable layer
@@ -617,7 +654,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // Also if any already selected layer contains the point (even if switching tools), dragging it moves it
         let hitsSelectedLayer = document.getSelectedLayers().contains { layer in
-            layer.isVisible && layer.contains(point: point)
+            if let rectLayer = layer as? RectangleLayer {
+                return rectLayer.rect.contains(point) || rectLayer.contains(point: point)
+            }
+            return layer.isVisible && layer.contains(point: point)
         }
         if hitsSelectedLayer {
             NSCursor.fourDirectionalMove.set()

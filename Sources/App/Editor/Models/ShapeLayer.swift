@@ -31,7 +31,7 @@ public final class RectangleLayer: AnnotationLayer {
     public init(
         id: UUID = UUID(),
         rect: CGRect,
-        cornerRadius: CGFloat = 8.0,
+        cornerRadius: CGFloat = 10.0,
         color: String = "#FF3B30",
         strokeWidth: CGFloat = 4.0,
         fillStyle: ShapeFillStyle = .outline,
@@ -62,11 +62,45 @@ public final class RectangleLayer: AnnotationLayer {
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
         let handles = getHandlePoints()
+        let hitRadius = max(radius, 10.0)
+
+        // 1. Check direct circular handle points
         for (i, hp) in handles.enumerated() {
-            if hypot(point.x - hp.x, point.y - hp.y) <= radius {
+            if hypot(point.x - hp.x, point.y - hp.y) <= hitRadius {
                 return i
             }
         }
+
+        // 2. Boundary edge hit testing for freeform edge dragging
+        let tolerance: CGFloat = max(radius, 6.0)
+        let outer = rect.insetBy(dx: -tolerance, dy: -tolerance)
+        let inner = rect.insetBy(dx: tolerance, dy: tolerance)
+        if outer.contains(point) && !inner.contains(point) {
+            let cornerDist = max(cornerRadius + 4.0, 16.0)
+            let isNearLeft = abs(point.x - rect.minX) <= tolerance
+            let isNearRight = abs(point.x - rect.maxX) <= tolerance
+            let isNearTop = abs(point.y - rect.minY) <= tolerance
+            let isNearBottom = abs(point.y - rect.maxY) <= tolerance
+
+            if isNearLeft && isNearTop { return 0 }
+            if isNearRight && isNearTop { return 2 }
+            if isNearRight && isNearBottom { return 4 }
+            if isNearLeft && isNearBottom { return 6 }
+
+            if isNearTop && point.x >= rect.minX + cornerDist && point.x <= rect.maxX - cornerDist {
+                return 1 // Top edge -> strictly vertical
+            }
+            if isNearBottom && point.x >= rect.minX + cornerDist && point.x <= rect.maxX - cornerDist {
+                return 5 // Bottom edge -> strictly vertical
+            }
+            if isNearLeft && point.y >= rect.minY + cornerDist && point.y <= rect.maxY - cornerDist {
+                return 7 // Left edge -> strictly horizontal
+            }
+            if isNearRight && point.y >= rect.minY + cornerDist && point.y <= rect.maxY - cornerDist {
+                return 3 // Right edge -> strictly horizontal
+            }
+        }
+
         return nil
     }
 
@@ -122,7 +156,8 @@ public final class RectangleLayer: AnnotationLayer {
         let strokeNSColor = NSColor(hex: color)
         let strokeCGColor = strokeNSColor.cgColor
 
-        let path = CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        let effectiveRadius = max(0.0, min(cornerRadius, min(rect.width / 2.0, rect.height / 2.0)))
+        let path = CGPath(roundedRect: rect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
         context.addPath(path)
 
         switch fillStyle {

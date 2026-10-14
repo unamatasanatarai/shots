@@ -410,5 +410,63 @@ public enum EditorTests {
             assert(arrow.end == CGPoint(x: 300, y: 100), "End point must update to (300, 100)")
             assert(arrow.start == CGPoint(x: 20, y: 60), "Start point must remain anchored")
         }
+
+        testRunner("Editor - Rectangle Annotation Tool Freeform Resizing & Scaling") {
+            let rectLayer = RectangleLayer(
+                rect: CGRect(x: 100, y: 100, width: 200, height: 150),
+                cornerRadius: 10.0,
+                color: "#FF3B30",
+                strokeWidth: 4.0,
+                fillStyle: .outline
+            )
+
+            // 1. Visual Anatomy: Outline fill is transparent (interior does not contain, border does)
+            assert(!rectLayer.contains(point: CGPoint(x: 200, y: 175)), "Transparent interior must not intercept clicks when unselected")
+            assert(rectLayer.contains(point: CGPoint(x: 100, y: 150)), "Outline stroke border must intercept clicks")
+
+            // 2. 8 Control handles: 4 corners + 4 edge midpoints
+            let handles = rectLayer.getHandlePoints()
+            assert(handles.count == 8, "Rectangle must provide exactly 8 control handles")
+
+            // 3. Horizontal/Vertical adjustment along specific axis:
+            // Top edge (handle 1): scales strictly along Y axis
+            let origX = rectLayer.rect.minX
+            let origW = rectLayer.rect.width
+            rectLayer.updateHandle(index: 1, to: CGPoint(x: 180, y: 60))
+            assert(rectLayer.rect.minY == 60, "Top edge must adjust to y: 60")
+            assert(rectLayer.rect.minX == origX && rectLayer.rect.width == origW, "Top edge adjustment must be strictly vertical, leaving X unchanged")
+
+            // Bottom edge (handle 5): scales strictly along Y axis
+            rectLayer.updateHandle(index: 5, to: CGPoint(x: 180, y: 280))
+            assert(rectLayer.rect.maxY == 280, "Bottom edge must adjust to y: 280")
+            assert(rectLayer.rect.minX == origX && rectLayer.rect.width == origW, "Bottom edge adjustment must be strictly vertical, leaving X unchanged")
+
+            // Left edge (handle 7): scales strictly along X axis
+            let origY = rectLayer.rect.minY
+            let origH = rectLayer.rect.height
+            rectLayer.updateHandle(index: 7, to: CGPoint(x: 40, y: 170))
+            assert(rectLayer.rect.minX == 40, "Left edge must adjust to x: 40")
+            assert(rectLayer.rect.minY == origY && rectLayer.rect.height == origH, "Left edge adjustment must be strictly horizontal, leaving Y unchanged")
+
+            // Right edge (handle 3): scales strictly along X axis
+            rectLayer.updateHandle(index: 3, to: CGPoint(x: 350, y: 170))
+            assert(rectLayer.rect.maxX == 350, "Right edge must adjust to x: 350")
+            assert(rectLayer.rect.minY == origY && rectLayer.rect.height == origH, "Right edge adjustment must be strictly horizontal, leaving Y unchanged")
+
+            // 4. Diagonal adjustment: all four corners scale along both X and Y simultaneously
+            // Corner 4 (Bottom-Right):
+            rectLayer.updateHandle(index: 4, to: CGPoint(x: 400, y: 320))
+            assert(rectLayer.rect.maxX == 400 && rectLayer.rect.maxY == 320, "Corner adjustment must scale both X and Y simultaneously")
+
+            // 5. Unconstrained Aspect Ratio: freeform distortion without maintaining aspect ratio
+            assert(rectLayer.rect.width == 360 && rectLayer.rect.height == 260, "Aspect ratio must be completely freeform and unconstrained")
+
+            // 6. Boundary Edge hit testing: clicking near edge triggers edge handle
+            let topEdgeHit = rectLayer.hitTestHandle(point: CGPoint(x: 200, y: rectLayer.rect.minY))
+            assert(topEdgeHit == 1, "Clicking top edge must return handle 1 for vertical scaling")
+
+            let leftEdgeHit = rectLayer.hitTestHandle(point: CGPoint(x: rectLayer.rect.minX, y: 200))
+            assert(leftEdgeHit == 7, "Clicking left edge must return handle 7 for horizontal scaling")
+        }
     }
 }
