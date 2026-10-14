@@ -544,7 +544,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 } else if let ellipse = creating as? EllipseLayer {
                     isValidSize = ellipse.rect.width >= 6.0 && ellipse.rect.height >= 6.0
                 } else if let line = creating as? LineLayer {
-                    isValidSize = hypot(line.end.x - line.start.x, line.end.y - line.start.y) >= 10.0
+                    isValidSize = hypot(line.end.x - line.start.x, line.end.y - line.start.y) >= 6.0
                 } else if let filter = creating as? FilterLayer {
                     isValidSize = filter.rects.first.map { $0.width >= 6.0 && $0.height >= 6.0 } ?? false
                 } else if let pen = creating as? PenLayer {

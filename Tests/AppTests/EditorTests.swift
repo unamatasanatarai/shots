@@ -468,5 +468,45 @@ public enum EditorTests {
             let leftEdgeHit = rectLayer.hitTestHandle(point: CGPoint(x: rectLayer.rect.minX, y: 200))
             assert(leftEdgeHit == 7, "Clicking left edge must return handle 7 for horizontal scaling")
         }
+
+        testRunner("Editor - Line Annotation Tool Straight Segments & 2-Point Controls") {
+            let line = LineLayer(
+                start: CGPoint(x: 50, y: 50),
+                end: CGPoint(x: 250, y: 150),
+                color: "#FF3B30",
+                strokeWidth: 4.0,
+                lineStyle: .solid
+            )
+
+            // 1. Visual Anatomy & Styling
+            assert(line.color == "#FF3B30", "Line stroke color must be solid red")
+            assert(line.strokeWidth == 4.0, "Line stroke width must be uniform 4.0")
+            assert(line.lineStyle == .solid, "Line style must be continuous solid line")
+
+            // 2. Exactly two interactive control points (start: 0, end: 1)
+            assert(line.hitTestHandle(point: CGPoint(x: 50, y: 50)) == 0, "Handle 0 must be origin point")
+            assert(line.hitTestHandle(point: CGPoint(x: 250, y: 150)) == 1, "Handle 1 must be terminus point")
+            // No intermediary bend points or midpoint handles
+            assert(line.hitTestHandle(point: CGPoint(x: 150, y: 100)) == nil, "No intermediary bend points or curve handles permitted")
+
+            // 3. Dynamic adjustment of origin: reorients angle & length while terminus remains anchored
+            line.updateHandle(index: 0, to: CGPoint(x: 30, y: 80))
+            assert(line.start == CGPoint(x: 30, y: 80), "Origin point must update to (30, 80)")
+            assert(line.end == CGPoint(x: 250, y: 150), "Terminus must remain anchored when moving origin")
+
+            // 4. Dynamic adjustment of terminus: reorients angle & length while origin remains anchored
+            line.updateHandle(index: 1, to: CGPoint(x: 300, y: 80))
+            assert(line.end == CGPoint(x: 300, y: 80), "Terminus point must update to (300, 80)")
+            assert(line.start == CGPoint(x: 30, y: 80), "Origin must remain anchored when moving terminus")
+
+            // 5. Line body hit testing and translation
+            let midPoint = CGPoint(x: (line.start.x + line.end.x) / 2.0, y: (line.start.y + line.end.y) / 2.0)
+            assert(line.contains(point: midPoint), "Line body must return true for contains(point:) for translation")
+            assert(!line.contains(point: CGPoint(x: midPoint.x, y: midPoint.y + 40)), "Point far away must not be contained")
+
+            // Whole line translation
+            line.move(by: CGPoint(x: 10, y: 20))
+            assert(line.start == CGPoint(x: 40, y: 100) && line.end == CGPoint(x: 310, y: 100), "Move must translate entire line uniformly")
+        }
     }
 }

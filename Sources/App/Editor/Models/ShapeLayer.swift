@@ -423,8 +423,9 @@ public final class LineLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        if hypot(point.x - start.x, point.y - start.y) <= radius { return 0 }
-        if hypot(point.x - end.x, point.y - end.y) <= radius { return 1 }
+        let hitRadius = max(radius, 10.0)
+        if hypot(point.x - start.x, point.y - start.y) <= hitRadius { return 0 }
+        if hypot(point.x - end.x, point.y - end.y) <= hitRadius { return 1 }
         return nil
     }
 
