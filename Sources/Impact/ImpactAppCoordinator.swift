@@ -10,12 +10,12 @@ public final class ImpactAppCoordinator {
 
     private init() {}
 
-    public func openEditor(with image: CGImage, title: String = "Impact") {
+    public func openEditor(with image: CGImage, title: String = "Impact", sourceFileURL: URL? = nil) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
             let document = EditorDocument(image: image)
-            let panel = EditorPanel(document: document, title: title)
+            let panel = EditorPanel(document: document, title: title, sourceFileURL: sourceFileURL)
 
             self.activePanel?.close()
             self.activePanel = panel
@@ -39,7 +39,7 @@ public final class ImpactAppCoordinator {
             NSSound.beep()
             return
         }
-        openEditor(with: cgImage, title: url.lastPathComponent)
+        openEditor(with: cgImage, title: url.lastPathComponent, sourceFileURL: url)
     }
 
     public func openImageFileDialog() {

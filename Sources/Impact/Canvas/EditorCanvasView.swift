@@ -239,6 +239,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 context.addPath(handlePath)
                 context.strokePath()
                 continue
+            } else if layer is HighlighterLayer {
+                // Highlighting cannot be scaled, only moved: drop control handles
+                handlePoints = []
             } else if let textLayer = layer as? TextLayer {
                 let tBox = textLayer.getBoundingBox()
                 handlePoints = [CGPoint(x: tBox.maxX, y: tBox.maxY)]

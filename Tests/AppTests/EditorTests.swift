@@ -565,5 +565,36 @@ public enum EditorTests {
                 assert(smallSV.magnification == 1.0, "Smaller image must scale to 100% (1.0) and be centered")
             }
         }
+
+        testRunner("Editor - Direct Numbered Save (e.g. arero.jpg -> arero-2.jpg)") {
+            let context = CGContext(
+                data: nil,
+                width: 100,
+                height: 100,
+                bitsPerComponent: 8,
+                bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let img = context.makeImage()!
+            let doc = EditorDocument(image: img)
+
+            let tempDir = FileManager.default.temporaryDirectory
+            let sourceFile = tempDir.appendingPathComponent("arero.jpg")
+            try? Data([0x01, 0x02]).write(to: sourceFile)
+            defer { try? FileManager.default.removeItem(at: sourceFile) }
+
+            let panel = EditorPanel(document: doc, title: "arero.jpg", sourceFileURL: sourceFile)
+            let nextURL = panel.nextAvailableFileURL()
+            assert(nextURL.lastPathComponent == "arero-2.jpg", "Next file must be arero-2.jpg, got: \(nextURL.lastPathComponent)")
+
+            // If arero-2.jpg also exists, it should increment to arero-3.jpg
+            let file2 = tempDir.appendingPathComponent("arero-2.jpg")
+            try? Data([0x01, 0x02]).write(to: file2)
+            defer { try? FileManager.default.removeItem(at: file2) }
+
+            let nextURL2 = panel.nextAvailableFileURL()
+            assert(nextURL2.lastPathComponent == "arero-3.jpg", "Next file must be arero-3.jpg, got: \(nextURL2.lastPathComponent)")
+        }
     }
 }

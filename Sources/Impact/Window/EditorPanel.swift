@@ -12,9 +12,12 @@ public final class EditorPanel: NSPanel {
     private var metaLabel: NSTextField?
     private var isPinned: Bool = false
     public var onClose: (() -> Void)?
+    public let sourceFileURL: URL?
+    private var hasSavedComposition: Bool = false
 
-    public init(document: EditorDocument, title: String = "Shots Editor") {
+    public init(document: EditorDocument, title: String = "Shots Editor", sourceFileURL: URL? = nil) {
         self.document = document
+        self.sourceFileURL = sourceFileURL
         self.canvasView = EditorCanvasView(document: document)
         self.toolbarView = EditorToolbarView(canvasView: canvasView)
 
@@ -65,8 +68,59 @@ public final class EditorPanel: NSPanel {
     override public var canBecomeMain: Bool { true }
 
     override public func close() {
+        // When closing, if document has annotations and hasn't been saved yet, auto-save to new file
+        if !document.layers.isEmpty && !hasSavedComposition {
+            saveToNextNumberedFile()
+        }
         super.close()
         onClose?()
+    }
+
+    /// Computes the next available numbered filename without overwriting existing files
+    /// e.g. "arero.jpg" -> "arero-2.jpg", "arero-2.jpg" -> "arero-3.jpg"
+    public func nextAvailableFileURL() -> URL {
+        let baseDir: URL
+        let baseName: String
+        let ext: String
+
+        if let source = sourceFileURL {
+            baseDir = source.deletingLastPathComponent()
+            let fullFilename = source.deletingPathExtension().lastPathComponent
+            ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
+
+            // Check if fullFilename already ends with "-<digits>"
+            let pattern = #"^(.*?)-(\d+)$"#
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               let match = regex.firstMatch(in: fullFilename, range: NSRange(fullFilename.startIndex..., in: fullFilename)) {
+                let nameRange = Range(match.range(at: 1), in: fullFilename)!
+                baseName = String(fullFilename[nameRange])
+            } else {
+                baseName = fullFilename
+            }
+        } else {
+            baseDir = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
+            baseName = "Annotation"
+            ext = "png"
+        }
+
+        var counter = 2
+        var candidateURL = baseDir.appendingPathComponent("\(baseName)-\(counter).\(ext)")
+        while FileManager.default.fileExists(atPath: candidateURL.path) {
+            counter += 1
+            candidateURL = baseDir.appendingPathComponent("\(baseName)-\(counter).\(ext)")
+        }
+        return candidateURL
+    }
+
+    /// Saves the current composition directly without showing a Save As dialog
+    @discardableResult
+    public func saveToNextNumberedFile() -> URL? {
+        let targetURL = nextAvailableFileURL()
+        let ext = targetURL.pathExtension.lowercased()
+        let format: NSBitmapImageRep.FileType = (ext == "jpg" || ext == "jpeg") ? .jpeg : .png
+        canvasView.saveCompositionToFile(url: targetURL, format: format)
+        hasSavedComposition = true
+        return targetURL
     }
 
     private func setupContentView() {
@@ -238,20 +292,13 @@ public final class EditorPanel: NSPanel {
 
         toolbarView.onSaveRequested = { [weak self] in
             guard let self = self else { return }
-            let savePanel = NSSavePanel()
-            savePanel.allowedContentTypes = [.png, .jpeg]
-            savePanel.nameFieldStringValue = "Annotation_\(Int(Date().timeIntervalSince1970)).png"
-            savePanel.beginSheetModal(for: self) { [weak self] response in
-                guard let self = self else { return }
-                if response == .OK, let url = savePanel.url {
-                    let format: NSBitmapImageRep.FileType = url.pathExtension.lowercased() == "jpg" || url.pathExtension.lowercased() == "jpeg" ? .jpeg : .png
-                    self.canvasView.saveCompositionToFile(url: url, format: format)
-                    NSSound(named: "Tink")?.play()
-                }
-                // Explicitly keep the editor panel key and in front whether saved or cancelled
-                self.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+            if let savedURL = self.saveToNextNumberedFile() {
+                NSSound(named: "Tink")?.play()
+                NSLog("Impact: Saved composition to %@", savedURL.path)
             }
+            // Explicitly keep the editor panel open and active
+            self.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
         }
 
         toolbarView.onCopyRequested = {

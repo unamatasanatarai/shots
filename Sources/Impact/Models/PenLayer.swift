@@ -177,9 +177,7 @@ public final class HighlighterLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        guard !points.isEmpty else { return nil }
-        if hypot(point.x - points.first!.x, point.y - points.first!.y) <= radius { return 0 }
-        if hypot(point.x - points.last!.x, point.y - points.last!.y) <= radius { return points.count - 1 }
+        // Highlighting cannot be scaled, only moved. No control handles.
         return nil
     }
 
