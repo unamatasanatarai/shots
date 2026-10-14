@@ -46,14 +46,19 @@ public final class FilterLayer: AnnotationLayer {
         return rects.contains { $0.contains(point) }
     }
 
+    public func getHandlePoints() -> [CGPoint] {
+        var points: [CGPoint] = []
+        for r in rects {
+            points.append(CGPoint(x: r.minX, y: r.minY))
+            points.append(CGPoint(x: r.maxX, y: r.minY))
+            points.append(CGPoint(x: r.maxX, y: r.maxY))
+            points.append(CGPoint(x: r.minX, y: r.maxY))
+        }
+        return points
+    }
+
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        guard let first = rects.first else { return nil }
-        let handles = [
-            CGPoint(x: first.minX, y: first.minY),
-            CGPoint(x: first.maxX, y: first.minY),
-            CGPoint(x: first.maxX, y: first.maxY),
-            CGPoint(x: first.minX, y: first.maxY)
-        ]
+        let handles = getHandlePoints()
         for (i, hp) in handles.enumerated() {
             if hypot(point.x - hp.x, point.y - hp.y) <= radius { return i }
         }
@@ -68,13 +73,16 @@ public final class FilterLayer: AnnotationLayer {
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
-        guard !rects.isEmpty else { return }
-        var minX = rects[0].minX
-        var maxX = rects[0].maxX
-        var minY = rects[0].minY
-        var maxY = rects[0].maxY
+        let rectIndex = index / 4
+        let corner = index % 4
+        guard rectIndex < rects.count else { return }
 
-        switch index {
+        var minX = rects[rectIndex].minX
+        var maxX = rects[rectIndex].maxX
+        var minY = rects[rectIndex].minY
+        var maxY = rects[rectIndex].maxY
+
+        switch corner {
         case 0: minX = point.x; minY = point.y
         case 1: maxX = point.x; minY = point.y
         case 2: maxX = point.x; maxY = point.y
@@ -82,7 +90,7 @@ public final class FilterLayer: AnnotationLayer {
         default: break
         }
 
-        rects[0] = CGRect(
+        rects[rectIndex] = CGRect(
             x: min(minX, maxX),
             y: min(minY, maxY),
             width: max(abs(maxX - minX), 4.0),

@@ -82,12 +82,27 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         context.restoreGState()
 
         // 2. Draw Destructive / Masking Layers (Spotlight & Blur)
+        // Combine any live creating spotlight with the existing spotlight overlay so there is only one unified overlay
+        var drawnSpotlight = false
         for layer in document.layers where layer.isVisible {
             if let filter = layer as? FilterLayer {
-                filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+                if filter.filterMode == .spotlight {
+                    drawnSpotlight = true
+                    if let liveSpotlight = activeCreatingLayer as? FilterLayer, liveSpotlight.filterMode == .spotlight, let liveRect = liveSpotlight.rects.first {
+                        let combinedRects = filter.rects + [liveRect]
+                        let combined = FilterLayer(rects: combinedRects, filterMode: .spotlight, intensity: filter.intensity)
+                        combined.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+                    } else {
+                        filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+                    }
+                } else {
+                    filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+                }
             }
         }
-        if let liveFilter = activeCreatingLayer as? FilterLayer {
+        if !drawnSpotlight, let liveFilter = activeCreatingLayer as? FilterLayer {
+            liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+        } else if drawnSpotlight, let liveFilter = activeCreatingLayer as? FilterLayer, liveFilter.filterMode != .spotlight {
             liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
         }
 
@@ -170,6 +185,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let textLayer = layer as? TextLayer {
                 let tBox = textLayer.getBoundingBox()
                 handlePoints = [CGPoint(x: tBox.maxX, y: tBox.maxY)]
+            } else if let filter = layer as? FilterLayer {
+                handlePoints = filter.getHandlePoints()
             } else {
                 handlePoints = [
                     CGPoint(x: box.minX, y: box.minY),
@@ -517,8 +534,20 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 }
 
                 if isValidSize {
-                    document.addLayer(creating)
-                    document.selectLayer(creating)
+                    if let filter = creating as? FilterLayer, filter.filterMode == .spotlight, let newHole = filter.rects.first {
+                        if let existingSpotlight = document.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
+                            document.saveSnapshot()
+                            existingSpotlight.rects.append(newHole)
+                            document.selectLayer(existingSpotlight)
+                            document.computeElasticBounds()
+                        } else {
+                            document.addLayer(filter)
+                            document.selectLayer(filter)
+                        }
+                    } else {
+                        document.addLayer(creating)
+                        document.selectLayer(creating)
+                    }
                 }
             }
             activeCreatingLayer = nil

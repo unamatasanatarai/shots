@@ -295,5 +295,28 @@ public enum EditorTests {
             // Control handle -> resize, not translate
             assert(rectLayer.hitTestHandle(point: CGPoint(x: 50, y: 50)) != nil, "Control handle should be hit-tested separately from layer body")
         }
+
+        testRunner("Editor - Single Spotlight Overlay with Multi-Hole Handles") {
+            let spotlight = FilterLayer(
+                rects: [
+                    CGRect(x: 20, y: 20, width: 80, height: 80),
+                    CGRect(x: 150, y: 150, width: 100, height: 100)
+                ],
+                filterMode: .spotlight
+            )
+
+            // 2 rects should produce 8 handles (4 corners per hole)
+            let handles = spotlight.getHandlePoints()
+            assert(handles.count == 8, "Expected 8 handle points for 2 spotlight holes")
+
+            // Test hit-testing handle on hole 2 (index 4 is top-left of second hole: 150, 150)
+            assert(spotlight.hitTestHandle(point: CGPoint(x: 150, y: 150)) == 4, "Handle index 4 should hit top-left of second hole")
+
+            // Update handle 4 to (140, 140)
+            spotlight.updateHandle(index: 4, to: CGPoint(x: 140, y: 140))
+            assert(spotlight.rects[1].minX == 140 && spotlight.rects[1].minY == 140, "Second hole should be resized to start at (140, 140)")
+            // Verify hole 1 remains untouched
+            assert(spotlight.rects[0].origin == CGPoint(x: 20, y: 20), "First hole must remain unaffected")
+        }
     }
 }
