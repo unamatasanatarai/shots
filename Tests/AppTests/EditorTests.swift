@@ -278,5 +278,22 @@ public enum EditorTests {
             assert(callout.frame.width == 160, "Frame width must be updated to 160")
             assert(callout.frame.height == 80, "Frame height must be updated to 80")
         }
+
+        testRunner("Editor - 4-Directional Move Cursor & Hit Testing") {
+            let cursor = NSCursor.fourDirectionalMove
+            assert(cursor.image.size.width > 0 && cursor.image.size.height > 0, "4-directional move cursor must have valid image")
+
+            let rectLayer = RectangleLayer(
+                rect: CGRect(x: 50, y: 50, width: 100, height: 100),
+                color: "#FF3B30",
+                strokeWidth: 2,
+                fillStyle: .solid
+            )
+
+            // Hit body inside bounds -> movable element
+            assert(rectLayer.contains(point: CGPoint(x: 75, y: 75)), "Movable layer body must return true for contains(point:)")
+            // Control handle -> resize, not translate
+            assert(rectLayer.hitTestHandle(point: CGPoint(x: 50, y: 50)) != nil, "Control handle should be hit-tested separately from layer body")
+        }
     }
 }

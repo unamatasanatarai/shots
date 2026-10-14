@@ -15,6 +15,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var isShiftPressed: Bool = false
     private var inlineEditor: NSTextField?
     private var editingLayer: AnnotationLayer?
+    private var canvasTrackingArea: NSTrackingArea?
 
     // Zoom & Pan
     public var zoomScale: CGFloat = 1.0
@@ -42,6 +43,21 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public var isFlipped: Bool { true } // Flipped so (0,0) is top-left, matching macOS image conventions
     override public var acceptsFirstResponder: Bool { true }
+
+    override public func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = canvasTrackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        canvasTrackingArea = area
+    }
 
     // MARK: - Drawing Pipeline (Section 6)
 
@@ -382,6 +398,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 dragging.updateHandle(index: handleIdx, to: point)
             } else {
                 dragging.move(by: delta)
+                NSCursor.fourDirectionalMove.set()
             }
             document.computeElasticBounds()
             lastDragPoint = point
@@ -509,7 +526,63 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         activeDraggingLayer = nil
         activeHandleIndex = nil
+        updateCursorForPoint(canvasPoint(from: event))
         needsDisplay = true
+    }
+
+    override public func mouseMoved(with event: NSEvent) {
+        let point = canvasPoint(from: event)
+        updateCursorForPoint(point)
+    }
+
+    override public func cursorUpdate(with event: NSEvent) {
+        let point = canvasPoint(from: event)
+        updateCursorForPoint(point)
+    }
+
+    private func updateCursorForPoint(_ point: CGPoint) {
+        // While actively dragging a layer's body, maintain the 4-directional move cursor
+        if activeDraggingLayer != nil && activeHandleIndex == nil {
+            NSCursor.fourDirectionalMove.set()
+            return
+        }
+
+        // If dragging or hovering over a handle, use appropriate handle cursor
+        if let selected = document.getSelectedLayers().first,
+           selected.hitTestHandle(point: point) != nil {
+            NSCursor.crosshair.set()
+            return
+        }
+
+        // When in select mode, check if hovering over any movable layer
+        if document.activeTool == .select {
+            let hitsMovableLayer = document.layers.reversed().contains { layer in
+                layer.isVisible && layer.contains(point: point)
+            }
+            if hitsMovableLayer {
+                NSCursor.fourDirectionalMove.set()
+                return
+            }
+        }
+
+        // Also if any already selected layer contains the point (even if switching tools), dragging it moves it
+        let hitsSelectedLayer = document.getSelectedLayers().contains { layer in
+            layer.isVisible && layer.contains(point: point)
+        }
+        if hitsSelectedLayer {
+            NSCursor.fourDirectionalMove.set()
+            return
+        }
+
+        // Default tool cursors
+        switch document.activeTool {
+        case .select:
+            NSCursor.arrow.set()
+        case .text, .callout:
+            NSCursor.iBeam.set()
+        default:
+            NSCursor.crosshair.set()
+        }
     }
 
     // MARK: - Keyboard Modifiers & Shortcuts (Section 3)
