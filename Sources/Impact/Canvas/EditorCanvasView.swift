@@ -17,10 +17,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var isShiftPressed: Bool = false
     private var inlineEditor: NSTextField?
     private var editingLayer: AnnotationLayer?
-    private var hoveredLayer: AnnotationLayer?
-    private var hoverOutlineLayer: AnnotationLayer?
-    private var hoverAlpha: CGFloat = 0.0
-    private var hoverTimer: Timer?
+    var hoveredLayer: AnnotationLayer?
+    var hoverOutlineLayer: AnnotationLayer?
+    var hoverAlpha: CGFloat = 0.0
     private var canvasTrackingArea: NSTrackingArea?
     private var currentMouseCanvasPoint: CGPoint?
 
@@ -199,33 +198,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         context.saveGState()
 
-        // 1. Soft glowing bluish/whiteish hover indicator for solid elements (Counter, Arrow)
-        if let target = hoverOutlineLayer, hoverAlpha > 0.001, !selectedLayers.contains(where: { $0.id == target.id }) {
-            let hoverPath: CGPath?
-            if let counter = target as? CounterLayer {
-                hoverPath = counter.pathForTeardrop()
-            } else if let arrow = target as? ArrowLayer {
-                hoverPath = arrow.pathForArrow()
-            } else if let line = target as? LineLayer {
-                let path = CGMutablePath()
-                path.move(to: line.start)
-                path.addLine(to: line.end)
-                hoverPath = path
-            } else {
-                hoverPath = nil
-            }
-
-            if let path = hoverPath {
+        // 1. Crisp hover indicator for all annotation elements (instant, no fade, razor-sharp)
+        if let target = hoverOutlineLayer, !selectedLayers.contains(where: { $0.id == target.id }) {
+            if let path = hoverPath(for: target) {
                 context.saveGState()
 
-                // Soft outer bluish glow
-                let glowColor = NSColor(srgbRed: 0.35, green: 0.70, blue: 1.0, alpha: 0.85 * hoverAlpha).cgColor
-                context.setShadow(offset: .zero, blur: 5.5, color: glowColor)
-
-                // Soft translucent bluish-white stroke
-                let strokeColor = NSColor(srgbRed: 0.88, green: 0.94, blue: 1.0, alpha: 0.80 * hoverAlpha).cgColor
-                context.setStrokeColor(strokeColor)
-                context.setLineWidth(2.0)
+                // Crisp vibrant macOS accent blue stroke
+                context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 1.0).cgColor)
+                context.setLineWidth(1.5)
                 context.setLineJoin(.round)
                 context.setLineCap(.round)
                 context.addPath(path)
@@ -331,7 +311,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         lastDragPoint = point
 
         commitInlineEditor()
-        animateHoverOutline(to: nil)
+        clearHoverStateImmediately()
 
         // Handle double click to edit text or callout
         if event.clickCount == 2 {
@@ -873,6 +853,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseExited(with event: NSEvent) {
         currentMouseCanvasPoint = nil
+        updateHoverState(to: nil)
         if document.activeTool == .highlighter || document.activeTool == .pen {
             needsDisplay = true
         }
@@ -891,58 +872,127 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
     }
 
-    private func updateHoverState(to newLayer: AnnotationLayer?) {
-        let isSolid = (newLayer is CounterLayer || newLayer is ArrowLayer || newLayer is LineLayer)
-        let candidate = isSolid ? newLayer : nil
-
-        if candidate?.id != hoveredLayer?.id {
-            hoveredLayer = candidate
-            animateHoverOutline(to: candidate)
+    func updateHoverState(to newLayer: AnnotationLayer?) {
+        if newLayer?.id != hoveredLayer?.id {
+            hoveredLayer = newLayer
+            hoverOutlineLayer = newLayer
+            hoverAlpha = (newLayer != nil) ? 1.0 : 0.0
+            needsDisplay = true
         }
     }
 
-    private func animateHoverOutline(to targetLayer: AnnotationLayer?) {
-        hoverTimer?.invalidate()
-        hoverTimer = nil
-
-        if let target = targetLayer {
-            // Fade In quickly (approx 60ms total)
-            hoverOutlineLayer = target
-            let step: CGFloat = 0.30
-            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] timer in
-                guard let self = self else {
-                    timer.invalidate()
-                    return
-                }
-                self.hoverAlpha = min(1.0, self.hoverAlpha + step)
-                self.needsDisplay = true
-                if self.hoverAlpha >= 1.0 {
-                    timer.invalidate()
-                    self.hoverTimer = nil
-                }
+    func hoverPath(for layer: AnnotationLayer) -> CGPath? {
+        if let counter = layer as? CounterLayer {
+            return counter.pathForTeardrop()
+        } else if let arrow = layer as? ArrowLayer {
+            return arrow.pathForArrow()
+        } else if let line = layer as? LineLayer {
+            let path = CGMutablePath()
+            path.move(to: line.start)
+            path.addLine(to: line.end)
+            return path
+        } else if let rectLayer = layer as? RectangleLayer {
+            let r = rectLayer.rect
+            let effectiveRadius = max(0.0, min(rectLayer.cornerRadius, min(r.width / 2.0, r.height / 2.0)))
+            return CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
+        } else if let ellipseLayer = layer as? EllipseLayer {
+            return CGPath(ellipseIn: ellipseLayer.rect, transform: nil)
+        } else if let callout = layer as? CalloutLayer {
+            return callout.pathForCallout()
+        } else if let textLayer = layer as? TextLayer {
+            let box = textLayer.getBoundingBox()
+            return CGPath(roundedRect: box, cornerWidth: 6.0, cornerHeight: 6.0, transform: nil)
+        } else if let hl = layer as? HighlighterLayer {
+            guard !hl.points.isEmpty else { return nil }
+            if hl.points.count == 1 {
+                let p = hl.points[0]
+                let w = hl.strokeWidth
+                return CGPath(ellipseIn: CGRect(x: p.x - w / 2.0, y: p.y - w / 2.0, width: w, height: w), transform: nil)
             }
+            let path = CGMutablePath()
+            path.move(to: hl.points[0])
+            if hl.points.count == 2 {
+                path.addLine(to: hl.points[1])
+            } else {
+                for i in 1..<hl.points.count {
+                    let mid = CGPoint(
+                        x: (hl.points[i - 1].x + hl.points[i].x) / 2.0,
+                        y: (hl.points[i - 1].y + hl.points[i].y) / 2.0
+                    )
+                    path.addQuadCurve(to: mid, control: hl.points[i - 1])
+                }
+                path.addLine(to: hl.points.last!)
+            }
+            return path.copy(strokingWithWidth: hl.strokeWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
+        } else if let pen = layer as? PenLayer {
+            guard !pen.points.isEmpty else { return nil }
+            if pen.points.count == 1 {
+                let p = pen.points[0]
+                let w = pen.strokeWidth
+                return CGPath(ellipseIn: CGRect(x: p.x - w / 2.0, y: p.y - w / 2.0, width: w, height: w), transform: nil)
+            }
+            let path = CGMutablePath()
+            path.move(to: pen.points[0])
+            if pen.points.count == 2 {
+                path.addLine(to: pen.points[1])
+            } else {
+                for i in 1..<pen.points.count {
+                    let mid = CGPoint(
+                        x: (pen.points[i - 1].x + pen.points[i].x) / 2.0,
+                        y: (pen.points[i - 1].y + pen.points[i].y) / 2.0
+                    )
+                    path.addQuadCurve(to: mid, control: pen.points[i - 1])
+                }
+                path.addLine(to: pen.points.last!)
+            }
+            return path.copy(strokingWithWidth: pen.strokeWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
+        } else if let filter = layer as? FilterLayer {
+            let path = CGMutablePath()
+            for r in filter.rects {
+                guard r.width > 0 && r.height > 0 else { continue }
+                let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
+                path.addPath(CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil))
+            }
+            return path.isEmpty ? nil : path
+        } else if let dim = layer as? DimensionLayer {
+            let path = CGMutablePath()
+            path.move(to: dim.start)
+            path.addLine(to: dim.end)
+            let angle = atan2(dim.end.y - dim.start.y, dim.end.x - dim.start.x)
+            let perp = angle + .pi / 2.0
+            let tickHalf: CGFloat = 7.0
+            let s1 = CGPoint(x: dim.start.x - tickHalf * cos(perp), y: dim.start.y - tickHalf * sin(perp))
+            let s2 = CGPoint(x: dim.start.x + tickHalf * cos(perp), y: dim.start.y + tickHalf * sin(perp))
+            path.move(to: s1); path.addLine(to: s2)
+            let e1 = CGPoint(x: dim.end.x - tickHalf * cos(perp), y: dim.end.y - tickHalf * sin(perp))
+            let e2 = CGPoint(x: dim.end.x + tickHalf * cos(perp), y: dim.end.y + tickHalf * sin(perp))
+            path.move(to: e1); path.addLine(to: e2)
+            return path
+        } else if let mag = layer as? MagnifierLayer {
+            let path = CGMutablePath()
+            let lensRect = CGRect(x: mag.targetCenter.x - mag.radius, y: mag.targetCenter.y - mag.radius, width: mag.radius * 2, height: mag.radius * 2)
+            path.addPath(CGPath(ellipseIn: lensRect, transform: nil))
+            let sourceRect = CGRect(x: mag.sourceCenter.x - 10, y: mag.sourceCenter.y - 10, width: 20, height: 20)
+            path.addPath(CGPath(ellipseIn: sourceRect, transform: nil))
+            path.move(to: mag.sourceCenter)
+            path.addLine(to: mag.targetCenter)
+            return path
+        } else if let bezel = layer as? BezelLayer {
+            let titleBarHeight: CGFloat = bezel.style == .macWindow ? 32.0 : 0.0
+            let frameRect = CGRect(
+                x: bezel.targetBounds.minX,
+                y: bezel.targetBounds.minY - titleBarHeight,
+                width: bezel.targetBounds.width,
+                height: bezel.targetBounds.height + titleBarHeight
+            )
+            return CGPath(roundedRect: frameRect, cornerWidth: 10.0, cornerHeight: 10.0, transform: nil)
         } else {
-            // Fade Out quickly
-            let step: CGFloat = 0.30
-            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] timer in
-                guard let self = self else {
-                    timer.invalidate()
-                    return
-                }
-                self.hoverAlpha = max(0.0, self.hoverAlpha - step)
-                self.needsDisplay = true
-                if self.hoverAlpha <= 0.0 {
-                    self.hoverOutlineLayer = nil
-                    timer.invalidate()
-                    self.hoverTimer = nil
-                }
-            }
+            let box = layer.getBoundingBox()
+            return CGPath(roundedRect: box, cornerWidth: 4.0, cornerHeight: 4.0, transform: nil)
         }
     }
 
-    private func clearHoverStateImmediately() {
-        hoverTimer?.invalidate()
-        hoverTimer = nil
+    func clearHoverStateImmediately() {
         hoveredLayer = nil
         hoverOutlineLayer = nil
         hoverAlpha = 0.0

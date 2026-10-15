@@ -414,7 +414,7 @@ The Line tool (`.line`, shortcut `L`) provides straight line segments between a 
    - No intermediary control points or bending.
 2. **Body Dragging & Translation**:
    - Dragging anywhere along the line segment within hit-test catchment translates the whole line ($P_0$ and $P_1$) uniformly.
-   - Soft glowing bluish hover highlight on hover.
+   - Crisp, instant outline on hover without fade.
 
 ---
 

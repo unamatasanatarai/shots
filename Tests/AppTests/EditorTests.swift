@@ -968,5 +968,66 @@ public enum EditorTests {
             let rendered = doc.renderComposition()
             assert(rendered != nil, "renderComposition with pen layer must succeed")
         }
+
+        testRunner("Editor - Universal Hover Outline on All Annotation Elements") {
+            let context = CGContext(
+                data: nil,
+                width: 200,
+                height: 200,
+                bitsPerComponent: 8,
+                bytesPerRow: 800,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let canvas = EditorCanvasView(document: doc)
+
+            let rectLayer = RectangleLayer(rect: CGRect(x: 10, y: 10, width: 60, height: 40))
+            let ellipseLayer = EllipseLayer(rect: CGRect(x: 80, y: 10, width: 50, height: 50))
+            let textLayer = TextLayer(origin: CGPoint(x: 10, y: 60), text: "Test Hover")
+            let calloutLayer = CalloutLayer(frame: CGRect(x: 10, y: 120, width: 80, height: 40), tailTip: CGPoint(x: 50, y: 170))
+            let arrowLayer = ArrowLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 40, y: 40))
+            let counterLayer = CounterLayer(center: CGPoint(x: 100, y: 100), value: 1)
+            let lineLayer = LineLayer(start: CGPoint(x: 0, y: 10), end: CGPoint(x: 50, y: 10))
+            let penLayer = PenLayer(points: [CGPoint(x: 5, y: 5), CGPoint(x: 15, y: 15)])
+            let highlighterLayer = HighlighterLayer(points: [CGPoint(x: 20, y: 20), CGPoint(x: 40, y: 40)])
+            let spotlightFilter = FilterLayer(rects: [CGRect(x: 5, y: 5, width: 30, height: 30)], filterMode: .spotlight)
+            let blurFilter = FilterLayer(rects: [CGRect(x: 10, y: 10, width: 30, height: 30)], filterMode: .gaussian)
+            let dimLayer = DimensionLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 100, y: 0))
+            let magLayer = MagnifierLayer(sourceCenter: CGPoint(x: 50, y: 50), targetCenter: CGPoint(x: 100, y: 100))
+            let bezelLayer = BezelLayer(targetBounds: CGRect(x: 20, y: 20, width: 100, height: 80))
+
+            let allLayers: [AnnotationLayer] = [
+                rectLayer, ellipseLayer, textLayer, calloutLayer, arrowLayer, counterLayer,
+                lineLayer, penLayer, highlighterLayer, spotlightFilter, blurFilter,
+                dimLayer, magLayer, bezelLayer
+            ]
+
+            // 1. Verify hoverPath generates a valid CGPath for every layer
+            for layer in allLayers {
+                let path = canvas.hoverPath(for: layer)
+                assert(path != nil, "hoverPath must return non-nil CGPath for \(type(of: layer))")
+                assert(!path!.isEmpty, "hoverPath must not be empty for \(type(of: layer))")
+            }
+
+            // 2. Verify hover state updates for arbitrary layers (rectLayer, textLayer, etc.)
+            doc.addLayer(rectLayer)
+            doc.addLayer(textLayer)
+
+            // Hover over rectLayer
+            canvas.updateHoverState(to: rectLayer)
+            assert(canvas.hoveredLayer?.id == rectLayer.id, "Setting hover on RectangleLayer must update hoveredLayer")
+            assert(canvas.hoverOutlineLayer?.id == rectLayer.id, "Setting hover on RectangleLayer must update hoverOutlineLayer")
+
+            // Hover over textLayer
+            canvas.updateHoverState(to: textLayer)
+            assert(canvas.hoveredLayer?.id == textLayer.id, "Setting hover on TextLayer must update hoveredLayer")
+            assert(canvas.hoverOutlineLayer?.id == textLayer.id, "Setting hover on TextLayer must update hoverOutlineLayer")
+
+            // Clear hover state
+            canvas.updateHoverState(to: nil)
+            assert(canvas.hoveredLayer == nil, "Hovering away must clear hoveredLayer")
+        }
     }
 }
+
