@@ -9,6 +9,8 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var scrollingCaptureMenuItem: NSMenuItem!
     private var repeatScreenshotMenuItem: NSMenuItem!
     private var ocrRecognitionMenuItem: NSMenuItem!
+    private var screenRulerMenuItem: NSMenuItem!
+    private var colorPickerMenuItem: NSMenuItem!
     private var revealLatestMenuItem: NSMenuItem!
     private var recentScreenshotsMenuItem: NSMenuItem!
     private var saveToDiskMenuItem: NSMenuItem!
@@ -146,6 +148,32 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             ocrRecognitionMenuItem.image = textIcon
         }
         menu.addItem(ocrRecognitionMenuItem)
+
+        // Screen Ruler
+        screenRulerMenuItem = NSMenuItem(
+            title: "Screen Ruler",
+            action: #selector(screenRulerAction),
+            keyEquivalent: ""
+        )
+        screenRulerMenuItem.target = self
+        if let rulerIcon = NSImage(systemSymbolName: "ruler", accessibilityDescription: nil) {
+            rulerIcon.isTemplate = true
+            screenRulerMenuItem.image = rulerIcon
+        }
+        menu.addItem(screenRulerMenuItem)
+
+        // Color Picker
+        colorPickerMenuItem = NSMenuItem(
+            title: "Color Picker",
+            action: #selector(colorPickerAction),
+            keyEquivalent: ""
+        )
+        colorPickerMenuItem.target = self
+        if let pickerIcon = NSImage(systemSymbolName: "eyedropper", accessibilityDescription: nil) {
+            pickerIcon.isTemplate = true
+            colorPickerMenuItem.image = pickerIcon
+        }
+        menu.addItem(colorPickerMenuItem)
         revealLatestMenuItem = NSMenuItem(
             title: "Reveal Latest Screenshot",
             action: #selector(revealLatestScreenshotAction),
@@ -581,6 +609,18 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     @objc public func ocrRecognitionAction() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.startOCRRecognition()
+        }
+    }
+
+    @objc public func screenRulerAction() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            CaptureManager.shared.startRuler()
+        }
+    }
+
+    @objc public func colorPickerAction() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            CaptureManager.shared.startColorPicker()
         }
     }
 

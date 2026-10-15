@@ -1309,5 +1309,70 @@ public struct AppTests {
             // Test manual dismiss
             hud.dismiss()
         }
+
+        // MARK: - Transparent Fullscreen Overlay Capture Modes (Area, OCR, Ruler, Color Picker)
+        testRunner("Capture Overlay Modes - Area, OCR, Ruler & Color Picker Fullscreen Overlay") {
+            // 1. Enum Verification
+            assert(CaptureOverlayMode.area.rawValue == "Area", "Area mode rawValue must be Area")
+            assert(CaptureOverlayMode.ocr.rawValue == "OCR", "OCR mode rawValue must be OCR")
+            assert(CaptureOverlayMode.ruler.rawValue == "Ruler", "Ruler mode rawValue must be Ruler")
+            assert(CaptureOverlayMode.colorPicker.rawValue == "Color Picker", "Color Picker rawValue must be Color Picker")
+            assert(CaptureOverlayMode.allCases.count == 4, "Must support all 4 capture overlay modes")
+
+            // 2. Color Extraction Verification (sRGB)
+            let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+            let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            guard let testCtx = CGContext(
+                data: nil,
+                width: 10,
+                height: 10,
+                bitsPerComponent: 8,
+                bytesPerRow: 40,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            ) else { fatalError("Test context creation failed") }
+
+            // Fill with pure blue #0000FF
+            testCtx.setFillColor(CGColor(srgbRed: 0.0, green: 0.0, blue: 1.0, alpha: 1.0))
+            testCtx.fill(CGRect(x: 0, y: 0, width: 10, height: 10))
+
+            // Put pure red pixel at (2, 2) in CG top-left coordinates (y=7 from bottom)
+            testCtx.setFillColor(CGColor(srgbRed: 1.0, green: 0.0, blue: 0.0, alpha: 1.0))
+            testCtx.fill(CGRect(x: 2, y: 7, width: 1, height: 1))
+
+            let testImage = testCtx.makeImage()!
+
+            let redColor = RegionSelectionCoordinator.shared.extractColor(from: testImage, x: 2, y: 2)
+            assert(redColor != nil, "Color extraction must succeed")
+            assert(redColor?.hex == "#FF0000", "Sampled pixel must be pure red #FF0000, got \(String(describing: redColor?.hex))")
+            assert(redColor?.rgb.r == 255 && redColor?.rgb.g == 0 && redColor?.rgb.b == 0, "RGB must be (255, 0, 0)")
+
+            let blueColor = RegionSelectionCoordinator.shared.extractColor(from: testImage, x: 0, y: 0)
+            assert(blueColor?.hex == "#0000FF", "Sampled pixel must be pure blue #0000FF, got \(String(describing: blueColor?.hex))")
+
+            // 3. Ruler Calculation Mathematics
+            let p1 = NSPoint(x: 100, y: 100)
+            let p2 = NSPoint(x: 220, y: 190)
+            let dx = abs(p2.x - p1.x)
+            let dy = abs(p2.y - p1.y)
+            let dist = hypot(dx, dy)
+            assert(dx == 120, "dx must be 120")
+            assert(dy == 90, "dy must be 90")
+            assert(dist == 150, "3-4-5 triangle hypotenuse must be 150")
+
+            // 4. Menu Bar Integration
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+
+            let rulerItem = menu.items.first(where: { $0.title == "Screen Ruler" })
+            assert(rulerItem != nil, "Screen Ruler menu item must exist")
+            assert(rulerItem?.action == #selector(controller.screenRulerAction), "Screen Ruler action must match screenRulerAction")
+            assert(rulerItem?.image != nil, "Screen Ruler item must have an icon")
+
+            let pickerItem = menu.items.first(where: { $0.title == "Color Picker" })
+            assert(pickerItem != nil, "Color Picker menu item must exist")
+            assert(pickerItem?.action == #selector(controller.colorPickerAction), "Color Picker action must match colorPickerAction")
+            assert(pickerItem?.image != nil, "Color Picker item must have an icon")
+        }
     }
 }

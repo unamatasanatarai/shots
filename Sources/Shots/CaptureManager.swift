@@ -37,7 +37,7 @@ public final class CaptureManager {
     }
 
     private func executeRegionCapture() {
-        RegionSelectionCoordinator.shared.startSelection { [weak self] capturedImage in
+        RegionSelectionCoordinator.shared.startSelection(mode: .area) { [weak self] capturedImage in
             guard let image = capturedImage else { return }
             self?.processCapturedImage(image)
         }
@@ -55,7 +55,7 @@ public final class CaptureManager {
     }
 
     private func executeOCRRecognition(completion: ((RecognitionItem?) -> Void)? = nil) {
-        RegionSelectionCoordinator.shared.startSelection { capturedImage in
+        RegionSelectionCoordinator.shared.startSelection(mode: .ocr) { capturedImage in
             guard let image = capturedImage else {
                 completion?(nil)
                 return
@@ -75,6 +75,38 @@ public final class CaptureManager {
                 }
             }
         }
+    }
+
+    // MARK: - Screen Ruler & Color Picker
+
+    public func startRuler(delay: Int? = nil, completion: ((String?) -> Void)? = nil) {
+        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
+        if delaySeconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+                self?.executeRuler(completion: completion)
+            }
+        } else {
+            executeRuler(completion: completion)
+        }
+    }
+
+    private func executeRuler(completion: ((String?) -> Void)? = nil) {
+        RegionSelectionCoordinator.shared.startRuler(completion: completion)
+    }
+
+    public func startColorPicker(delay: Int? = nil, completion: ((String?) -> Void)? = nil) {
+        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
+        if delaySeconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+                self?.executeColorPicker(completion: completion)
+            }
+        } else {
+            executeColorPicker(completion: completion)
+        }
+    }
+
+    private func executeColorPicker(completion: ((String?) -> Void)? = nil) {
+        RegionSelectionCoordinator.shared.startColorPicker(completion: completion)
     }
 
     // MARK: - Scrolling Capture
