@@ -513,33 +513,27 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc public func recentScreenshotSelected(_ sender: NSMenuItem) {
         guard let fileURL = sender.representedObject as? URL else {
-            NSSound.beep()
             return
         }
         if !ScreenshotHistoryService.shared.revealScreenshotInFinder(fileURL: fileURL) {
-            NSSound.beep()
             updateRecentScreenshotsMenu()
         }
     }
 
     @objc public func revealRecentScreenshotAction(_ sender: NSMenuItem) {
         guard let fileURL = sender.representedObject as? URL else {
-            NSSound.beep()
             return
         }
         if !ScreenshotHistoryService.shared.revealScreenshotInFinder(fileURL: fileURL) {
-            NSSound.beep()
             updateRecentScreenshotsMenu()
         }
     }
 
     @objc public func copyRecentScreenshotAction(_ sender: NSMenuItem) {
         guard let fileURL = sender.representedObject as? URL else {
-            NSSound.beep()
             return
         }
         if !ScreenshotHistoryService.shared.copyScreenshotToClipboard(fileURL: fileURL) {
-            NSSound.beep()
             updateRecentScreenshotsMenu()
         }
     }
@@ -591,9 +585,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func revealLatestScreenshotAction() {
-        if !SaveService.shared.revealLatestScreenshot() {
-            NSSound.beep()
-        }
+        _ = SaveService.shared.revealLatestScreenshot()
     }
 
     @objc private func toggleSaveToDisk() {

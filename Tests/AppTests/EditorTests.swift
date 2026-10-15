@@ -816,9 +816,14 @@ public enum EditorTests {
             assert(panel.collectionBehavior.contains(.managed), "EditorPanel must be managed for standard window switching")
             assert(panel.level == .normal, "EditorPanel initial level must be .normal for standard window ordering")
 
-            // 3. Window Sizing: minimum width is width of tool panel (600), default height 400
-            assert(panel.minSize.width == 600.0, "EditorPanel minSize.width must equal tool panel width (600.0)")
-            assert(panel.minSize.height == 400.0, "EditorPanel minSize.height must be 400.0")
+            // 3. Window Sizing: minimum width is responsive (allows narrow resizing down to <= 320), default height 400
+            assert(panel.minSize.width <= 320.0, "EditorPanel minSize.width must allow responsive compact resizing (<= 320.0)")
+            assert(panel.minSize.height <= 400.0, "EditorPanel minSize.height must be <= 400.0")
+
+            // Verify window does not block resizing down to 300pt
+            panel.setFrame(NSRect(x: 100, y: 100, width: 300, height: 300), display: true)
+            assert(panel.frame.width == 300.0, "EditorPanel must allow resizing down to 300pt without toolbar blocking it")
+            assert(panel.contentView?.fittingSize.width ?? 0 <= 320.0, "ContentView fitting size must not force wide window")
 
             // 4. Large image best-fit scaling
             panel.scaleToFit()
@@ -1028,6 +1033,515 @@ public enum EditorTests {
             canvas.updateHoverState(to: nil)
             assert(canvas.hoveredLayer == nil, "Hovering away must clear hoveredLayer")
         }
+
+        testRunner("Editor - Top Menubar Glued to Top, Modern Icons, Tooltips with Shortcuts & Hover/Active States") {
+            let context = CGContext(
+                data: nil,
+                width: 200,
+                height: 200,
+                bitsPerComponent: 8,
+                bytesPerRow: 800,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let panel = EditorPanel(document: doc)
+
+            // 1. Menubar is glued to the top of the container
+            let container = panel.contentView!
+            assert(panel.toolbarView.superview == container, "toolbarView must be subview of window contentView")
+            assert(panel.scrollView?.superview == container, "scrollView must be subview of window contentView")
+
+            // 2. Modern Toolbar Button Hover and Active States
+            let btn = ModernToolbarButton(systemName: "arrow.up.right", tooltip: "Arrow [A]")
+            assert(btn.tooltipText == "Arrow [A]", "Tooltip must format name and shortcut in square brackets: Arrow [A]")
+            assert(btn.layer?.backgroundColor == nil || btn.layer?.backgroundColor == NSColor.clear.cgColor, "Initial state should be clear")
+
+            // Hover state test
+            btn.isHovered = true
+            assert(btn.layer?.backgroundColor != nil && btn.layer?.backgroundColor != NSColor.clear.cgColor, "Hover state must display hover pill background")
+
+            // Active state test
+            btn.isActive = true
+            assert(btn.layer?.backgroundColor != nil, "Active state must display active background")
+
+            btn.isActive = false
+            btn.isHovered = false
+
+            // 3. Modern Color Button Hover and Active States
+            let colBtn = ModernColorButton(hex: "#FF3B30", name: "Red")
+            assert(colBtn.tooltipText == "Red", "Color button tooltip must show color name")
+            colBtn.isHovered = true
+            colBtn.isActive = true
+            assert(colBtn.isActive, "Color button must support active selection state")
+
+            // 4. Tooltip Window Scheduling
+            let tooltipWin = EditorTooltipWindow.shared
+            tooltipWin.schedule(text: "Arrow [A]", for: btn)
+            tooltipWin.hide()
+        }
+
+        testRunner("Editor - Copy To Clipboard Modern Toast Notification") {
+            let context = CGContext(
+                data: nil,
+                width: 200,
+                height: 200,
+                bitsPerComponent: 8,
+                bytesPerRow: 800,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let panel = EditorPanel(document: doc)
+
+            // 1. Initial state: no toast
+            let container = panel.contentView!
+            assert(container.subviews.first(where: { $0.identifier == EditorToastView.sharedIdentifier }) == nil, "No toast initially")
+
+            // 2. Trigger copy notification toast
+            panel.showCopiedToClipboardToast()
+            let toast = container.subviews.first(where: { $0.identifier == EditorToastView.sharedIdentifier }) as? EditorToastView
+            assert(toast != nil, "showCopiedToClipboardToast must present EditorToastView in contentView")
+            assert(toast?.material == .hudWindow, "Toast must use .hudWindow material matching cmd+q prompt")
+            assert(toast?.layer?.cornerRadius == 16, "Toast corner radius must be 16 matching cmd+q prompt")
+
+            // 3. Repeated copy pulses existing toast without duplicating
+            panel.showCopiedToClipboardToast()
+            let toasts = container.subviews.filter { $0.identifier == EditorToastView.sharedIdentifier }
+            assert(toasts.count == 1, "Repeated copy must not create duplicate toast pills")
+
+            // 4. Trigger image saved toast
+            panel.showImageSavedToast()
+            let savedToast = container.subviews.first(where: { $0.identifier == EditorToastView.sharedIdentifier }) as? EditorToastView
+            assert(savedToast != nil, "showImageSavedToast must present EditorToastView in contentView")
+            assert(savedToast?.material == .hudWindow, "Saved toast must use .hudWindow material")
+            assert(savedToast?.layer?.cornerRadius == 16, "Saved toast corner radius must be 16")
+        }
+
+        testRunner("Editor - UFO X-Com Toolbar Icon & Sleek Resizing Cursors") {
+            // 1. UFO X-Com Pointer Icon on Toolbar
+            let ufoIcon = ModernToolbarButton.ufoPointerIcon
+            assert(ufoIcon.size.width == 18 && ufoIcon.size.height == 18, "UFO pointer toolbar icon must be 18x18")
+            assert(ufoIcon.isTemplate, "UFO pointer icon must be marked template for automatic tinting")
+
+            // 2. Toolbar & Canvas integration
+            let context = CGContext(
+                data: nil,
+                width: 100,
+                height: 100,
+                bitsPerComponent: 8,
+                bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let canvas = EditorCanvasView(document: doc)
+            assert(canvas.document.activeTool == .select, "Default tool is .select")
+
+            let toolbar = EditorToolbarView(canvasView: canvas)
+            let selectBtn = toolbar.toolButtons[.select]
+            assert(selectBtn != nil, "Toolbar must have a .select tool button")
+            assert(toolbar.pinButton?.tooltipText == "Always on Top", "Pin button tooltip must be 'Always on Top'")
+
+            // 4. Sleek Move & Resizing Cursors
+            let sleekMove = NSCursor.sleekMove
+            assert(sleekMove.image.size.width == 28 && sleekMove.image.size.height == 28, "Sleek move must be 28x28")
+            assert(sleekMove.hotSpot == NSPoint(x: 14, y: 14), "Sleek move hot spot must be center (14, 14)")
+
+            let sleekHorizontal = NSCursor.sleekResizeHorizontal
+            assert(sleekHorizontal.hotSpot == NSPoint(x: 14, y: 14), "Sleek horizontal resize hot spot must be (14, 14)")
+
+            let sleekVertical = NSCursor.sleekResizeVertical
+            assert(sleekVertical.hotSpot == NSPoint(x: 14, y: 14), "Sleek vertical resize hot spot must be (14, 14)")
+
+            let sleekNWSE = NSCursor.sleekResizeDiagonalNWSE
+            assert(sleekNWSE.hotSpot == NSPoint(x: 14, y: 14), "Sleek NW-SE diagonal resize hot spot must be (14, 14)")
+
+            let sleekNESW = NSCursor.sleekResizeDiagonalNESW
+            assert(sleekNESW.hotSpot == NSPoint(x: 14, y: 14), "Sleek NE-SW diagonal resize hot spot must be (14, 14)")
+
+            // 5. Aliases
+            assert(NSCursor.fourDirectionalMove === NSCursor.sleekMove, "fourDirectionalMove must alias sleekMove")
+            assert(NSCursor.sleekResizeLeftRight === NSCursor.sleekResizeHorizontal, "sleekResizeLeftRight must alias sleekResizeHorizontal")
+            assert(NSCursor.sleekResizeUpDown === NSCursor.sleekResizeVertical, "sleekResizeUpDown must alias sleekResizeVertical")
+        }
+
+        testRunner("Editor - Responsive Toolbar 3-Dots Overflow Submenu") {
+            let context = CGContext(
+                data: nil,
+                width: 100,
+                height: 100,
+                bitsPerComponent: 8,
+                bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let canvas = EditorCanvasView(document: doc)
+            let toolbar = EditorToolbarView(canvasView: canvas)
+
+            // 1. Wide window (900pt): All tools visible, overflow 3-dots hidden
+            toolbar.frame = NSRect(x: 0, y: 0, width: 900, height: 44)
+            toolbar.layout()
+            assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must be visible when wide")
+            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur must be visible when wide")
+            assert(toolbar.overflowButton?.isHidden == true, "3-dots overflow must be hidden when wide")
+            assert(toolbar.copyButton?.isHidden == false, "Copy must be visible")
+            assert(toolbar.saveButton?.isHidden == false, "Save must be visible")
+            assert(toolbar.pinButton?.isHidden == false, "Pin must be visible")
+
+            // 2. Narrow window (450pt): Rightmost tools hide under 3-dots
+            toolbar.frame = NSRect(x: 0, y: 0, width: 450, height: 44)
+            toolbar.layout()
+
+            // Essential icons strictly preserved
+            assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must ALWAYS remain visible when narrow")
+            assert(toolbar.copyButton?.isHidden == false, "Copy must ALWAYS remain visible when narrow")
+            assert(toolbar.saveButton?.isHidden == false, "Save must ALWAYS remain visible when narrow")
+            assert(toolbar.pinButton?.isHidden == false, "Pin must ALWAYS remain visible when narrow")
+
+            // Rightmost tools collapsed under 3-dots
+            assert(toolbar.toolButtons[.blur]?.isHidden == true, "Rightmost tool (Blur) must hide when narrow")
+            assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible when narrow")
+
+            // 3. Very narrow window (340pt): Still preserves Pointer, Copy, Save, Pin and 3-dots
+            toolbar.frame = NSRect(x: 0, y: 0, width: 340, height: 44)
+            toolbar.layout()
+            assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must remain visible even at 340pt")
+            assert(toolbar.copyButton?.isHidden == false, "Copy must remain visible even at 340pt")
+            assert(toolbar.saveButton?.isHidden == false, "Save must remain visible even at 340pt")
+            assert(toolbar.pinButton?.isHidden == false, "Pin must remain visible even at 340pt")
+            assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible at 340pt")
+
+            // 4. Overflow menu tool activation & dropdown items matching reference image
+            assert(toolbar.dropdownToolDefinitions.count >= 13, "Dropdown must contain full suite of tools from reference image")
+            let titles = toolbar.dropdownToolDefinitions.map { $0.title }
+            assert(titles.contains("Arrow"), "Dropdown must contain Arrow")
+            assert(titles.contains("Text"), "Dropdown must contain Text")
+            assert(titles.contains("Ruler (1 or 2)"), "Dropdown must contain Ruler (1 or 2)")
+            assert(titles.contains("Rectangle"), "Dropdown must contain Rectangle")
+            assert(titles.contains("Backdrop"), "Dropdown must contain Backdrop")
+            assert(titles.contains("Freehand Drawing"), "Dropdown must contain Freehand Drawing")
+            assert(titles.contains("Magnifier"), "Dropdown must contain Magnifier")
+            assert(titles.contains("Add Capture"), "Dropdown must contain Add Capture")
+            assert(titles.contains("Blur/Erase"), "Dropdown must contain Blur/Erase")
+            assert(titles.contains("Highlighter"), "Dropdown must contain Highlighter")
+            assert(titles.contains("Spotlight"), "Dropdown must contain Spotlight")
+            assert(titles.contains("Counter"), "Dropdown must contain Counter")
+            assert(titles.contains("Oval"), "Dropdown must contain Oval")
+
+            canvas.document.activeTool = .blur
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.overflowButton?.isActive == true, "3-dots overflow button must show active state when an overflowed tool is active")
+
+            canvas.document.activeTool = .text
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.overflowButton?.isActive == true, "3-dots overflow button must show active state for Text dropdown tool")
+        }
+
+        testRunner("Editor - Cmd + Mousewheel Zooms In and Out") {
+            let context = CGContext(
+                data: nil,
+                width: 200,
+                height: 200,
+                bitsPerComponent: 8,
+                bytesPerRow: 800,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let panel = EditorPanel(document: doc)
+            guard let sv = panel.scrollView else {
+                fatalError("scrollView must exist in EditorPanel")
+            }
+            sv.magnification = 1.0
+            panel.canvasView.zoomScale = 1.0
+
+            // 1. Scroll Up with Cmd (+deltaY) -> Zooms In
+            let cgScrollUp = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0)!
+            cgScrollUp.flags = .maskCommand
+            let eventUp = NSEvent(cgEvent: cgScrollUp)!
+            panel.canvasView.scrollWheel(with: eventUp)
+
+            assert(sv.magnification > 1.0, "Cmd + mousewheel up must increase magnification (zoomed in)")
+            assert(panel.canvasView.zoomScale == sv.magnification, "canvasView.zoomScale must track sv.magnification")
+            let magAfterZoomIn = sv.magnification
+
+            // 2. Scroll Down with Cmd (-deltaY) -> Zooms Out
+            let cgScrollDown = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: -1, wheel2: 0, wheel3: 0)!
+            cgScrollDown.flags = .maskCommand
+            let eventDown = NSEvent(cgEvent: cgScrollDown)!
+            panel.canvasView.scrollWheel(with: eventDown)
+
+            assert(sv.magnification < magAfterZoomIn, "Cmd + mousewheel down must decrease magnification (zoomed out)")
+            assert(panel.canvasView.zoomScale == sv.magnification, "canvasView.zoomScale must track sv.magnification")
+
+            // 3. Scroll without Cmd -> Does not change magnification
+            let currentMag = sv.magnification
+            let cgScrollNoCmd = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0)!
+            cgScrollNoCmd.flags = []
+            let eventNoCmd = NSEvent(cgEvent: cgScrollNoCmd)!
+            panel.canvasView.scrollWheel(with: eventNoCmd)
+            assert(sv.magnification == currentMag, "Mousewheel without Cmd must NOT alter magnification")
+
+            // 4. Precise scrolling deltas (trackpad / smooth wheel with Cmd)
+            let cgPreciseUp = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 15, wheel2: 0, wheel3: 0)!
+            cgPreciseUp.flags = .maskCommand
+            let eventPreciseUp = NSEvent(cgEvent: cgPreciseUp)!
+            let magBeforePrecise = sv.magnification
+            panel.handleZoomWheel(with: eventPreciseUp)
+            assert(sv.magnification > magBeforePrecise, "Precise Cmd + scrolling must zoom in smoothly")
+
+            // 5. Clamping enforcement: cannot exceed maxMagnification or minMagnification
+            sv.magnification = 9.9
+            panel.handleZoomWheel(with: eventUp)
+            assert(sv.magnification <= sv.maxMagnification, "Zoom must not exceed maxMagnification (10.0)")
+
+            sv.magnification = 0.06
+            panel.handleZoomWheel(with: eventDown)
+            assert(sv.magnification >= sv.minMagnification, "Zoom must not fall below minMagnification (0.05)")
+
+            // 6. Reset to 100% zoom button
+            assert(panel.toolbarView.zoomResetButton != nil, "Toolbar must have zoomResetButton")
+            sv.magnification = 3.25
+            panel.canvasView.zoomScale = 3.25
+            panel.toolbarView.zoomResetButton?.onAction?()
+            assert(sv.magnification == 1.0, "Clicking zoomResetButton must reset magnification to 1.0 (100%)")
+            assert(panel.canvasView.zoomScale == 1.0, "canvasView.zoomScale must be 1.0 after reset")
+            assert(panel.toolbarView.metaLabel.stringValue.contains("(100%)"), "metaLabel must display (100%) after zoom reset")
+
+            panel.close()
+        }
+
+        testRunner("Editor - Right Mouse Button Canvas Panning Direction") {
+            let context = CGContext(
+                data: nil,
+                width: 1000,
+                height: 1000,
+                bitsPerComponent: 8,
+                bytesPerRow: 4000,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let panel = EditorPanel(document: doc)
+            panel.setFrame(NSRect(x: 100, y: 100, width: 600, height: 500), display: true)
+            guard let sv = panel.scrollView, let clipView = sv.contentView as? CenteringClipView else {
+                fatalError("scrollView and CenteringClipView must exist")
+            }
+            sv.magnification = 1.0
+            panel.canvasView.frame = NSRect(x: 0, y: 0, width: 1000, height: 1000)
+            clipView.scroll(to: NSPoint(x: 200, y: 200))
+
+            let startOrigin = clipView.bounds.origin
+
+            // 1. Right Mouse Down at (100, 100)
+            let downEvent = NSEvent.mouseEvent(
+                with: .rightMouseDown,
+                location: NSPoint(x: 100, y: 100),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            panel.canvasView.rightMouseDown(with: downEvent)
+
+            // 2. Drag UP in window coordinates (+Y in macOS window space, e.g. from y=100 to y=150)
+            // Moving mouse UP on screen should drag canvas content UP, increasing clipView scroll origin Y
+            let dragUpEvent = NSEvent.mouseEvent(
+                with: .rightMouseDragged,
+                location: NSPoint(x: 100, y: 150),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 2,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            panel.canvasView.rightMouseDragged(with: dragUpEvent)
+
+            assert(clipView.bounds.origin.y > startOrigin.y, "Dragging mouse UP (+Y) must move clip origin up (> startOrigin.y), not flipped")
+            let originAfterDragUp = clipView.bounds.origin
+
+            // 3. Drag DOWN in window coordinates (-Y in macOS window space, e.g. from y=150 to y=80)
+            // Moving mouse DOWN on screen should drag canvas content DOWN, decreasing clipView scroll origin Y
+            let dragDownEvent = NSEvent.mouseEvent(
+                with: .rightMouseDragged,
+                location: NSPoint(x: 100, y: 80),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 3,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            panel.canvasView.rightMouseDragged(with: dragDownEvent)
+
+            assert(clipView.bounds.origin.y < originAfterDragUp.y, "Dragging mouse DOWN (-Y) must move clip origin down (< originAfterDragUp.y)")
+
+            let upEvent = NSEvent.mouseEvent(
+                with: .rightMouseUp,
+                location: NSPoint(x: 100, y: 80),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 4,
+                clickCount: 1,
+                pressure: 0.0
+            )!
+            panel.canvasView.rightMouseUp(with: upEvent)
+
+            // 4. Zoomed-In Dragging: Moves in physical screen pixels (1:1 pinned under cursor), not multiplied by zoom
+            sv.magnification = 5.0
+            panel.canvasView.zoomScale = 5.0
+            clipView.scroll(to: NSPoint(x: 500, y: 500))
+
+            let ptBeforeZoomDrag = clipView.convert(NSPoint(x: 200, y: 200), from: nil)
+            let downZoom = NSEvent.mouseEvent(
+                with: .rightMouseDown,
+                location: NSPoint(x: 200, y: 200),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 5,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            panel.canvasView.rightMouseDown(with: downZoom)
+
+            let dragZoom = NSEvent.mouseEvent(
+                with: .rightMouseDragged,
+                location: NSPoint(x: 210, y: 190), // 10px right, 10px down in screen pixels
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: 6,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            panel.canvasView.rightMouseDragged(with: dragZoom)
+
+            let ptAfterZoomDrag = clipView.convert(NSPoint(x: 210, y: 190), from: nil)
+            assert(abs(ptBeforeZoomDrag.x - ptAfterZoomDrag.x) < 0.001, "Canvas point must remain pinned under cursor when zoomed in (X)")
+            assert(abs(ptBeforeZoomDrag.y - ptAfterZoomDrag.y) < 0.001, "Canvas point must remain pinned under cursor when zoomed in (Y)")
+
+            panel.close()
+        }
+
+        testRunner("Editor - Window Width Drives Responsive Toolbar Collapsing Without Width Constraint") {
+            let context = CGContext(
+                data: nil,
+                width: 400,
+                height: 400,
+                bitsPerComponent: 8,
+                bytesPerRow: 1600,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let panel = EditorPanel(document: doc)
+
+            // 1. Initial wide window: Toolbar fitting size must not force large minimum width
+            assert(panel.contentView?.fittingSize.width ?? 0 <= 320.0, "Content view fitting size must not force wide window")
+
+            // 2. Window resizing to 900pt (Wide): Window decides width; all tools visible, 3-dots hidden
+            panel.setFrame(NSRect(x: 100, y: 100, width: 900, height: 500), display: true)
+            assert(panel.frame.width == 900.0)
+            assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer visible at 900pt")
+            assert(panel.toolbarView.toolButtons[.blur]?.isHidden == false, "Blur visible at 900pt")
+            assert(panel.toolbarView.overflowButton?.isHidden == true, "3-dots overflow button hidden when all tools fit at 900pt")
+
+            // 3. Window resizing to 600pt (Medium): Window decides width; Blur hides under 3-dots
+            panel.setFrame(NSRect(x: 100, y: 100, width: 600, height: 500), display: true)
+            assert(panel.frame.width == 600.0)
+            assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer visible at 600pt")
+            assert(panel.toolbarView.toolButtons[.blur]?.isHidden == true, "Blur hidden at 600pt")
+            assert(panel.toolbarView.overflowButton?.isHidden == false, "3-dots overflow visible at 600pt")
+
+            // 4. Window resizing to 280pt (Narrow): Menu must NOT force window to stay wider than 280pt
+            panel.setFrame(NSRect(x: 100, y: 100, width: 280, height: 500), display: true)
+            assert(panel.frame.width == 280.0, "Window must successfully shrink to 280pt without toolbar blocking it")
+            assert(panel.toolbarView.bounds.width == 280.0, "Toolbar bounds must match window width")
+
+            // Essential buttons strictly preserved at 280pt
+            assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer strictly visible at 280pt")
+            assert(panel.toolbarView.overflowButton?.isHidden == false, "3-dots overflow strictly visible at 280pt")
+            assert(panel.toolbarView.copyButton?.isHidden == false, "Copy strictly visible at 280pt")
+            assert(panel.toolbarView.saveButton?.isHidden == false, "Save strictly visible at 280pt")
+            assert(panel.toolbarView.pinButton?.isHidden == false, "Pin strictly visible at 280pt")
+
+            // Non-essential tools cleanly collapsed into 3-dots
+            assert(panel.toolbarView.toolButtons[.arrow]?.isHidden == true, "Arrow collapsed at 280pt")
+            assert(panel.toolbarView.toolButtons[.blur]?.isHidden == true, "Blur collapsed at 280pt")
+
+            panel.close()
+        }
+
+        testRunner("Editor - Oval Dragging Edge Margin and 4-Point Axis Resizing") {
+            let oval = EllipseLayer(
+                rect: CGRect(x: 100, y: 100, width: 200, height: 100),
+                fillStyle: .outline
+            )
+
+            // 1. No dragging from middle
+            let center = CGPoint(x: 200, y: 150)
+            assert(!oval.contains(point: center), "Outline oval must NOT contain center point (no dragging from middle)")
+
+            let innerPoint = CGPoint(x: 200, y: 130)
+            assert(!oval.contains(point: innerPoint), "Outline oval must NOT contain interior point away from edge")
+
+            // 2. Dragging allowed only from edge plus margin
+            let topEdge = CGPoint(x: 200, y: 100)
+            assert(oval.contains(point: topEdge), "Outline oval must contain top edge point")
+
+            let topNearEdge = CGPoint(x: 200, y: 96)
+            assert(oval.contains(point: topNearEdge), "Outline oval must contain point within edge margin")
+
+            let farOutside = CGPoint(x: 200, y: 60)
+            assert(!oval.contains(point: farOutside), "Outline oval must not contain point outside margin")
+
+            // Solid oval contains center
+            let solidOval = EllipseLayer(
+                rect: CGRect(x: 100, y: 100, width: 200, height: 100),
+                fillStyle: .solid
+            )
+            assert(solidOval.contains(point: center), "Solid oval must contain center point")
+
+            // 3. Exactly 4 handles: Corner dots removed, only vertical and horizontal handles
+            let handles = oval.getHandlePoints()
+            assert(handles.count == 4, "Oval must have exactly 4 handles (corner dots removed)")
+            assert(handles[0] == CGPoint(x: 200, y: 100), "Handle 0 must be Top-Center")
+            assert(handles[1] == CGPoint(x: 300, y: 150), "Handle 1 must be Right-Center")
+            assert(handles[2] == CGPoint(x: 200, y: 200), "Handle 2 must be Bottom-Center")
+            assert(handles[3] == CGPoint(x: 100, y: 150), "Handle 3 must be Left-Center")
+
+            // 4. Hit testing handles
+            assert(oval.hitTestHandle(point: CGPoint(x: 200, y: 100)) == 0, "Top handle hit tested")
+            assert(oval.hitTestHandle(point: CGPoint(x: 300, y: 150)) == 1, "Right handle hit tested")
+            assert(oval.hitTestHandle(point: CGPoint(x: 200, y: 200)) == 2, "Bottom handle hit tested")
+            assert(oval.hitTestHandle(point: CGPoint(x: 100, y: 150)) == 3, "Left handle hit tested")
+            assert(oval.hitTestHandle(point: CGPoint(x: 100, y: 100)) == nil, "Corner dot hit test must be nil (no corner handle)")
+
+            // 5. Vertical Resizing: Top handle changes height only
+            oval.updateHandle(index: 0, to: CGPoint(x: 180, y: 80))
+            assert(oval.rect.minX == 100 && oval.rect.maxX == 300, "Vertical resize must not alter width or X coordinates")
+            assert(oval.rect.minY == 80 && oval.rect.height == 120, "Vertical resize must update top and height")
+
+            // 6. Horizontal Resizing: Right handle changes width only
+            oval.updateHandle(index: 1, to: CGPoint(x: 350, y: 120))
+            assert(oval.rect.minY == 80 && oval.rect.maxY == 200, "Horizontal resize must not alter height or Y coordinates")
+            assert(oval.rect.maxX == 350 && oval.rect.width == 250, "Horizontal resize must update right and width")
+        }
     }
 }
+
+
 

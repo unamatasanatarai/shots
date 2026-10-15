@@ -65,7 +65,6 @@ public final class ImpactLauncher {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
               let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
             NSLog("ImpactLauncher: Failed to load image from %@", url.path)
-            NSSound.beep()
             return
         }
         openImpact(with: cgImage, title: url.lastPathComponent)
@@ -109,6 +108,5 @@ public final class ImpactLauncher {
             }
         }
         NSLog("ImpactLauncher: test-image.jpg not found")
-        NSSound.beep()
     }
 }

@@ -132,8 +132,6 @@ public final class AutoscrollCaptureCoordinator: NSObject {
                     mode: .region(rect: region.rect, screenFrame: region.screen.frame, displayID: region.displayID)
                 )
                 CaptureManager.shared.processCapturedImage(result)
-            } else {
-                NSSound.beep()
             }
 
             DispatchQueue.main.async {

@@ -26,14 +26,14 @@ public final class EditorPanel: NSPanel {
         let maxW = screen.visibleFrame.width * 0.85
         let maxH = screen.visibleFrame.height * 0.85
 
-        let toolbarWidth: CGFloat = 600.0
+        let defaultWidth: CGFloat = 600.0
         let defaultHeight: CGFloat = 400.0
 
         let imgW = document.activeCanvasBounds.width
         let imgH = document.activeCanvasBounds.height
 
-        let windowW = min(maxW, max(toolbarWidth, imgW + 40.0))
-        let windowH = min(maxH, max(defaultHeight, imgH + 110.0))
+        let windowW = min(maxW, max(defaultWidth, imgW + 40.0))
+        let windowH = min(maxH, max(defaultHeight, imgH + 80.0))
 
         let initialX = screen.visibleFrame.midX - windowW / 2.0
         let initialY = screen.visibleFrame.midY - windowH / 2.0
@@ -47,8 +47,8 @@ public final class EditorPanel: NSPanel {
             defer: false
         )
 
-        // Minimum width is the width of the tool panel; default height is 400
-        minSize = NSSize(width: toolbarWidth, height: defaultHeight)
+        // Minimum window size is compact and responsive (window width controls toolbar tools collapse)
+        minSize = NSSize(width: 280.0, height: 200.0)
 
         // Normal window level so standard Cmd-Tab app switching and window ordering works as expected
         level = .normal
@@ -62,6 +62,30 @@ public final class EditorPanel: NSPanel {
 
         setupContentView()
         setupToolbarActions()
+
+        toolbarView.layoutSubtreeIfNeeded()
+        toolbarView.updateResponsiveOverflow()
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification,
+            object: self,
+            queue: .main
+        ) { [weak self] _ in
+            self?.toolbarView.layoutSubtreeIfNeeded()
+            self?.toolbarView.updateResponsiveOverflow()
+        }
+    }
+
+    override public func setFrame(_ frameRect: NSRect, display displayFlag: Bool) {
+        super.setFrame(frameRect, display: displayFlag)
+        toolbarView.layoutSubtreeIfNeeded()
+        toolbarView.updateResponsiveOverflow()
+    }
+
+    override public func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
+        super.setFrame(frameRect, display: displayFlag, animate: animateFlag)
+        toolbarView.layoutSubtreeIfNeeded()
+        toolbarView.updateResponsiveOverflow()
     }
 
     override public var canBecomeKey: Bool { true }
@@ -193,8 +217,12 @@ public final class EditorPanel: NSPanel {
         guard let container = contentView else { return }
         container.wantsLayer = true
 
-        // 1. Scroll View holding the elastic canvas with auto-centering clip view
-        let scrollView = NSScrollView()
+        // 1. Top Menubar glued to top of app
+        toolbarView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(toolbarView)
+
+        // 2. Scroll View holding the elastic canvas (takes whatever is left of the space)
+        let scrollView = EditorScrollView()
         let clipView = CenteringClipView()
         scrollView.contentView = clipView
         scrollView.allowsMagnification = true
@@ -208,10 +236,6 @@ public final class EditorPanel: NSPanel {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(scrollView)
         self.scrollView = scrollView
-
-        // 2. Floating Toolbar at the bottom
-        toolbarView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(toolbarView)
 
         // Resolve version and build number
         let versionStr = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
@@ -232,49 +256,22 @@ public final class EditorPanel: NSPanel {
             return "1"
         }()
 
-        self.title = "\(title) — Build \(buildStr)"
-
-        // 3. Header Info Bar at the top (Title + Build number on left, dimensions/zoom on right)
-        let headerView = NSView()
-        headerView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(headerView)
-
-        let titleLabel = NSTextField(labelWithString: "Impact v\(versionStr) (Build \(buildStr))")
-        titleLabel.font = NSFont.systemFont(ofSize: 11.0, weight: .semibold)
-        titleLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        headerView.addSubview(titleLabel)
-
-        let meta = NSTextField(labelWithString: "\(Int(document.originalImageBounds.width)) × \(Int(document.originalImageBounds.height)) px")
-        meta.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .medium)
-        meta.textColor = NSColor(white: 0.7, alpha: 1.0)
-        meta.translatesAutoresizingMaskIntoConstraints = false
-        headerView.addSubview(meta)
-        self.metaLabel = meta
+        self.title = "Impact v\(versionStr) (Build \(buildStr))"
+        self.metaLabel = toolbarView.metaLabel
 
         NSLayoutConstraint.activate([
-            headerView.topAnchor.constraint(equalTo: container.topAnchor),
-            headerView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            headerView.heightAnchor.constraint(equalToConstant: 32),
+            toolbarView.topAnchor.constraint(equalTo: container.topAnchor),
+            toolbarView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            toolbarView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            toolbarView.heightAnchor.constraint(equalToConstant: 44),
 
-            // Left padding 76px clears the standard macOS traffic lights (close/minimize/zoom)
-            titleLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 76),
-
-            meta.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            meta.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
-
-            scrollView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: toolbarView.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            toolbarView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            toolbarView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
-            toolbarView.widthAnchor.constraint(equalToConstant: 600),
-            toolbarView.heightAnchor.constraint(equalToConstant: 48)
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
+
+        updateMetaLabel()
 
         document.onBoundsChanged = { [weak self, weak scrollView] bounds in
             guard let self = self, let sv = scrollView else { return }
@@ -338,7 +335,7 @@ public final class EditorPanel: NSPanel {
 
     public func updateMetaLabel() {
         let zoomPercent = Int(round((scrollView?.magnification ?? 1.0) * 100))
-        metaLabel?.stringValue = "\(Int(document.activeCanvasBounds.width)) × \(Int(document.activeCanvasBounds.height)) px  (\(zoomPercent)%)"
+        toolbarView.updateMeta(bounds: document.activeCanvasBounds, zoomPercent: zoomPercent)
     }
 
     private func setupToolbarActions() {
@@ -356,24 +353,90 @@ public final class EditorPanel: NSPanel {
             self?.zoomOut()
         }
 
+        toolbarView.onZoomResetRequested = { [weak self] in
+            self?.resetZoom()
+        }
+
         toolbarView.onSaveRequested = { [weak self] in
             guard let self = self else { return }
             if let savedURL = self.saveToNextNumberedFile() {
-                NSSound(named: "Tink")?.play()
                 NSLog("Impact: Saved composition to %@", savedURL.path)
+                self.showImageSavedToast()
             }
             // Explicitly keep the editor panel open and active
             self.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
 
-        toolbarView.onCopyRequested = {
-            NSSound(named: "Tink")?.play()
+        toolbarView.onCopyRequested = { [weak self] in
+            self?.showCopiedToClipboardToast()
         }
+    }
+
+    public func showCopiedToClipboardToast() {
+        guard let container = contentView else { return }
+        EditorToastView.show(in: container, below: toolbarView, text: "Copied to Clipboard")
+    }
+
+    public func showImageSavedToast() {
+        guard let container = contentView else { return }
+        EditorToastView.show(in: container, below: toolbarView, text: "Image Saved")
     }
 
     override public func magnify(with event: NSEvent) {
         canvasView.magnify(with: event)
+    }
+
+    override public func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            handleZoomWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
+    public func handleZoomWheel(with event: NSEvent) {
+        guard let sv = scrollView else { return }
+
+        let delta: CGFloat
+        if event.hasPreciseScrollingDeltas {
+            delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.scrollingDeltaX
+        } else {
+            delta = event.deltaY != 0 ? event.deltaY : event.scrollingDeltaY
+        }
+        guard delta != 0 else { return }
+
+        let factor: CGFloat
+        if event.hasPreciseScrollingDeltas {
+            factor = pow(1.008, delta)
+        } else {
+            let steps = event.deltaY != 0 ? event.deltaY : (delta > 0 ? 1.0 : -1.0)
+            factor = pow(1.15, steps)
+        }
+
+        let oldMag = sv.magnification
+        let newMag = max(sv.minMagnification, min(sv.maxMagnification, oldMag * factor))
+        guard newMag != oldMag else { return }
+
+        let clipBounds = sv.contentView.bounds
+        let location = event.locationInWindow
+        let clipPoint = sv.contentView.convert(location, from: nil)
+        let anchor = clipBounds.contains(clipPoint) ? clipPoint : NSPoint(x: clipBounds.midX, y: clipBounds.midY)
+
+        sv.setMagnification(newMag, centeredAt: anchor)
+        canvasView.zoomScale = sv.magnification
+        updateMetaLabel()
+    }
+}
+
+/// An NSScrollView subclass that forwards Cmd + mousewheel events to zoom handling
+final class EditorScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            (window as? EditorPanel)?.handleZoomWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
     }
 }
 
@@ -397,5 +460,13 @@ final class CenteringClipView: NSClipView {
         } else {
             super.magnify(with: event)
         }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            (window as? EditorPanel)?.handleZoomWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
     }
 }

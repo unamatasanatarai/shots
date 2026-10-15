@@ -45,7 +45,6 @@ public final class ImpactAppCoordinator {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
               let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
             NSLog("ImpactAppCoordinator: Failed to load image from %@", url.path)
-            NSSound.beep()
             return
         }
         openEditor(with: cgImage, title: url.lastPathComponent, sourceFileURL: url)
@@ -83,7 +82,6 @@ public final class ImpactAppCoordinator {
             }
         }
         NSLog("ImpactAppCoordinator: test-image.jpg not found")
-        NSSound.beep()
     }
 
     public func closeEditor() {

@@ -228,20 +228,37 @@ public final class EllipseLayer: AnnotationLayer {
     }
 
     public func contains(point: CGPoint) -> Bool {
-        let pad = strokeWidth / 2.0 + 6.0
-        let rx = rect.width / 2.0 + pad
-        let ry = rect.height / 2.0 + pad
-        guard rx > 0 && ry > 0 else { return false }
-        let cx = rect.midX
-        let cy = rect.midY
-        let val = pow((point.x - cx) / rx, 2) + pow((point.y - cy) / ry, 2)
-        return val <= 1.0
+        let stdRect = rect.standardized
+        guard stdRect.width > 0 && stdRect.height > 0 else { return false }
+        let cx = stdRect.midX
+        let cy = stdRect.midY
+
+        if fillStyle == .solid || fillStyle == .striped {
+            let rx = stdRect.width / 2.0
+            let ry = stdRect.height / 2.0
+            return (pow((point.x - cx) / rx, 2) + pow((point.y - cy) / ry, 2)) <= 1.0
+        }
+
+        // Outline oval: drag only from edge plus margin (catchment), never from the middle
+        let catchment: CGFloat = max(10.0, strokeWidth + 6.0)
+        let rxOuter = stdRect.width / 2.0 + catchment
+        let ryOuter = stdRect.height / 2.0 + catchment
+        let rxInner = stdRect.width / 2.0 - catchment
+        let ryInner = stdRect.height / 2.0 - catchment
+
+        let valOuter = pow((point.x - cx) / rxOuter, 2) + pow((point.y - cy) / ryOuter, 2)
+        if rxInner <= 0 || ryInner <= 0 {
+            return valOuter <= 1.0
+        }
+        let valInner = pow((point.x - cx) / rxInner, 2) + pow((point.y - cy) / ryInner, 2)
+        return valOuter <= 1.0 && valInner > 1.0
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
         let handles = getHandlePoints()
+        let hitRadius = max(radius, 10.0)
         for (i, hp) in handles.enumerated() {
-            if hypot(point.x - hp.x, point.y - hp.y) <= radius {
+            if hypot(point.x - hp.x, point.y - hp.y) <= hitRadius {
                 return i
             }
         }
@@ -252,14 +269,10 @@ public final class EllipseLayer: AnnotationLayer {
         let minX = rect.minX, midX = rect.midX, maxX = rect.maxX
         let minY = rect.minY, midY = rect.midY, maxY = rect.maxY
         return [
-            CGPoint(x: minX, y: minY),
-            CGPoint(x: midX, y: minY),
-            CGPoint(x: maxX, y: minY),
-            CGPoint(x: maxX, y: midY),
-            CGPoint(x: maxX, y: maxY),
-            CGPoint(x: midX, y: maxY),
-            CGPoint(x: minX, y: maxY),
-            CGPoint(x: minX, y: midY)
+            CGPoint(x: midX, y: minY), // 0: Top-Center (vertical resize)
+            CGPoint(x: maxX, y: midY), // 1: Right-Center (horizontal resize)
+            CGPoint(x: midX, y: maxY), // 2: Bottom-Center (vertical resize)
+            CGPoint(x: minX, y: midY)  // 3: Left-Center (horizontal resize)
         ]
     }
 
@@ -275,30 +288,47 @@ public final class EllipseLayer: AnnotationLayer {
         var maxY = rect.maxY
 
         switch index {
-        case 0: minX = point.x; minY = point.y
-        case 1: minY = point.y
-        case 2: maxX = point.x; minY = point.y
-        case 3: maxX = point.x
-        case 4: maxX = point.x; maxY = point.y
-        case 5: maxY = point.y
-        case 6: minX = point.x; maxY = point.y
-        case 7: minX = point.x
-        default: break
-        }
-
-        var w = max(abs(maxX - minX), 4.0)
-        var h = max(abs(maxY - minY), 4.0)
-        if isPerfectCircle {
-            let side = max(w, h)
-            w = side
-            h = side
+        case 0: // 0: Top-Center: vertical
+            minY = point.y
+            if isPerfectCircle {
+                let h = abs(maxY - minY)
+                let cx = (minX + maxX) / 2.0
+                minX = cx - h / 2.0
+                maxX = cx + h / 2.0
+            }
+        case 1: // 1: Right-Center: horizontal
+            maxX = point.x
+            if isPerfectCircle {
+                let w = abs(maxX - minX)
+                let cy = (minY + maxY) / 2.0
+                minY = cy - w / 2.0
+                maxY = cy + w / 2.0
+            }
+        case 2: // 2: Bottom-Center: vertical
+            maxY = point.y
+            if isPerfectCircle {
+                let h = abs(maxY - minY)
+                let cx = (minX + maxX) / 2.0
+                minX = cx - h / 2.0
+                maxX = cx + h / 2.0
+            }
+        case 3: // 3: Left-Center: horizontal
+            minX = point.x
+            if isPerfectCircle {
+                let w = abs(maxX - minX)
+                let cy = (minY + maxY) / 2.0
+                minY = cy - w / 2.0
+                maxY = cy + w / 2.0
+            }
+        default:
+            break
         }
 
         rect = CGRect(
             x: min(minX, maxX),
             y: min(minY, maxY),
-            width: w,
-            height: h
+            width: max(abs(maxX - minX), 4.0),
+            height: max(abs(maxY - minY), 4.0)
         )
     }
 

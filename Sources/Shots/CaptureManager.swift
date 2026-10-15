@@ -67,13 +67,10 @@ public final class CaptureManager {
                         RecognitionService.shared.copyPayloadToPasteboard(recognized)
                         OCRNotificationController.shared.show(snippet: recognized.payload)
                         NSLog("OCR Recognition succeeded (%@): %@", recognized.type.rawValue, recognized.payload)
-                    } else {
-                        NSSound.beep()
                     }
                     completion?(item)
                 case .failure(let err):
                     NSLog("OCR Recognition error: %@", err.localizedDescription)
-                    NSSound.beep()
                     completion?(nil)
                 }
             }
@@ -119,7 +116,6 @@ public final class CaptureManager {
 
     public func repeatPreviousScreenshot() {
         guard let last = lastCapture else {
-            NSSound.beep()
             return
         }
 
@@ -141,7 +137,6 @@ public final class CaptureManager {
         case .region(let selRect, let screenFrame, let displayID):
             guard let fullImage = CGDisplayCreateImage(displayID) else {
                 NSLog("Failed to capture display for repeated region")
-                NSSound.beep()
                 return
             }
 
@@ -185,7 +180,6 @@ public final class CaptureManager {
         let displayID = CGMainDisplayID()
         guard let cgImage = CGDisplayCreateImage(displayID) else {
             NSLog("Fallback CGDisplayCreateImage failed for main display ID")
-            NSSound.beep()
             return
         }
         processCapturedImage(cgImage)

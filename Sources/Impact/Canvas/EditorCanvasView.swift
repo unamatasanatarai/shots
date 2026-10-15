@@ -332,6 +332,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             activeHandleIndex = handleIndex
             if let rectLayer = selected as? RectangleLayer {
                 initialRectForDrag = rectLayer.rect
+            } else if let ellipseLayer = selected as? EllipseLayer {
+                initialRectForDrag = ellipseLayer.rect
             } else if let filter = selected as? FilterLayer {
                 let rectIdx = handleIndex / 8
                 filter.selectedRectIndex = rectIdx
@@ -353,6 +355,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 activeHandleIndex = handleIndex
                 if let rectLayer = layer as? RectangleLayer {
                     initialRectForDrag = rectLayer.rect
+                } else if let ellipseLayer = layer as? EllipseLayer {
+                    initialRectForDrag = ellipseLayer.rect
                 } else if let filter = layer as? FilterLayer {
                     let rectIdx = handleIndex / 8
                     filter.selectedRectIndex = rectIdx
@@ -560,6 +564,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             )
             activeCreatingLayer = blur
 
+        case .bezel:
+            let bezel = BezelLayer(targetBounds: CGRect(x: point.x - 60, y: point.y - 40, width: 120, height: 80))
+            document.addLayer(bezel)
+
         default:
             break
         }
@@ -618,6 +626,64 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         let newY = min(point.y, oppY)
                         let newH = max(4.0, abs(point.y - oppY))
                         rectLayer.rect = CGRect(x: newX, y: newY, width: newW, height: newH)
+                    }
+                } else if let ellipseLayer = dragging as? EllipseLayer, let initRect = initialRectForDrag {
+                    // Ellipse handles:
+                    // 0: Top-Center (vertical resize)
+                    // 1: Right-Center (horizontal resize)
+                    // 2: Bottom-Center (vertical resize)
+                    // 3: Left-Center (horizontal resize)
+                    switch handleIdx {
+                    case 0: // Top edge: vertical resize
+                        let oppY = initRect.maxY
+                        let newY = min(point.y, oppY)
+                        let newH = max(4.0, abs(point.y - oppY))
+                        var newRect = CGRect(x: initRect.minX, y: newY, width: initRect.width, height: newH)
+                        if ellipseLayer.isPerfectCircle || isShiftPressed {
+                            let side = newH
+                            let cx = initRect.midX
+                            newRect = CGRect(x: cx - side / 2.0, y: newY, width: side, height: side)
+                        }
+                        ellipseLayer.rect = newRect
+
+                    case 1: // Right edge: horizontal resize
+                        let oppX = initRect.minX
+                        let newX = min(point.x, oppX)
+                        let newW = max(4.0, abs(point.x - oppX))
+                        var newRect = CGRect(x: newX, y: initRect.minY, width: newW, height: initRect.height)
+                        if ellipseLayer.isPerfectCircle || isShiftPressed {
+                            let side = newW
+                            let cy = initRect.midY
+                            newRect = CGRect(x: newX, y: cy - side / 2.0, width: side, height: side)
+                        }
+                        ellipseLayer.rect = newRect
+
+                    case 2: // Bottom edge: vertical resize
+                        let oppY = initRect.minY
+                        let newY = min(point.y, oppY)
+                        let newH = max(4.0, abs(point.y - oppY))
+                        var newRect = CGRect(x: initRect.minX, y: newY, width: initRect.width, height: newH)
+                        if ellipseLayer.isPerfectCircle || isShiftPressed {
+                            let side = newH
+                            let cx = initRect.midX
+                            newRect = CGRect(x: cx - side / 2.0, y: newY, width: side, height: side)
+                        }
+                        ellipseLayer.rect = newRect
+
+                    case 3: // Left edge: horizontal resize
+                        let oppX = initRect.maxX
+                        let newX = min(point.x, oppX)
+                        let newW = max(4.0, abs(point.x - oppX))
+                        var newRect = CGRect(x: newX, y: initRect.minY, width: newW, height: initRect.height)
+                        if ellipseLayer.isPerfectCircle || isShiftPressed {
+                            let side = newW
+                            let cy = initRect.midY
+                            newRect = CGRect(x: newX, y: cy - side / 2.0, width: side, height: side)
+                        }
+                        ellipseLayer.rect = newRect
+
+                    default:
+                        ellipseLayer.updateHandle(index: handleIdx, to: point)
                     }
                 } else if let filter = dragging as? FilterLayer, let initRect = initialRectForDrag {
                     let rectIdx = handleIdx / 8
@@ -824,15 +890,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     override public func rightMouseDragged(with event: NSEvent) {
         guard isRightPanning, let clipView = enclosingScrollView?.contentView else { return }
         let currentWindowPoint = event.locationInWindow
-        let dx = currentWindowPoint.x - rightPanStartWindowPoint.x
-        let dy = currentWindowPoint.y - rightPanStartWindowPoint.y
+
+        // Convert window points into clipView document coordinates, which automatically
+        // divides by magnification and handles the flipped coordinate system, ensuring
+        // the canvas moves 1:1 with screen pixels regardless of zoom level.
+        let p1 = clipView.convert(rightPanStartWindowPoint, from: nil)
+        let p2 = clipView.convert(currentWindowPoint, from: nil)
+        let deltaX = p2.x - p1.x
+        let deltaY = p2.y - p1.y
         rightPanStartWindowPoint = currentWindowPoint
 
-        // Dragging right moves view content right (i.e. scroll origin x decreases)
-        // Dragging down in window coordinates moves view content down (i.e. scroll origin y decreases)
         var newOrigin = clipView.bounds.origin
-        newOrigin.x -= dx
-        newOrigin.y -= dy
+        newOrigin.x -= deltaX
+        newOrigin.y -= deltaY
 
         clipView.scroll(to: clipView.constrainBoundsRect(NSRect(origin: newOrigin, size: clipView.bounds.size)).origin)
         enclosingScrollView?.reflectScrolledClipView(clipView)
@@ -1049,9 +1119,70 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         context.restoreGState()
     }
 
+    override public func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(visibleRect, cursor: NSCursor.arrow)
+    }
+
     override public func cursorUpdate(with event: NSEvent) {
         let point = canvasPoint(from: event)
         updateCursorForPoint(point)
+    }
+
+    private func cursorForHandle(on layer: AnnotationLayer, handleIndex: Int) -> NSCursor {
+        if layer is RectangleLayer || layer is FilterLayer {
+            let subIdx = handleIndex % 8
+            switch subIdx {
+            case 0, 4:
+                return NSCursor.sleekResizeDiagonalNWSE
+            case 2, 6:
+                return NSCursor.sleekResizeDiagonalNESW
+            case 1, 5:
+                return NSCursor.sleekResizeUpDown
+            case 3, 7:
+                return NSCursor.sleekResizeLeftRight
+            default:
+                return NSCursor.sleekResizeDiagonalNWSE
+            }
+        }
+        if layer is EllipseLayer {
+            switch handleIndex {
+            case 0, 2: // Top and Bottom handles: vertical resize
+                return NSCursor.sleekResizeUpDown
+            case 1, 3: // Right and Left handles: horizontal resize
+                return NSCursor.sleekResizeLeftRight
+            default:
+                return NSCursor.sleekResizeUpDown
+            }
+        }
+        if let line = layer as? LineLayer {
+            return directionalResizeCursor(from: line.start, to: line.end)
+        }
+        if let arrow = layer as? ArrowLayer {
+            return directionalResizeCursor(from: arrow.start, to: arrow.end)
+        }
+        if let dim = layer as? DimensionLayer {
+            return directionalResizeCursor(from: dim.start, to: dim.end)
+        }
+        return NSCursor.sleekMove
+    }
+
+    private func directionalResizeCursor(from: CGPoint, to: CGPoint) -> NSCursor {
+        let dx = to.x - from.x
+        let dy = to.y - from.y
+        let angle = atan2(dy, dx)
+        var deg = angle * 180.0 / .pi
+        while deg < -90 { deg += 180 }
+        while deg > 90 { deg -= 180 }
+        if deg > -22.5 && deg <= 22.5 {
+            return NSCursor.sleekResizeLeftRight
+        } else if deg > 67.5 || deg <= -67.5 {
+            return NSCursor.sleekResizeUpDown
+        } else if deg > 22.5 && deg <= 67.5 {
+            return NSCursor.sleekResizeDiagonalNWSE
+        } else {
+            return NSCursor.sleekResizeDiagonalNESW
+        }
     }
 
     private func updateCursorForPoint(_ point: CGPoint) {
@@ -1060,75 +1191,21 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return
         }
 
-        // While actively dragging a layer's body, maintain the 4-directional move cursor
+        // While actively dragging a layer's body, maintain the sleek 4-directional move cursor
         if activeDraggingLayer != nil && activeHandleIndex == nil {
-            NSCursor.fourDirectionalMove.set()
+            NSCursor.sleekMove.set()
             return
         }
 
-        // If dragging or hovering over a handle, use appropriate handle cursor
+        // If dragging or hovering over a handle, use appropriate sleek handle cursor
         if let selected = document.getSelectedLayers().first,
            let handleIndex = selected.hitTestHandle(point: point) {
-            if selected is RectangleLayer {
-                switch handleIndex {
-                case 1, 5:
-                    NSCursor.resizeUpDown.set()
-                    return
-                case 3, 7:
-                    NSCursor.resizeLeftRight.set()
-                    return
-                default:
-                    NSCursor.crosshair.set()
-                    return
-                }
-            } else if selected is FilterLayer {
-                let subIdx = handleIndex % 8
-                switch subIdx {
-                case 1, 5:
-                    NSCursor.resizeUpDown.set()
-                    return
-                case 3, 7:
-                    NSCursor.resizeLeftRight.set()
-                    return
-                default:
-                    NSCursor.crosshair.set()
-                    return
-                }
-            } else {
-                NSCursor.crosshair.set()
-                return
-            }
+            cursorForHandle(on: selected, handleIndex: handleIndex).set()
+            return
         }
         if let hovered = hoveredLayer, let handleIndex = hovered.hitTestHandle(point: point) {
-            if hovered is RectangleLayer {
-                switch handleIndex {
-                case 1, 5:
-                    NSCursor.resizeUpDown.set()
-                    return
-                case 3, 7:
-                    NSCursor.resizeLeftRight.set()
-                    return
-                default:
-                    NSCursor.crosshair.set()
-                    return
-                }
-            } else if hovered is FilterLayer {
-                let subIdx = handleIndex % 8
-                switch subIdx {
-                case 1, 5:
-                    NSCursor.resizeUpDown.set()
-                    return
-                case 3, 7:
-                    NSCursor.resizeLeftRight.set()
-                    return
-                default:
-                    NSCursor.crosshair.set()
-                    return
-                }
-            } else {
-                NSCursor.crosshair.set()
-                return
-            }
+            cursorForHandle(on: hovered, handleIndex: handleIndex).set()
+            return
         }
 
         // When in select mode, check if hovering over any movable layer
@@ -1137,7 +1214,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 layer.isVisible && layer.contains(point: point)
             }
             if hitsMovableLayer {
-                NSCursor.fourDirectionalMove.set()
+                NSCursor.sleekMove.set()
                 return
             }
         }
@@ -1147,7 +1224,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             layer.isVisible && layer.contains(point: point)
         }
         if hitsSelectedLayer {
-            NSCursor.fourDirectionalMove.set()
+            NSCursor.sleekMove.set()
             return
         }
 
@@ -1242,6 +1319,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "c" {
             copyCompositionToClipboard()
+            (window as? EditorPanel)?.showCopiedToClipboardToast()
         } else if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "=" || event.charactersIgnoringModifiers == "+") {
             (window as? EditorPanel)?.zoomIn()
         } else if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "-" || event.charactersIgnoringModifiers == "_") {
@@ -1286,6 +1364,30 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .blur
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
+            } else if key == "t" {
+                document.activeTool = .text
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "m" {
+                document.activeTool = .magnifier
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "k" {
+                document.activeTool = .bezel
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "o" {
+                document.activeTool = .ellipse
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "d" {
+                document.activeTool = .pen
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "1" || key == "2" {
+                document.activeTool = .dimension
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
             } else {
                 super.keyDown(with: event)
             }
@@ -1316,6 +1418,55 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         } else {
             super.magnify(with: event)
         }
+    }
+
+    // MARK: - macOS Scroll Wheel (Cmd + Scroll to Zoom)
+
+    override public func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            handleZoomWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
+    public func handleZoomWheel(with event: NSEvent) {
+        if let panel = window as? EditorPanel {
+            panel.handleZoomWheel(with: event)
+        } else if let sv = enclosingScrollView {
+            handleZoomWheelDirect(with: event, scrollView: sv)
+        }
+    }
+
+    private func handleZoomWheelDirect(with event: NSEvent, scrollView sv: NSScrollView) {
+        let delta: CGFloat
+        if event.hasPreciseScrollingDeltas {
+            delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.scrollingDeltaX
+        } else {
+            delta = event.deltaY != 0 ? event.deltaY : event.scrollingDeltaY
+        }
+        guard delta != 0 else { return }
+
+        let factor: CGFloat
+        if event.hasPreciseScrollingDeltas {
+            factor = pow(1.008, delta)
+        } else {
+            let steps = event.deltaY != 0 ? event.deltaY : (delta > 0 ? 1.0 : -1.0)
+            factor = pow(1.15, steps)
+        }
+
+        let oldMag = sv.magnification
+        let newMag = max(sv.minMagnification, min(sv.maxMagnification, oldMag * factor))
+        guard newMag != oldMag else { return }
+
+        let clipBounds = sv.contentView.bounds
+        let location = event.locationInWindow
+        let clipPoint = sv.contentView.convert(location, from: nil)
+        let anchor = clipBounds.contains(clipPoint) ? clipPoint : NSPoint(x: clipBounds.midX, y: clipBounds.midY)
+
+        sv.setMagnification(newMag, centeredAt: anchor)
+        zoomScale = sv.magnification
+        (window as? EditorPanel)?.updateMetaLabel()
     }
 
     // MARK: - Clipboard & Drag Export (Section 1 & 4)
