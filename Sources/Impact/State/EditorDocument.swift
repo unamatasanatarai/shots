@@ -13,6 +13,12 @@ public final class EditorDocument {
     public var activeTool: LayerType = .select {
         didSet {
             if activeTool != oldValue {
+                if oldValue == .spotlight {
+                    cleanupEmptySpotlight()
+                }
+                if activeTool == .spotlight {
+                    ensureSpotlightOverlay()
+                }
                 selectedLayerIDs.removeAll()
                 onNeedsDisplay?()
             }
@@ -22,6 +28,27 @@ public final class EditorDocument {
     public var activeStrokeWidth: CGFloat = 4.0
     public var activeFontSize: CGFloat = 16.0
     public var counterStep: Int = 1
+
+    /// Ensures a single unified spotlight overlay layer exists in the document
+    public func ensureSpotlightOverlay() {
+        if let existing = layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
+            selectedLayerIDs = [existing.id]
+            return
+        }
+        let overlay = FilterLayer(rects: [], filterMode: .spotlight)
+        layers.insert(overlay, at: 0)
+        selectedLayerIDs = [overlay.id]
+    }
+
+    /// Removes an empty spotlight overlay if no holes were created
+    public func cleanupEmptySpotlight() {
+        layers.removeAll { layer in
+            if let filter = layer as? FilterLayer, filter.filterMode == .spotlight {
+                return filter.rects.isEmpty
+            }
+            return false
+        }
+    }
 
     /// Computes the next integer in sequence by reading highest existing counter value
     public func nextCounterValue() -> Int {
@@ -68,7 +95,23 @@ public final class EditorDocument {
     public func removeSelectedLayers() {
         guard !selectedLayerIDs.isEmpty else { return }
         saveSnapshot()
-        layers.removeAll { selectedLayerIDs.contains($0.id) }
+        for id in selectedLayerIDs {
+            if let spotlight = layers.first(where: { $0.id == id }) as? FilterLayer, spotlight.filterMode == .spotlight {
+                if spotlight.rects.count > 1, let idx = spotlight.selectedRectIndex, idx < spotlight.rects.count {
+                    spotlight.rects.remove(at: idx)
+                    spotlight.selectedRectIndex = max(0, spotlight.rects.count - 1)
+                    continue
+                }
+            }
+            layers.removeAll { $0.id == id }
+        }
+        // When the last spotlight rectangle is removed, the overlay disappears
+        layers.removeAll { layer in
+            if let filter = layer as? FilterLayer, filter.filterMode == .spotlight {
+                return filter.rects.isEmpty
+            }
+            return false
+        }
         selectedLayerIDs.removeAll()
         computeElasticBounds()
         onNeedsDisplay?()

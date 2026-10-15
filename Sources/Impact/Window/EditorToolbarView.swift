@@ -52,13 +52,14 @@ public final class EditorToolbarView: NSVisualEffectView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
 
-        // Tool buttons: Pointer (V), Arrow (A), Rectangle (R), Counter (C), Highlighter (H)
+        // Tool buttons: Pointer (V), Arrow (A), Rectangle (R), Counter (C), Highlighter (H), Spotlight (S)
         let tools: [(LayerType, String, String)] = [
             (.select, "cursorarrow", "Pointer (V)"),
             (.arrow, "arrow.up.right", "Arrow (A)"),
             (.rectangle, "rectangle", "Rectangle (R)"),
             (.counter, "1.circle", "Counter (C)"),
-            (.highlighter, "highlighter", "Highlighter (H)")
+            (.highlighter, "highlighter", "Highlighter (H)"),
+            (.spotlight, "camera.metering.spot", "Spotlight (S)")
         ]
 
         for (type, icon, tooltip) in tools {
@@ -140,7 +141,11 @@ public final class EditorToolbarView: NSVisualEffectView {
         btn.isBordered = false
         btn.toolTip = tooltip
         if #available(macOS 11.0, *) {
-            btn.image = NSImage(systemSymbolName: systemName, accessibilityDescription: tooltip)
+            var img = NSImage(systemSymbolName: systemName, accessibilityDescription: tooltip)
+            if img == nil {
+                img = NSImage(systemSymbolName: "viewfinder", accessibilityDescription: tooltip)
+            }
+            btn.image = img
         } else {
             btn.title = tooltip
         }

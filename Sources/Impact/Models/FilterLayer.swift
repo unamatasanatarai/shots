@@ -16,6 +16,7 @@ public final class FilterLayer: AnnotationLayer {
     public var intensity: CGFloat
     public var isTextOnlyMode: Bool = false // Vision OCR toggle
     public var detectedTextRects: [CGRect] = []
+    public var selectedRectIndex: Int? = nil
 
     public init(
         id: UUID = UUID(),
@@ -23,6 +24,7 @@ public final class FilterLayer: AnnotationLayer {
         filterMode: FilterMode = .spotlight,
         intensity: CGFloat = 16.0,
         isTextOnlyMode: Bool = false,
+        selectedRectIndex: Int? = nil,
         zIndex: Int = -10 // Destructive / Masking layers drawn under vector annotations
     ) {
         self.id = id
@@ -30,6 +32,7 @@ public final class FilterLayer: AnnotationLayer {
         self.filterMode = filterMode
         self.intensity = intensity
         self.isTextOnlyMode = isTextOnlyMode
+        self.selectedRectIndex = selectedRectIndex
         self.zIndex = zIndex
     }
 
@@ -43,71 +46,168 @@ public final class FilterLayer: AnnotationLayer {
     }
 
     public func contains(point: CGPoint) -> Bool {
+        if filterMode == .spotlight {
+            return rectIndex(at: point) != nil
+        }
         return rects.contains { $0.contains(point) }
     }
 
+    /// Returns the index of the spotlight hole whose boundary catchment area (10px) contains the point.
+    /// The hollow center returns nil to prevent moving by grabbing the center.
+    public func rectIndex(at point: CGPoint) -> Int? {
+        let catchment: CGFloat = 10.0
+        for (idx, r) in rects.enumerated().reversed() {
+            let outer = r.standardized.insetBy(dx: -catchment, dy: -catchment)
+            let inner = r.standardized.insetBy(dx: catchment, dy: catchment)
+            if inner.width <= 0 || inner.height <= 0 {
+                if outer.contains(point) { return idx }
+            } else {
+                if outer.contains(point) && !inner.contains(point) {
+                    return idx
+                }
+            }
+        }
+        return nil
+    }
+
+    /// 8 handle points per rectangle for spotlight (matching RectangleLayer rules)
     public func getHandlePoints() -> [CGPoint] {
         var points: [CGPoint] = []
         for r in rects {
-            points.append(CGPoint(x: r.minX, y: r.minY))
-            points.append(CGPoint(x: r.maxX, y: r.minY))
-            points.append(CGPoint(x: r.maxX, y: r.maxY))
-            points.append(CGPoint(x: r.minX, y: r.maxY))
+            let minX = r.minX, midX = r.midX, maxX = r.maxX
+            let minY = r.minY, midY = r.midY, maxY = r.maxY
+            points.append(CGPoint(x: minX, y: minY)) // 0: Top-Left
+            points.append(CGPoint(x: midX, y: minY)) // 1: Top-Center
+            points.append(CGPoint(x: maxX, y: minY)) // 2: Top-Right
+            points.append(CGPoint(x: maxX, y: midY)) // 3: Mid-Right
+            points.append(CGPoint(x: maxX, y: maxY)) // 4: Bottom-Right
+            points.append(CGPoint(x: midX, y: maxY)) // 5: Bottom-Center
+            points.append(CGPoint(x: minX, y: maxY)) // 6: Bottom-Left
+            points.append(CGPoint(x: minX, y: midY))  // 7: Mid-Left
         }
         return points
     }
 
+    public func getHandlePointsForSelected() -> [CGPoint] {
+        if let idx = selectedRectIndex, idx >= 0 && idx < rects.count {
+            let r = rects[idx]
+            let minX = r.minX, midX = r.midX, maxX = r.maxX
+            let minY = r.minY, midY = r.midY, maxY = r.maxY
+            return [
+                CGPoint(x: minX, y: minY), // 0: Top-Left
+                CGPoint(x: midX, y: minY), // 1: Top-Center
+                CGPoint(x: maxX, y: minY), // 2: Top-Right
+                CGPoint(x: maxX, y: midY), // 3: Mid-Right
+                CGPoint(x: maxX, y: maxY), // 4: Bottom-Right
+                CGPoint(x: midX, y: maxY), // 5: Bottom-Center
+                CGPoint(x: minX, y: maxY), // 6: Bottom-Left
+                CGPoint(x: minX, y: midY)  // 7: Mid-Left
+            ]
+        }
+        return getHandlePoints()
+    }
+
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
         let handles = getHandlePoints()
+        let hitRadius = max(radius, 10.0)
         for (i, hp) in handles.enumerated() {
-            if hypot(point.x - hp.x, point.y - hp.y) <= radius { return i }
+            if hypot(point.x - hp.x, point.y - hp.y) <= hitRadius {
+                if filterMode == .spotlight {
+                    selectedRectIndex = i / 8
+                }
+                return i
+            }
         }
         return nil
     }
 
     public func move(by delta: CGPoint) {
-        for i in 0..<rects.count {
-            rects[i].origin.x += delta.x
-            rects[i].origin.y += delta.y
+        if filterMode == .spotlight {
+            let idx = selectedRectIndex ?? (rects.count - 1)
+            if idx >= 0 && idx < rects.count {
+                rects[idx].origin.x += delta.x
+                rects[idx].origin.y += delta.y
+            }
+        } else {
+            for i in 0..<rects.count {
+                rects[i].origin.x += delta.x
+                rects[i].origin.y += delta.y
+            }
         }
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
-        let rectIndex = index / 4
-        let corner = index % 4
+        let handlesPerRect = (filterMode == .spotlight) ? 8 : 4
+        let rectIndex = index / handlesPerRect
+        let subIndex = index % handlesPerRect
         guard rectIndex < rects.count else { return }
 
-        var minX = rects[rectIndex].minX
-        var maxX = rects[rectIndex].maxX
-        var minY = rects[rectIndex].minY
-        var maxY = rects[rectIndex].maxY
+        let initRect = rects[rectIndex]
+        var minX = initRect.minX
+        var maxX = initRect.maxX
+        var minY = initRect.minY
+        var maxY = initRect.maxY
 
-        switch corner {
-        case 0: minX = point.x; minY = point.y
-        case 1: maxX = point.x; minY = point.y
-        case 2: maxX = point.x; maxY = point.y
-        case 3: minX = point.x; maxY = point.y
-        default: break
+        if filterMode == .spotlight {
+            let oppX: CGFloat
+            let oppY: CGFloat
+            switch subIndex {
+            case 0, 1: oppX = initRect.maxX; oppY = initRect.maxY
+            case 2, 3: oppX = initRect.minX; oppY = initRect.maxY
+            case 4, 5: oppX = initRect.minX; oppY = initRect.minY
+            case 6, 7: oppX = initRect.maxX; oppY = initRect.minY
+            default: oppX = initRect.maxX; oppY = initRect.maxY
+            }
+
+            switch subIndex {
+            case 1, 5:
+                let newY = min(point.y, oppY)
+                let newH = max(4.0, abs(point.y - oppY))
+                rects[rectIndex] = CGRect(x: initRect.minX, y: newY, width: initRect.width, height: newH)
+            case 3, 7:
+                let newX = min(point.x, oppX)
+                let newW = max(4.0, abs(point.x - oppX))
+                rects[rectIndex] = CGRect(x: newX, y: initRect.minY, width: newW, height: initRect.height)
+            default:
+                let newX = min(point.x, oppX)
+                let newW = max(4.0, abs(point.x - oppX))
+                let newY = min(point.y, oppY)
+                let newH = max(4.0, abs(point.y - oppY))
+                rects[rectIndex] = CGRect(x: newX, y: newY, width: newW, height: newH)
+            }
+        } else {
+            switch subIndex {
+            case 0: minX = point.x; minY = point.y
+            case 1: maxX = point.x; minY = point.y
+            case 2: maxX = point.x; maxY = point.y
+            case 3: minX = point.x; maxY = point.y
+            default: break
+            }
+
+            rects[rectIndex] = CGRect(
+                x: min(minX, maxX),
+                y: min(minY, maxY),
+                width: max(abs(maxX - minX), 4.0),
+                height: max(abs(maxY - minY), 4.0)
+            )
         }
-
-        rects[rectIndex] = CGRect(
-            x: min(minX, maxX),
-            y: min(minY, maxY),
-            width: max(abs(maxX - minX), 4.0),
-            height: max(abs(maxY - minY), 4.0)
-        )
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
-        // Spotlight masking and blur filtering are coordinated by the canvas rendering pipeline
-        // to access the original backing bitmap and offscreen mask buffers.
-        // For standalone drawing (or vector preview overlays):
         if filterMode == .spotlight {
             context.saveGState()
-            context.setStrokeColor(NSColor.white.withAlphaComponent(0.85).cgColor)
             context.setLineWidth(1.5)
-            for r in rects {
-                context.stroke(r)
+            for (idx, r) in rects.enumerated() {
+                guard r.width > 0 && r.height > 0 else { continue }
+                let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
+                let path = CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
+                context.addPath(path)
+                if selectedRectIndex == idx {
+                    context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor)
+                } else {
+                    context.setStrokeColor(NSColor.white.withAlphaComponent(0.85).cgColor)
+                }
+                context.strokePath()
             }
             context.restoreGState()
         }
@@ -126,8 +226,6 @@ public final class FilterLayer: AnnotationLayer {
     // MARK: - Multi-Spotlight Masking Logic (Section 6)
 
     private func drawSpotlightMask(canvasBounds: CGRect, in context: CGContext) {
-        guard !rects.isEmpty else { return }
-
         let width = Int(ceil(canvasBounds.width))
         let height = Int(ceil(canvasBounds.height))
         guard width > 0 && height > 0 else { return }
@@ -143,13 +241,14 @@ public final class FilterLayer: AnnotationLayer {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return }
 
-        // 1. Fill offscreen buffer with black at alpha: 0.45
-        maskContext.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.45))
+        // 1. Fill offscreen buffer with black overlay at alpha: 0.50
+        maskContext.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.50))
         maskContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
         // 2. Set blend mode to .clear to punch holes in flipped coordinates
         maskContext.setBlendMode(.clear)
         for r in rects {
+            guard r.width > 0 && r.height > 0 else { continue }
             // Adjust to maskContext coordinates where (0,0) is bottom-left of canvasBounds
             let localY = canvasBounds.height - (r.origin.y - canvasBounds.origin.y) - r.height
             let localRect = CGRect(
@@ -158,7 +257,8 @@ public final class FilterLayer: AnnotationLayer {
                 width: r.width,
                 height: r.height
             )
-            let path = CGPath(roundedRect: localRect, cornerWidth: 8.0, cornerHeight: 8.0, transform: nil)
+            let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
+            let path = CGPath(roundedRect: localRect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
             maskContext.addPath(path)
             maskContext.fillPath()
         }
@@ -305,6 +405,7 @@ public final class FilterLayer: AnnotationLayer {
             filterMode: filterMode,
             intensity: intensity,
             isTextOnlyMode: isTextOnlyMode,
+            selectedRectIndex: selectedRectIndex,
             zIndex: zIndex
         )
         copy.detectedTextRects = detectedTextRects

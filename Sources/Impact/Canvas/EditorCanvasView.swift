@@ -9,6 +9,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var activeCreatingLayer: AnnotationLayer?
     private var activeDraggingLayer: AnnotationLayer?
     private var activeHandleIndex: Int?
+    private var activeDraggingRectIndex: Int?
     private var initialRectForDrag: CGRect?
     private var dragStartPoint: CGPoint = .zero
     private var lastDragPoint: CGPoint = .zero
@@ -108,8 +109,15 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 }
             }
         }
-        if !drawnSpotlight, let liveFilter = activeCreatingLayer as? FilterLayer {
-            liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+        if !drawnSpotlight {
+            if let liveFilter = activeCreatingLayer as? FilterLayer, liveFilter.filterMode == .spotlight {
+                liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+            } else if document.activeTool == .spotlight {
+                let emptySpotlight = FilterLayer(rects: [], filterMode: .spotlight)
+                emptySpotlight.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+            } else if let liveFilter = activeCreatingLayer as? FilterLayer {
+                liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+            }
         } else if drawnSpotlight, let liveFilter = activeCreatingLayer as? FilterLayer, liveFilter.filterMode != .spotlight {
             liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
         }
@@ -252,7 +260,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 let tBox = textLayer.getBoundingBox()
                 handlePoints = [CGPoint(x: tBox.maxX, y: tBox.maxY)]
             } else if let filter = layer as? FilterLayer {
-                handlePoints = filter.getHandlePoints()
+                if filter.filterMode == .spotlight {
+                    handlePoints = filter.getHandlePointsForSelected()
+                } else {
+                    handlePoints = filter.getHandlePoints()
+                }
             } else {
                 handlePoints = [
                     CGPoint(x: box.minX, y: box.minY),
@@ -312,8 +324,16 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             document.saveSnapshot()
             activeDraggingLayer = selected
             activeHandleIndex = handleIndex
-            initialRectForDrag = (selected as? RectangleLayer)?.rect
-            if document.activeTool != .select {
+            if let rectLayer = selected as? RectangleLayer {
+                initialRectForDrag = rectLayer.rect
+            } else if let filter = selected as? FilterLayer, filter.filterMode == .spotlight {
+                let rectIdx = handleIndex / 8
+                filter.selectedRectIndex = rectIdx
+                if rectIdx < filter.rects.count {
+                    initialRectForDrag = filter.rects[rectIdx]
+                }
+            }
+            if document.activeTool != .select && document.activeTool != .spotlight {
                 document.activeTool = .select
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
@@ -325,8 +345,16 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.selectLayer(layer)
                 activeDraggingLayer = layer
                 activeHandleIndex = handleIndex
-                initialRectForDrag = (layer as? RectangleLayer)?.rect
-                if document.activeTool != .select {
+                if let rectLayer = layer as? RectangleLayer {
+                    initialRectForDrag = rectLayer.rect
+                } else if let filter = layer as? FilterLayer, filter.filterMode == .spotlight {
+                    let rectIdx = handleIndex / 8
+                    filter.selectedRectIndex = rectIdx
+                    if rectIdx < filter.rects.count {
+                        initialRectForDrag = filter.rects[rectIdx]
+                    }
+                }
+                if document.activeTool != .select && document.activeTool != .spotlight {
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
@@ -340,7 +368,15 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.saveSnapshot()
                 activeDraggingLayer = selected
                 activeHandleIndex = nil
-                if document.activeTool != .select {
+                if let filter = selected as? FilterLayer, filter.filterMode == .spotlight {
+                    let rectIdx = filter.rectIndex(at: point) ?? 0
+                    filter.selectedRectIndex = rectIdx
+                    activeDraggingRectIndex = rectIdx
+                    if rectIdx < filter.rects.count {
+                        initialRectForDrag = filter.rects[rectIdx]
+                    }
+                }
+                if document.activeTool != .select && document.activeTool != .spotlight {
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
@@ -355,7 +391,15 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             document.selectLayer(hit)
             activeDraggingLayer = hit
             activeHandleIndex = nil
-            if document.activeTool != .select {
+            if let filter = hit as? FilterLayer, filter.filterMode == .spotlight {
+                let rectIdx = filter.rectIndex(at: point) ?? 0
+                filter.selectedRectIndex = rectIdx
+                activeDraggingRectIndex = rectIdx
+                if rectIdx < filter.rects.count {
+                    initialRectForDrag = filter.rects[rectIdx]
+                }
+            }
+            if document.activeTool != .select && document.activeTool != .spotlight {
                 document.activeTool = .select
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
@@ -569,11 +613,50 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         let newH = max(4.0, abs(point.y - oppY))
                         rectLayer.rect = CGRect(x: newX, y: newY, width: newW, height: newH)
                     }
+                } else if let filter = dragging as? FilterLayer, filter.filterMode == .spotlight, let initRect = initialRectForDrag {
+                    let rectIdx = handleIdx / 8
+                    let subIdx = handleIdx % 8
+                    let oppX: CGFloat
+                    let oppY: CGFloat
+                    switch subIdx {
+                    case 0, 1: oppX = initRect.maxX; oppY = initRect.maxY
+                    case 2, 3: oppX = initRect.minX; oppY = initRect.maxY
+                    case 4, 5: oppX = initRect.minX; oppY = initRect.minY
+                    case 6, 7: oppX = initRect.maxX; oppY = initRect.minY
+                    default: oppX = initRect.maxX; oppY = initRect.maxY
+                    }
+
+                    if rectIdx < filter.rects.count {
+                        switch subIdx {
+                        case 1, 5:
+                            let newY = min(point.y, oppY)
+                            let newH = max(4.0, abs(point.y - oppY))
+                            filter.rects[rectIdx] = CGRect(x: initRect.minX, y: newY, width: initRect.width, height: newH)
+                        case 7, 3:
+                            let newX = min(point.x, oppX)
+                            let newW = max(4.0, abs(point.x - oppX))
+                            filter.rects[rectIdx] = CGRect(x: newX, y: initRect.minY, width: newW, height: initRect.height)
+                        default:
+                            let newX = min(point.x, oppX)
+                            let newW = max(4.0, abs(point.x - oppX))
+                            let newY = min(point.y, oppY)
+                            let newH = max(4.0, abs(point.y - oppY))
+                            filter.rects[rectIdx] = CGRect(x: newX, y: newY, width: newW, height: newH)
+                        }
+                    }
                 } else {
                     dragging.updateHandle(index: handleIdx, to: point)
                 }
             } else {
-                dragging.move(by: delta)
+                if let filter = dragging as? FilterLayer, filter.filterMode == .spotlight {
+                    let idx = activeDraggingRectIndex ?? filter.selectedRectIndex ?? (filter.rects.count - 1)
+                    if idx >= 0 && idx < filter.rects.count {
+                        filter.rects[idx].origin.x += delta.x
+                        filter.rects[idx].origin.y += delta.y
+                    }
+                } else {
+                    dragging.move(by: delta)
+                }
                 NSCursor.fourDirectionalMove.set()
             }
             document.computeElasticBounds()
@@ -684,9 +767,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         if let existingSpotlight = document.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
                             document.saveSnapshot()
                             existingSpotlight.rects.append(newHole)
+                            existingSpotlight.selectedRectIndex = existingSpotlight.rects.count - 1
                             document.selectLayer(existingSpotlight)
                             document.computeElasticBounds()
                         } else {
+                            filter.selectedRectIndex = 0
                             document.addLayer(filter)
                             document.selectLayer(filter)
                         }
@@ -700,6 +785,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         activeDraggingLayer = nil
         activeHandleIndex = nil
+        activeDraggingRectIndex = nil
         initialRectForDrag = nil
         currentMouseCanvasPoint = canvasPoint(from: event)
         updateCursorForPoint(canvasPoint(from: event))
@@ -884,6 +970,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     NSCursor.crosshair.set()
                     return
                 }
+            } else if let filter = selected as? FilterLayer, filter.filterMode == .spotlight {
+                let subIdx = handleIndex % 8
+                switch subIdx {
+                case 1, 5:
+                    NSCursor.resizeUpDown.set()
+                    return
+                case 3, 7:
+                    NSCursor.resizeLeftRight.set()
+                    return
+                default:
+                    NSCursor.crosshair.set()
+                    return
+                }
             } else {
                 NSCursor.crosshair.set()
                 return
@@ -892,6 +991,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if let hovered = hoveredLayer, let handleIndex = hovered.hitTestHandle(point: point) {
             if hovered is RectangleLayer {
                 switch handleIndex {
+                case 1, 5:
+                    NSCursor.resizeUpDown.set()
+                    return
+                case 3, 7:
+                    NSCursor.resizeLeftRight.set()
+                    return
+                default:
+                    NSCursor.crosshair.set()
+                    return
+                }
+            } else if let filter = hovered as? FilterLayer, filter.filterMode == .spotlight {
+                let subIdx = handleIndex % 8
+                switch subIdx {
                 case 1, 5:
                     NSCursor.resizeUpDown.set()
                     return
@@ -950,6 +1062,17 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if event.keyCode == 49 { // Spacebar
             isSpacePressed = true
         } else if event.keyCode == 51 { // Delete / Backspace
+            if let selected = document.getSelectedLayers().first as? FilterLayer, selected.filterMode == .spotlight {
+                if selected.rects.count > 1, let idx = selected.selectedRectIndex, idx < selected.rects.count {
+                    document.saveSnapshot()
+                    selected.rects.remove(at: idx)
+                    selected.selectedRectIndex = max(0, selected.rects.count - 1)
+                    document.computeElasticBounds()
+                    clearHoverStateImmediately()
+                    needsDisplay = true
+                    return
+                }
+            }
             document.removeSelectedLayers()
             clearHoverStateImmediately()
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "z" {
@@ -986,6 +1109,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 needsDisplay = true
             } else if key == "h" {
                 document.activeTool = .highlighter
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "s" {
+                document.activeTool = .spotlight
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
             } else {

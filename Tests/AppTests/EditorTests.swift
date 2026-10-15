@@ -132,8 +132,10 @@ public enum EditorTests {
             let filter = FilterLayer(rects: [spot1, spot2], filterMode: .spotlight)
 
             assert(filter.rects.count == 2, "Must contain both spotlight rects")
-            assert(filter.contains(point: CGPoint(x: 75, y: 75)), "Point in spot1 must be contained")
-            assert(filter.contains(point: CGPoint(x: 120, y: 120)), "Point in overlap must be contained")
+            // Point on the side border (catchment) must be contained for dragging
+            assert(filter.contains(point: CGPoint(x: 52, y: 75)), "Point on border of spot1 must be contained")
+            // Hollow center of spot1 (75, 75) must NOT be contained for dragging
+            assert(!filter.contains(point: CGPoint(x: 75, y: 75)), "Hollow center must not be contained for dragging")
             assert(!filter.contains(point: CGPoint(x: 10, y: 10)), "Point outside spotlights must not be contained")
         }
 
@@ -365,18 +367,69 @@ public enum EditorTests {
                 filterMode: .spotlight
             )
 
-            // 2 rects should produce 8 handles (4 corners per hole)
+            // 2 rects produce 16 handles (8 per hole: 4 corners + 4 midpoints, following rectangle tool rules)
             let handles = spotlight.getHandlePoints()
-            assert(handles.count == 8, "Expected 8 handle points for 2 spotlight holes")
+            assert(handles.count == 16, "Expected 16 handle points for 2 spotlight holes (8 per hole)")
 
-            // Test hit-testing handle on hole 2 (index 4 is top-left of second hole: 150, 150)
-            assert(spotlight.hitTestHandle(point: CGPoint(x: 150, y: 150)) == 4, "Handle index 4 should hit top-left of second hole")
+            // Test hit-testing handle on hole 2 (index 8 is top-left of second hole: 150, 150)
+            assert(spotlight.hitTestHandle(point: CGPoint(x: 150, y: 150)) == 8, "Handle index 8 should hit top-left of second hole")
 
-            // Update handle 4 to (140, 140)
-            spotlight.updateHandle(index: 4, to: CGPoint(x: 140, y: 140))
+            // Update handle 8 to (140, 140)
+            spotlight.updateHandle(index: 8, to: CGPoint(x: 140, y: 140))
             assert(spotlight.rects[1].minX == 140 && spotlight.rects[1].minY == 140, "Second hole should be resized to start at (140, 140)")
             // Verify hole 1 remains untouched
             assert(spotlight.rects[0].origin == CGPoint(x: 20, y: 20), "First hole must remain unaffected")
+
+            // Test independent hole moving
+            spotlight.selectedRectIndex = 1
+            spotlight.move(by: CGPoint(x: 10, y: 10))
+            assert(spotlight.rects[1].minX == 150 && spotlight.rects[1].minY == 150, "Second hole must translate independently")
+            assert(spotlight.rects[0].origin == CGPoint(x: 20, y: 20), "First hole must remain unaffected during move")
+        }
+
+        testRunner("Editor - Spotlight Overlay Lifecycle (Darkening, Multiple Holes, Removal)") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+
+            // 1. When first selecting spotlight tool, entire image gets darkened with overlay effect
+            doc.activeTool = .spotlight
+            assert(doc.layers.count == 1, "Selecting spotlight must create the unified overlay layer")
+            guard let overlay = doc.layers.first as? FilterLayer else {
+                fatalError("Expected FilterLayer overlay")
+            }
+            assert(overlay.filterMode == .spotlight, "Must be spotlight filterMode")
+            assert(overlay.rects.isEmpty, "Overlay starts with 0 rects, darkening the entire image")
+
+            // 2. Add first hole
+            overlay.rects.append(CGRect(x: 50, y: 50, width: 100, height: 100))
+            assert(overlay.rects.count == 1, "First hole added")
+
+            // 3. Switch to another tool and back: there can be only one overlay
+            doc.activeTool = .arrow
+            assert(doc.layers.count == 1, "Overlay must remain when switching tools with existing holes")
+            doc.activeTool = .spotlight
+            assert(doc.layers.count == 1, "Only one overlay must exist when switching back to spotlight")
+
+            // 4. Add second hole
+            overlay.rects.append(CGRect(x: 200, y: 200, width: 80, height: 80))
+            assert(overlay.rects.count == 2, "Second hole added")
+
+            // 5. Remove second hole
+            doc.selectedLayerIDs = [overlay.id]
+            overlay.selectedRectIndex = 1
+            doc.removeSelectedLayers()
+            assert(doc.layers.count == 1, "Overlay must remain when removing non-last hole")
+            assert(overlay.rects.count == 1, "Only 1 hole should remain")
+
+            // 6. When removing the last spotlight rectangle, the overlay disappears
+            doc.selectedLayerIDs = [overlay.id]
+            overlay.selectedRectIndex = 0
+            doc.removeSelectedLayers()
+            assert(doc.layers.isEmpty, "When removing the last spotlight rectangle, the overlay must disappear")
         }
 
         testRunner("Editor - Arrow Annotation Tool 3-Point Control System") {

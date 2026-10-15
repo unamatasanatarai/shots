@@ -258,7 +258,57 @@ When selected, the arrow displays **3 white circular handles**: Handle 0 ($P_0$)
 
 ---
 
-## 6. Verification & Test Criteria
+## 6. Spotlight Tool Specification
+
+The Spotlight tool (`.spotlight`, shortcut `S`) provides a non-compounding dark mask overlay with punched, transparent rectangular highlight holes. It enforces single-overlay lifecycle management and follows all manipulation rules of the rectangle tool.
+
+```
+┌────────────────────────────────────────────────────────┐
+│ Darkened Overlay (Black alpha: 0.50)                   │
+│                                                        │
+│       ┌─────────────── 1 ───────────────┐              │
+│       │ 0                             2 │              │
+│       │                                 │              │
+│       7       [Punched Clear Hole]      3              │
+│       │                                 │              │
+│       │ 6                             4 │              │
+│       └─────────────── 5 ───────────────┘              │
+│                                                        │
+└────────────────────────────────────────────────────────┘
+```
+
+### 6.1 Unified Single-Overlay Lifecycle
+1. **Selection Darkening**: When the user first selects the Spotlight tool, the entire image is immediately darkened with a uniform $50\%$ black overlay (`CGColor(red: 0, green: 0, blue: 0, alpha: 0.50)`).
+2. **Single Overlay Invariance**: There can only ever be **one** spotlight overlay layer in the document at any time. Switching to other tools (Pointer, Arrow, Rectangle, Highlighter) and returning to Spotlight reuses the existing overlay without compounding darkness.
+3. **Empty Overlay Clean-up**: If the user switches away from the Spotlight tool before creating any holes, the empty overlay is pruned and normal rendering resumes.
+4. **Last Rectangle Removal**: When the user deletes the last spotlight rectangle, the entire spotlight layer is removed and the dark overlay disappears completely.
+
+### 6.2 Multi-Hole Creation
+- **Live Hole Preview**: Dragging with the Spotlight tool active interactively punches a real-time rectangular hole into the dark mask using `.clear` blend mode.
+- **Corner Curvature**: Each spotlight hole punches rounded corners with radius $R = 6.0\text{ px}$.
+- **Unbounded Multiple Holes**: The user can create as many spotlight rectangles as desired; all holes punch through the single underlying dark mask.
+
+### 6.3 Rectangle Tool Rule Conformance
+Spotlight rectangles strictly conform to the 4 core manipulation rules of the rectangle tool:
+1. **8 White Dot Control Handles Per Hole**:
+   - Each hole displays 8 circular white control handles ($r = 4.5\text{ px}$, blue stroke `#007AFF`).
+   - For hole $k \in [0, N-1]$, handles are indexed $8k \dots 8k + 7$ (Top-Left, Top-Center, Top-Right, Mid-Right, Bottom-Right, Bottom-Center, Bottom-Left, Mid-Left).
+2. **Handle-Only Resizing**:
+   - Resizing occurs **only** when grabbing the white dot handles ($10\text{ px}$ hit radius).
+   - Side handles (1 and 5) perform 1D vertical resizing against the opposite Y anchor.
+   - Side handles (3 and 7) perform 1D horizontal resizing against the opposite X anchor.
+   - Corner handles (0, 2, 4, 6) perform 2D freeform resizing against the opposite corner anchor.
+   - Grabbing rectangle edges outside the white dots **never** resizes.
+3. **Sides + 10px Catchment Area Moving**:
+   - Grabbing anywhere along the boundary within a $10\text{ px}$ catchment area initiates moving.
+   - Moving translates **only** the grabbed rectangle; all other spotlight holes remain pinned.
+4. **Non-Draggable Hollow Center**:
+   - The interior / center of the hole returns `contains(point) == false`.
+   - Clicks or drags inside the hole center pass through and do not move the rectangle.
+
+---
+
+## 7. Verification & Test Criteria
 
 Any conformant implementation must satisfy the following automated validation assertions:
 
@@ -275,3 +325,10 @@ Any conformant implementation must satisfy the following automated validation as
    - Setting $P_1$ to $(u = 0.5, v = 0.2)$ produces a bent arrow.
    - Moving $P_2$ to double the length of $\vec{D}$ maintains $(u = 0.5, v = 0.2)$.
    - Reconstructed $P_1$ remains at the midpoint along the shaft and scaled orthogonally.
+4. **Spotlight Overlay Lifecycle & Rectangle Conformance**:
+   - Activating spotlight tool with 0 holes produces a single darkened overlay.
+   - $N$ spotlight holes produce exactly $8N$ interactive control handles.
+   - Center of spotlight hole returns `contains(point) == false` (hollow / non-draggable).
+   - Border of spotlight hole returns `contains(point) == true` (catchment draggable).
+   - Deleting holes one by one retains remaining holes in the single overlay.
+   - Deleting the last spotlight hole completely removes the overlay (`layers.isEmpty == true`).
