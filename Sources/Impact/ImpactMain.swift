@@ -3,6 +3,8 @@ import Foundation
 
 public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
     private var lastCmdQTime: TimeInterval = 0
+    /// Tracks whether a file was delivered via Apple Events (Finder "Open With", etc.)
+    private var receivedOpenFileEvent: Bool = false
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -24,20 +26,27 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
                 ImpactAppCoordinator.shared.openImageFile(url: URL(fileURLWithPath: path))
             }
         } else {
-            // Default: if launched with no arguments, open test-image or open dialog
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // Defer the default image: if macOS is about to deliver an openFile Apple Event
+            // (e.g. Finder "Open With"), it arrives between didFinishLaunching and the next
+            // run-loop cycle. Wait briefly so we can skip the default if a file is incoming.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self = self, !self.receivedOpenFileEvent else { return }
                 ImpactAppCoordinator.shared.openTestImage()
             }
         }
     }
 
     public func application(_ application: NSApplication, openFile filename: String) -> Bool {
+        receivedOpenFileEvent = true
         ImpactAppCoordinator.shared.openImageFile(url: URL(fileURLWithPath: filename))
         return true
     }
 
+    /// Always return false — termination after last window close is handled by
+    /// ImpactAppCoordinator's onClose callback with a delayed check, which avoids
+    /// the race condition during window swaps (old panel closed before new one shown).
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return true
+        return false
     }
 
     private func setupDoubleCmdQMonitor() {

@@ -41,8 +41,7 @@ public final class ImpactLauncher {
             try? data.write(to: tempURL)
             if let impactURL = findImpactAppURL() {
                 let config = NSWorkspace.OpenConfiguration()
-                config.arguments = [tempURL.path]
-                NSWorkspace.shared.openApplication(at: impactURL, configuration: config, completionHandler: nil)
+                NSWorkspace.shared.open([tempURL], withApplicationAt: impactURL, configuration: config, completionHandler: nil)
                 return
             }
         }
@@ -50,8 +49,7 @@ public final class ImpactLauncher {
         // If Impact.app not found via standard locations, try opening with system
         if let impactURL = findImpactAppURL() {
             let config = NSWorkspace.OpenConfiguration()
-            config.arguments = [tempURL.path]
-            NSWorkspace.shared.openApplication(at: impactURL, configuration: config, completionHandler: nil)
+            NSWorkspace.shared.open([tempURL], withApplicationAt: impactURL, configuration: config, completionHandler: nil)
         } else {
             NSWorkspace.shared.open(tempURL)
         }
@@ -60,8 +58,7 @@ public final class ImpactLauncher {
     public func openImageFile(url: URL) {
         if let impactURL = findImpactAppURL() {
             let config = NSWorkspace.OpenConfiguration()
-            config.arguments = [url.path]
-            NSWorkspace.shared.openApplication(at: impactURL, configuration: config, completionHandler: nil)
+            NSWorkspace.shared.open([url], withApplicationAt: impactURL, configuration: config, completionHandler: nil)
             return
         }
 

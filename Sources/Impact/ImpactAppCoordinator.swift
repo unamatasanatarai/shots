@@ -24,6 +24,15 @@ public final class ImpactAppCoordinator {
                 if self?.activePanel === panel {
                     self?.activePanel = nil
                 }
+                // If no replacement panel appears shortly after close, terminate the app.
+                // This handles both user-initiated close and programmatic window swaps:
+                // during a swap, activePanel is immediately set to the new panel, so the
+                // delayed check sees it's non-nil and skips termination.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    if ImpactAppCoordinator.shared.activePanel == nil {
+                        NSApp.terminate(nil)
+                    }
+                }
             }
 
             panel.makeKeyAndOrderFront(nil)
