@@ -126,10 +126,8 @@ public final class MagnifierLayer: AnnotationLayer {
         context.addPath(clipPath)
         context.clip()
 
-        // 2. Sample from originalImage (flipped vertically for CGImage coordinates)
-        let imgH = CGFloat(originalImage.height)
-        let cropY = imgH - sourceRect.maxY
-        let imageCropRect = CGRect(x: sourceRect.origin.x, y: cropY, width: sourceRect.width, height: sourceRect.height)
+        // 2. Sample from originalImage directly matching canvas coordinates
+        let imageCropRect = sourceRect
 
         if let cropped = originalImage.cropping(to: imageCropRect) {
             context.saveGState()

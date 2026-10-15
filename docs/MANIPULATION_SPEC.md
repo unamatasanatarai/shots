@@ -15,6 +15,9 @@ This document defines the formal interaction model, geometric algorithms, coordi
 - **Spacebar (Hold during drag)**: Freezes dimension expansion and translates the layer origin in-flight by $\Delta = (x - x_{\text{prev}}, y - y_{\text{prev}})$.
 - **Shift (Hold during drag)**: Constrains aspect ratios or angles (e.g., 1:1 square/circle constraints).
 - **Delete / Backspace**: Deletes all currently selected layers and instantly clears hover states.
+- **Escape Key (ESC)**: Two-stage dismissal lifecycle:
+  1. *First ESC*: If any annotations are selected, an inline text editor is open, or a non-pointer tool is active, ESC immediately deselects all layers, dismisses any inline editor, and returns to the pointer tool (`.select`, shortcut `V`).
+  2. *Next ESC*: When already on the pointer tool with no active selection or editor, the subsequent ESC closes Impact.
 - **Right-Click Drag**: Pans the canvas scroll view with an active `closedHand` cursor.
 
 ---
@@ -308,7 +311,57 @@ Spotlight rectangles strictly conform to the 4 core manipulation rules of the re
 
 ---
 
-## 7. Verification & Test Criteria
+## 7. Blur Tool Specification
+
+The Blur tool (`.blur`, shortcut `B`) provides localized pixel blurring for privacy and redaction using rectangular selections.
+
+```
+┌────────────────────────────────────────────────────────┐
+│ Canvas Image                                           │
+│       ┌─────────────── 1 ───────────────┐              │
+│       │ 0                             2 │              │
+│       │                                 │              │
+│       7        [Blurred Area]           3              │
+│       │   (Translucent during drag)     │              │
+│       │ 6                             4 │              │
+│       └─────────────── 5 ───────────────┘              │
+│                                                        │
+└────────────────────────────────────────────────────────┘
+```
+
+### 7.1 Drag-Highlight & Blurring Lifecycle
+1. **Interactive Creation Dragging**:
+   - As the user drags to create a blur region, a frosted translucent preview highlight is displayed:
+     - Fill: `rgba(0.15, 0.55, 0.95, 0.28)`.
+     - Outline: `rgba(0.0, 0.48, 1.0, 0.90)`, stroke width $1.5\text{ px}$.
+     - Corner radius: $R = 6.0\text{ px}$.
+   - Heavy filter computation is deferred during creation.
+2. **Commit on Release (`mouseUp`)**:
+   - When the mouse button is released, the highlight disappears and blurring takes effect over the underlying image content.
+3. **Move & Resize Drag Suppression**:
+   - When an existing blur rectangle is dragged (either moved via its boundary catchment or resized via its 8 white dot handles), the active blur rendering is temporarily suppressed.
+   - The layer reverts in real-time to the frosted translucent highlight rectangle throughout the drag operation.
+   - On `mouseUp`, blurring recalculates and re-applies at the new position/dimensions.
+
+### 7.2 Rectangle Tool Rule Conformance
+The Blur tool strictly adheres to all standard rectangle manipulation rules:
+1. **8 White Dot Control Handles**:
+   - Exactly 8 circular white control handles ($r = 4.5\text{ px}$, blue stroke `#007AFF`) positioned at the 4 corners and 4 edge midpoints.
+2. **Handle-Only Resizing**:
+   - Resizing activates **only** when grabbing the white dot handles ($10\text{ px}$ hit radius).
+   - Side handles (1 and 5) perform 1D vertical resizing against the opposite vertical anchor.
+   - Side handles (3 and 7) perform 1D horizontal resizing against the opposite horizontal anchor.
+   - Corner handles (0, 2, 4, 6) perform 2D freeform resizing against the opposite diagonal anchor.
+   - Grabbing edges outside the white dots never resizes.
+3. **Sides + 10px Catchment Boundary Moving**:
+   - Moving the blur rectangle is enabled strictly by grabbing within a $10\text{ px}$ catchment area around its perimeter.
+4. **Hollow Non-Draggable Center**:
+   - The interior center of the blur rectangle returns `contains(point) == false`.
+   - Grabbing the center never moves the rectangle, allowing interaction with underlying elements if needed.
+
+---
+
+## 8. Verification & Test Criteria
 
 Any conformant implementation must satisfy the following automated validation assertions:
 
@@ -332,3 +385,13 @@ Any conformant implementation must satisfy the following automated validation as
    - Border of spotlight hole returns `contains(point) == true` (catchment draggable).
    - Deleting holes one by one retains remaining holes in the single overlay.
    - Deleting the last spotlight hole completely removes the overlay (`layers.isEmpty == true`).
+5. **Blur Tool Conformance**:
+   - Keyboard shortcut `b` selects `.blur` tool.
+   - Blur `FilterLayer` exposes 8 handles adhering to 1D and 2D rectangle anchoring.
+   - Blur center returns `contains(point) == false` (non-draggable hollow center).
+   - Blur boundary returns `contains(point) == true` within 10px catchment.
+   - Blurring is suppressed and replaced by translucent highlight preview during creation and moving/resizing drags.
+6. **Escape Key Two-Stage Dismissal**:
+   - Pressing ESC with an active selection or non-pointer tool deselects all layers, sets `activeTool = .select`, and keeps the window open.
+   - Pressing ESC in clean state (pointer tool, 0 selected layers) immediately closes the window.
+

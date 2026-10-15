@@ -67,7 +67,45 @@ public final class EditorPanel: NSPanel {
     override public var canBecomeKey: Bool { true }
     override public var canBecomeMain: Bool { true }
 
+    override public func cancelOperation(_ sender: Any?) {
+        canvasView.handleEscapeKey()
+    }
+
+    override public func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Escape
+            canvasView.handleEscapeKey()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    public static var copyToClipboardOverride: Bool? = nil
+
+    public static var isCopyToClipboardEnabled: Bool {
+        get {
+            if let overrideVal = copyToClipboardOverride {
+                return overrideVal
+            }
+            if let shotsDefaults = UserDefaults(suiteName: "com.local.Shots"),
+               let val = shotsDefaults.object(forKey: "copyToClipboard") as? Bool {
+                return val
+            }
+            if let val = UserDefaults.standard.object(forKey: "copyToClipboard") as? Bool {
+                return val
+            }
+            return true
+        }
+        set {
+            copyToClipboardOverride = newValue
+        }
+    }
+
     override public func close() {
+        // If preference "copy to clipboard" is set, copy the image with annotations to clipboard
+        if EditorPanel.isCopyToClipboardEnabled {
+            canvasView.copyCompositionToClipboard()
+        }
+
         // When closing, if document has annotations and hasn't been saved yet, auto-save to new file
         if !document.layers.isEmpty && !hasSavedComposition {
             saveToNextNumberedFile()

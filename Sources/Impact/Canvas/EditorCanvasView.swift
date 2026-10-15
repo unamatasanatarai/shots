@@ -26,6 +26,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     // Zoom & Pan
     public var zoomScale: CGFloat = 1.0
+    public var onCloseRequested: (() -> Void)?
     private var isRightPanning: Bool = false
     private var rightPanStartWindowPoint: NSPoint = .zero
 
@@ -105,7 +106,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
                     }
                 } else {
-                    filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+                    // For blur: when actively dragging/moving an existing blur layer, don't draw its blurred image mid-drag
+                    if activeDraggingLayer?.id != filter.id {
+                        filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+                    }
                 }
             }
         }
@@ -115,17 +119,21 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if document.activeTool == .spotlight {
                 let emptySpotlight = FilterLayer(rects: [], filterMode: .spotlight)
                 emptySpotlight.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
-            } else if let liveFilter = activeCreatingLayer as? FilterLayer {
-                liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
             }
-        } else if drawnSpotlight, let liveFilter = activeCreatingLayer as? FilterLayer, liveFilter.filterMode != .spotlight {
-            liveFilter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
         }
 
         // 3. Sort AnnotationLayer array by zIndex & draw vector layers
-        var allLayers = document.layers.filter { $0.isVisible }
+        var allLayers = document.layers.filter { layer in
+            if !layer.isVisible { return false }
+            if layer.id == activeDraggingLayer?.id, let f = layer as? FilterLayer, f.filterMode != .spotlight {
+                return false
+            }
+            return true
+        }
         if let live = activeCreatingLayer {
-            allLayers.append(live)
+            if !(live is FilterLayer && (live as! FilterLayer).filterMode != .spotlight) {
+                allLayers.append(live)
+            }
         }
         allLayers.sort { $0.zIndex < $1.zIndex }
 
@@ -143,10 +151,22 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         NSGraphicsContext.restoreGraphicsState()
 
-        // 4. Draw Active Selection Handles & UI
+        // 4. Draw Blur Highlight / Translucent Rectangle (During live drag creation or move)
+        if let liveBlur = activeCreatingLayer as? FilterLayer, liveBlur.filterMode != .spotlight {
+            for r in liveBlur.rects {
+                drawBlurHighlight(rect: r, in: context)
+            }
+        }
+        if let draggingBlur = activeDraggingLayer as? FilterLayer, draggingBlur.filterMode != .spotlight {
+            for r in draggingBlur.rects {
+                drawBlurHighlight(rect: r, in: context)
+            }
+        }
+
+        // 5. Draw Active Selection Handles & UI
         drawSelectionHandles(in: context)
 
-        // 5. Draw Highlighter Brush Outline Preview
+        // 6. Draw Highlighter Brush Outline Preview
         if document.activeTool == .highlighter, activeCreatingLayer == nil, let pt = currentMouseCanvasPoint {
             drawHighlighterOutline(at: pt, in: context)
         }
@@ -326,14 +346,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             activeHandleIndex = handleIndex
             if let rectLayer = selected as? RectangleLayer {
                 initialRectForDrag = rectLayer.rect
-            } else if let filter = selected as? FilterLayer, filter.filterMode == .spotlight {
+            } else if let filter = selected as? FilterLayer {
                 let rectIdx = handleIndex / 8
                 filter.selectedRectIndex = rectIdx
                 if rectIdx < filter.rects.count {
                     initialRectForDrag = filter.rects[rectIdx]
                 }
             }
-            if document.activeTool != .select && document.activeTool != .spotlight {
+            if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
                 document.activeTool = .select
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
@@ -347,14 +367,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 activeHandleIndex = handleIndex
                 if let rectLayer = layer as? RectangleLayer {
                     initialRectForDrag = rectLayer.rect
-                } else if let filter = layer as? FilterLayer, filter.filterMode == .spotlight {
+                } else if let filter = layer as? FilterLayer {
                     let rectIdx = handleIndex / 8
                     filter.selectedRectIndex = rectIdx
                     if rectIdx < filter.rects.count {
                         initialRectForDrag = filter.rects[rectIdx]
                     }
                 }
-                if document.activeTool != .select && document.activeTool != .spotlight {
+                if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
@@ -368,7 +388,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.saveSnapshot()
                 activeDraggingLayer = selected
                 activeHandleIndex = nil
-                if let filter = selected as? FilterLayer, filter.filterMode == .spotlight {
+                if let filter = selected as? FilterLayer {
                     let rectIdx = filter.rectIndex(at: point) ?? 0
                     filter.selectedRectIndex = rectIdx
                     activeDraggingRectIndex = rectIdx
@@ -376,7 +396,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         initialRectForDrag = filter.rects[rectIdx]
                     }
                 }
-                if document.activeTool != .select && document.activeTool != .spotlight {
+                if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
@@ -391,7 +411,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             document.selectLayer(hit)
             activeDraggingLayer = hit
             activeHandleIndex = nil
-            if let filter = hit as? FilterLayer, filter.filterMode == .spotlight {
+            if let filter = hit as? FilterLayer {
                 let rectIdx = filter.rectIndex(at: point) ?? 0
                 filter.selectedRectIndex = rectIdx
                 activeDraggingRectIndex = rectIdx
@@ -399,7 +419,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     initialRectForDrag = filter.rects[rectIdx]
                 }
             }
-            if document.activeTool != .select && document.activeTool != .spotlight {
+            if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
                 document.activeTool = .select
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
@@ -613,7 +633,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         let newH = max(4.0, abs(point.y - oppY))
                         rectLayer.rect = CGRect(x: newX, y: newY, width: newW, height: newH)
                     }
-                } else if let filter = dragging as? FilterLayer, filter.filterMode == .spotlight, let initRect = initialRectForDrag {
+                } else if let filter = dragging as? FilterLayer, let initRect = initialRectForDrag {
                     let rectIdx = handleIdx / 8
                     let subIdx = handleIdx % 8
                     let oppX: CGFloat
@@ -648,7 +668,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     dragging.updateHandle(index: handleIdx, to: point)
                 }
             } else {
-                if let filter = dragging as? FilterLayer, filter.filterMode == .spotlight {
+                if let filter = dragging as? FilterLayer {
                     let idx = activeDraggingRectIndex ?? filter.selectedRectIndex ?? (filter.rects.count - 1)
                     if idx >= 0 && idx < filter.rects.count {
                         filter.rects[idx].origin.x += delta.x
@@ -938,6 +958,27 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         context.restoreGState()
     }
 
+    private func drawBlurHighlight(rect: CGRect, in context: CGContext) {
+        guard rect.width > 0 && rect.height > 0 else { return }
+        context.saveGState()
+
+        let effectiveRadius = max(0.0, min(6.0, min(rect.width / 2.0, rect.height / 2.0)))
+        let path = CGPath(roundedRect: rect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
+
+        // Frosted translucent highlight fill
+        context.setFillColor(NSColor(srgbRed: 0.15, green: 0.55, blue: 0.95, alpha: 0.28).cgColor)
+        context.addPath(path)
+        context.fillPath()
+
+        // Crisp accent border
+        context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.90).cgColor)
+        context.setLineWidth(1.5)
+        context.addPath(path)
+        context.strokePath()
+
+        context.restoreGState()
+    }
+
     override public func cursorUpdate(with event: NSEvent) {
         let point = canvasPoint(from: event)
         updateCursorForPoint(point)
@@ -970,7 +1011,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     NSCursor.crosshair.set()
                     return
                 }
-            } else if let filter = selected as? FilterLayer, filter.filterMode == .spotlight {
+            } else if selected is FilterLayer {
                 let subIdx = handleIndex % 8
                 switch subIdx {
                 case 1, 5:
@@ -1001,7 +1042,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     NSCursor.crosshair.set()
                     return
                 }
-            } else if let filter = hovered as? FilterLayer, filter.filterMode == .spotlight {
+            } else if hovered is FilterLayer {
                 let subIdx = handleIndex % 8
                 switch subIdx {
                 case 1, 5:
@@ -1058,7 +1099,55 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         needsDisplay = true
     }
 
+    public func handleEscapeKey() {
+        let wasEditing = inlineEditor != nil
+        if wasEditing {
+            commitInlineEditor()
+        }
+
+        let wasCreating = activeCreatingLayer != nil
+        if wasCreating {
+            activeCreatingLayer = nil
+        }
+
+        let wasDragging = activeDraggingLayer != nil
+        if wasDragging {
+            activeDraggingLayer = nil
+            activeHandleIndex = nil
+            activeDraggingRectIndex = nil
+            initialRectForDrag = nil
+        }
+
+        let hasSelection = !document.selectedLayerIDs.isEmpty
+        let isNonPointerTool = document.activeTool != .select
+
+        if wasEditing || wasCreating || wasDragging || hasSelection || isNonPointerTool {
+            document.selectedLayerIDs.removeAll()
+            if document.activeTool != .select {
+                document.activeTool = .select
+            }
+            (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+            clearHoverStateImmediately()
+            needsDisplay = true
+        } else {
+            if let panel = window as? EditorPanel {
+                panel.close()
+            } else if let win = window {
+                win.close()
+            }
+            onCloseRequested?()
+        }
+    }
+
+    override public func cancelOperation(_ sender: Any?) {
+        handleEscapeKey()
+    }
+
     override public func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Escape
+            handleEscapeKey()
+            return
+        }
         if event.keyCode == 49 { // Spacebar
             isSpacePressed = true
         } else if event.keyCode == 51 { // Delete / Backspace
@@ -1115,6 +1204,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .spotlight
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
+            } else if key == "b" {
+                document.activeTool = .blur
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
             } else {
                 super.keyDown(with: event)
             }
@@ -1152,11 +1245,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     public func copyCompositionToClipboard() {
         guard let rendered = document.renderComposition() else { return }
         let rep = NSBitmapImageRep(cgImage: rendered)
-        guard let pngData = rep.representation(using: .png, properties: [:]) else { return }
+        let nsImage = NSImage(cgImage: rendered, size: NSSize(width: rendered.width, height: rendered.height))
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setData(pngData, forType: .png)
+        pasteboard.writeObjects([nsImage])
+        if let pngData = rep.representation(using: .png, properties: [:]) {
+            pasteboard.setData(pngData, forType: .png)
+        }
     }
 
     public func saveCompositionToFile(url: URL, format: NSBitmapImageRep.FileType = .png) {
@@ -1259,7 +1355,7 @@ extension EditorCanvasView: NSTextFieldDelegate {
             commitInlineEditor()
             return true
         } else if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            commitInlineEditor()
+            handleEscapeKey()
             return true
         }
         return false

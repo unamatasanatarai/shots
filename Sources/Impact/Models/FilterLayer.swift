@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 import AppKit
 import Vision
+import CoreImage
 
 public final class FilterLayer: AnnotationLayer {
     public let id: UUID
@@ -46,13 +47,10 @@ public final class FilterLayer: AnnotationLayer {
     }
 
     public func contains(point: CGPoint) -> Bool {
-        if filterMode == .spotlight {
-            return rectIndex(at: point) != nil
-        }
-        return rects.contains { $0.contains(point) }
+        return rectIndex(at: point) != nil
     }
 
-    /// Returns the index of the spotlight hole whose boundary catchment area (10px) contains the point.
+    /// Returns the index of the rectangle whose boundary catchment area (10px) contains the point.
     /// The hollow center returns nil to prevent moving by grabbing the center.
     public func rectIndex(at point: CGPoint) -> Int? {
         let catchment: CGFloat = 10.0
@@ -70,7 +68,7 @@ public final class FilterLayer: AnnotationLayer {
         return nil
     }
 
-    /// 8 handle points per rectangle for spotlight (matching RectangleLayer rules)
+    /// 8 handle points per rectangle (matching RectangleLayer rules)
     public func getHandlePoints() -> [CGPoint] {
         var points: [CGPoint] = []
         for r in rects {
@@ -112,9 +110,7 @@ public final class FilterLayer: AnnotationLayer {
         let hitRadius = max(radius, 10.0)
         for (i, hp) in handles.enumerated() {
             if hypot(point.x - hp.x, point.y - hp.y) <= hitRadius {
-                if filterMode == .spotlight {
-                    selectedRectIndex = i / 8
-                }
+                selectedRectIndex = i / 8
                 return i
             }
         }
@@ -122,12 +118,10 @@ public final class FilterLayer: AnnotationLayer {
     }
 
     public func move(by delta: CGPoint) {
-        if filterMode == .spotlight {
-            let idx = selectedRectIndex ?? (rects.count - 1)
-            if idx >= 0 && idx < rects.count {
-                rects[idx].origin.x += delta.x
-                rects[idx].origin.y += delta.y
-            }
+        let idx = selectedRectIndex ?? (rects.count - 1)
+        if idx >= 0 && idx < rects.count {
+            rects[idx].origin.x += delta.x
+            rects[idx].origin.y += delta.y
         } else {
             for i in 0..<rects.count {
                 rects[i].origin.x += delta.x
@@ -137,80 +131,64 @@ public final class FilterLayer: AnnotationLayer {
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
-        let handlesPerRect = (filterMode == .spotlight) ? 8 : 4
+        let handlesPerRect = 8
         let rectIndex = index / handlesPerRect
         let subIndex = index % handlesPerRect
         guard rectIndex < rects.count else { return }
 
         let initRect = rects[rectIndex]
-        var minX = initRect.minX
-        var maxX = initRect.maxX
-        var minY = initRect.minY
-        var maxY = initRect.maxY
 
-        if filterMode == .spotlight {
-            let oppX: CGFloat
-            let oppY: CGFloat
-            switch subIndex {
-            case 0, 1: oppX = initRect.maxX; oppY = initRect.maxY
-            case 2, 3: oppX = initRect.minX; oppY = initRect.maxY
-            case 4, 5: oppX = initRect.minX; oppY = initRect.minY
-            case 6, 7: oppX = initRect.maxX; oppY = initRect.minY
-            default: oppX = initRect.maxX; oppY = initRect.maxY
-            }
+        let oppX: CGFloat
+        let oppY: CGFloat
+        switch subIndex {
+        case 0, 1: oppX = initRect.maxX; oppY = initRect.maxY
+        case 2, 3: oppX = initRect.minX; oppY = initRect.maxY
+        case 4, 5: oppX = initRect.minX; oppY = initRect.minY
+        case 6, 7: oppX = initRect.maxX; oppY = initRect.minY
+        default: oppX = initRect.maxX; oppY = initRect.maxY
+        }
 
-            switch subIndex {
-            case 1, 5:
-                let newY = min(point.y, oppY)
-                let newH = max(4.0, abs(point.y - oppY))
-                rects[rectIndex] = CGRect(x: initRect.minX, y: newY, width: initRect.width, height: newH)
-            case 3, 7:
-                let newX = min(point.x, oppX)
-                let newW = max(4.0, abs(point.x - oppX))
-                rects[rectIndex] = CGRect(x: newX, y: initRect.minY, width: newW, height: initRect.height)
-            default:
-                let newX = min(point.x, oppX)
-                let newW = max(4.0, abs(point.x - oppX))
-                let newY = min(point.y, oppY)
-                let newH = max(4.0, abs(point.y - oppY))
-                rects[rectIndex] = CGRect(x: newX, y: newY, width: newW, height: newH)
-            }
-        } else {
-            switch subIndex {
-            case 0: minX = point.x; minY = point.y
-            case 1: maxX = point.x; minY = point.y
-            case 2: maxX = point.x; maxY = point.y
-            case 3: minX = point.x; maxY = point.y
-            default: break
-            }
-
-            rects[rectIndex] = CGRect(
-                x: min(minX, maxX),
-                y: min(minY, maxY),
-                width: max(abs(maxX - minX), 4.0),
-                height: max(abs(maxY - minY), 4.0)
-            )
+        switch subIndex {
+        case 1, 5:
+            let newY = min(point.y, oppY)
+            let newH = max(4.0, abs(point.y - oppY))
+            rects[rectIndex] = CGRect(x: initRect.minX, y: newY, width: initRect.width, height: newH)
+        case 3, 7:
+            let newX = min(point.x, oppX)
+            let newW = max(4.0, abs(point.x - oppX))
+            rects[rectIndex] = CGRect(x: newX, y: initRect.minY, width: newW, height: initRect.height)
+        default:
+            let newX = min(point.x, oppX)
+            let newW = max(4.0, abs(point.x - oppX))
+            let newY = min(point.y, oppY)
+            let newH = max(4.0, abs(point.y - oppY))
+            rects[rectIndex] = CGRect(x: newX, y: newY, width: newW, height: newH)
         }
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
-        if filterMode == .spotlight {
-            context.saveGState()
-            context.setLineWidth(1.5)
-            for (idx, r) in rects.enumerated() {
-                guard r.width > 0 && r.height > 0 else { continue }
-                let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
-                let path = CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
-                context.addPath(path)
+        context.saveGState()
+        context.setLineWidth(1.5)
+        for (idx, r) in rects.enumerated() {
+            guard r.width > 0 && r.height > 0 else { continue }
+            let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
+            let path = CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
+            context.addPath(path)
+            if filterMode == .spotlight {
                 if selectedRectIndex == idx {
                     context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor)
                 } else {
                     context.setStrokeColor(NSColor.white.withAlphaComponent(0.85).cgColor)
                 }
                 context.strokePath()
+            } else {
+                if selectedRectIndex == idx {
+                    context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor)
+                    context.strokePath()
+                }
             }
-            context.restoreGState()
         }
+        context.restoreGState()
     }
 
     public func applyFilter(to originalImage: CGImage, canvasBounds: CGRect, in context: CGContext) {
@@ -275,6 +253,8 @@ public final class FilterLayer: AnnotationLayer {
 
     // MARK: - Blur & Pixelate Filter
 
+    private static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
+
     private func drawBlurOrPixelate(originalImage: CGImage, canvasBounds: CGRect, in context: CGContext) {
         let targetRects = isTextOnlyMode && !detectedTextRects.isEmpty ? detectedTextRects : rects
         guard !targetRects.isEmpty else { return }
@@ -286,13 +266,17 @@ public final class FilterLayer: AnnotationLayer {
             let intersect = rect.intersection(CGRect(x: 0, y: 0, width: imgW, height: imgH))
             guard intersect.width > 2 && intersect.height > 2 else { continue }
 
-            // Since originalImage's CGImage internal coordinate system is unflipped (y=0 at bottom),
-            // the crop rect corresponding to canvas coordinate (intersect) has y = imgH - intersect.maxY
-            let cropY = imgH - intersect.maxY
-            let imageCropRect = CGRect(x: intersect.origin.x, y: cropY, width: intersect.width, height: intersect.height)
+            // In CoreGraphics CGImage, row 0 is at the top (y=0).
+            // In canvas coordinates, y=0 is also at the top of the image.
+            // Therefore, the crop rect in originalImage maps 1:1 with intersect.
+            let imageCropRect = intersect
 
             context.saveGState()
-            context.clip(to: intersect)
+
+            let effectiveRadius = max(0.0, min(6.0, min(intersect.width / 2.0, intersect.height / 2.0)))
+            let clipPath = CGPath(roundedRect: intersect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
+            context.addPath(clipPath)
+            context.clip()
 
             if filterMode == .pixelate {
                 // Mosaic pixelation: downscale cropped region then upscale with nearest neighbor
@@ -315,33 +299,49 @@ public final class FilterLayer: AnnotationLayer {
                     }
                 }
             } else {
-                // Gaussian blur / translucent frosted overlay
-                context.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 0.85))
-                context.fill(intersect)
-
-                // Mosaic pattern overlay for privacy
-                let colorSpace = CGColorSpaceCreateDeviceRGB()
+                // Gaussian blur using CoreImage with fallback
                 if let crop = originalImage.cropping(to: imageCropRect) {
-                    let factor: CGFloat = 8.0
-                    let lowW = max(1, Int(intersect.width / factor))
-                    let lowH = max(1, Int(intersect.height / factor))
-                    if let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
-                        lowCtx.interpolationQuality = .none
-                        lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
-                        if let lowImage = lowCtx.makeImage() {
+                    var rendered = false
+                    let ciImage = CIImage(cgImage: crop).clampedToExtent()
+                    if let blurFilter = CIFilter(name: "CIGaussianBlur") {
+                        blurFilter.setValue(ciImage, forKey: kCIInputImageKey)
+                        blurFilter.setValue(max(2.0, intensity), forKey: kCIInputRadiusKey)
+                        if let output = blurFilter.outputImage,
+                           let blurredCG = FilterLayer.sharedCIContext.createCGImage(output, from: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height)) {
                             context.saveGState()
                             context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
                             context.scaleBy(x: 1.0, y: -1.0)
-                            context.interpolationQuality = .low
-                            context.draw(lowImage, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
+                            context.interpolationQuality = .high
+                            context.draw(blurredCG, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
                             context.restoreGState()
+                            rendered = true
+                        }
+                    }
+
+                    if !rendered {
+                        // High-speed downscale/upscale blur fallback
+                        let colorSpace = CGColorSpaceCreateDeviceRGB()
+                        let factor: CGFloat = 8.0
+                        let lowW = max(1, Int(intersect.width / factor))
+                        let lowH = max(1, Int(intersect.height / factor))
+                        if let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                            lowCtx.interpolationQuality = .low
+                            lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
+                            if let lowImage = lowCtx.makeImage() {
+                                context.saveGState()
+                                context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
+                                context.scaleBy(x: 1.0, y: -1.0)
+                                context.interpolationQuality = .high
+                                context.draw(lowImage, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
+                                context.restoreGState()
+                            }
                         }
                     }
                 }
             }
 
             // Outline around blurred area
-            context.setStrokeColor(NSColor.lightGray.withAlphaComponent(0.5).cgColor)
+            context.setStrokeColor(NSColor.lightGray.withAlphaComponent(0.35).cgColor)
             context.setLineWidth(1.0)
             context.stroke(intersect)
 

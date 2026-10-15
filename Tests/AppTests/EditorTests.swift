@@ -432,6 +432,161 @@ public enum EditorTests {
             assert(doc.layers.isEmpty, "When removing the last spotlight rectangle, the overlay must disappear")
         }
 
+        testRunner("Editor - Blur Tool (Rectangles, 8 Handles, 10px Catchment, Resizing & Moving)") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+
+            // 1. Tool activation via 'b' shortcut
+            doc.activeTool = .blur
+            assert(doc.activeTool == .blur, "Active tool must be .blur")
+
+            // 2. Blur FilterLayer initialized with Gaussian mode and rectangular geometry
+            let blurLayer = FilterLayer(
+                rects: [CGRect(x: 100, y: 100, width: 200, height: 120)],
+                filterMode: .gaussian,
+                intensity: 16.0,
+                selectedRectIndex: 0
+            )
+            doc.addLayer(blurLayer)
+            doc.selectLayer(blurLayer)
+
+            // 3. Exactly 8 white dot control handles (conforming to rectangle tool rules)
+            let handles = blurLayer.getHandlePoints()
+            assert(handles.count == 8, "Blur rectangle must have exactly 8 control handles, got: \(handles.count)")
+            assert(handles[0] == CGPoint(x: 100, y: 100), "Handle 0 must be Top-Left")
+            assert(handles[1] == CGPoint(x: 200, y: 100), "Handle 1 must be Top-Center")
+            assert(handles[2] == CGPoint(x: 300, y: 100), "Handle 2 must be Top-Right")
+            assert(handles[3] == CGPoint(x: 300, y: 160), "Handle 3 must be Mid-Right")
+            assert(handles[4] == CGPoint(x: 300, y: 220), "Handle 4 must be Bottom-Right")
+            assert(handles[5] == CGPoint(x: 200, y: 220), "Handle 5 must be Bottom-Center")
+            assert(handles[6] == CGPoint(x: 100, y: 220), "Handle 6 must be Bottom-Left")
+            assert(handles[7] == CGPoint(x: 100, y: 160), "Handle 7 must be Mid-Left")
+
+            // 4. Handle hit testing on white dots
+            assert(blurLayer.hitTestHandle(point: CGPoint(x: 100, y: 100)) == 0, "Top-Left handle hit")
+            assert(blurLayer.hitTestHandle(point: CGPoint(x: 200, y: 100)) == 1, "Top-Center handle hit")
+            assert(blurLayer.hitTestHandle(point: CGPoint(x: 300, y: 220)) == 4, "Bottom-Right handle hit")
+
+            // 5. Non-draggable center (hollow): center must return false
+            let centerPoint = CGPoint(x: 200, y: 160)
+            assert(!blurLayer.contains(point: centerPoint), "Center of blur rectangle must NOT be draggable (hollow)")
+
+            // 6. 10px catchment boundary: grabbing sides returns true
+            let edgePoint = CGPoint(x: 100, y: 140)
+            assert(blurLayer.contains(point: edgePoint), "Boundary edge within 10px catchment must be draggable")
+
+            // 7. 1D side handle resizing (Top-Center handle 1)
+            blurLayer.updateHandle(index: 1, to: CGPoint(x: 200, y: 80))
+            assert(blurLayer.rects[0].minY == 80, "Top edge should resize to y=80")
+            assert(blurLayer.rects[0].maxY == 220, "Bottom edge must remain anchored at y=220")
+
+            // 8. Translation via move(by:)
+            blurLayer.move(by: CGPoint(x: 15, y: 20))
+            assert(blurLayer.rects[0].origin.x == 115, "Rect X translated by +15")
+            assert(blurLayer.rects[0].origin.y == 100, "Rect Y translated by +20")
+
+            // 9. Filter rendering into context takes effect
+            let testCtx = CGContext(
+                data: nil,
+                width: 400,
+                height: 400,
+                bitsPerComponent: 8,
+                bytesPerRow: 1600,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            blurLayer.applyFilter(to: cgImage, canvasBounds: CGRect(x: 0, y: 0, width: 400, height: 400), in: testCtx)
+        }
+
+        testRunner("Editor - Escape Key Two-Stage Lifecycle (Deselect / Tool Reset, then Window Close)") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+            let canvas = EditorCanvasView(document: doc)
+
+            var closeCount = 0
+            canvas.onCloseRequested = {
+                closeCount += 1
+            }
+
+            // Scenario 1: Rectangle selected + Blur tool active
+            doc.activeTool = .blur
+            let rect = RectangleLayer(rect: CGRect(x: 10, y: 10, width: 50, height: 50))
+            doc.addLayer(rect)
+            doc.selectLayer(rect)
+
+            assert(!doc.selectedLayerIDs.isEmpty, "Layer must be initially selected")
+            assert(doc.activeTool == .blur, "Tool must be .blur")
+
+            // First ESC: Deselects and returns to pointer tool (V)
+            canvas.handleEscapeKey()
+            assert(doc.selectedLayerIDs.isEmpty, "First ESC must DESELECT all layers")
+            assert(doc.activeTool == .select, "First ESC must return to pointer tool (.select)")
+            assert(closeCount == 0, "First ESC must not close Impact")
+
+            // Next ESC: Nothing selected + already on pointer tool -> Closes Impact
+            canvas.handleEscapeKey()
+            assert(closeCount == 1, "Next ESC must close Impact")
+
+            // Scenario 2: Arrow tool active, nothing selected
+            closeCount = 0
+            doc.activeTool = .arrow
+            assert(doc.selectedLayerIDs.isEmpty, "No selection")
+            assert(doc.activeTool == .arrow, "Active tool is arrow")
+
+            // First ESC: Returns to pointer tool (.select)
+            canvas.handleEscapeKey()
+            assert(doc.activeTool == .select, "First ESC must return to pointer tool")
+            assert(closeCount == 0, "First ESC must not close Impact")
+
+            // Next ESC: Closes Impact
+            canvas.handleEscapeKey()
+            assert(closeCount == 1, "Next ESC must close Impact")
+        }
+
+        testRunner("Editor - Copy to Clipboard on Window Close Preference") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+            let rect = RectangleLayer(rect: CGRect(x: 20, y: 20, width: 60, height: 60), color: "#007AFF")
+            doc.addLayer(rect)
+
+            let panel = EditorPanel(document: doc)
+
+            // Test 1: Enabled -> Closing panel copies image with annotations to general pasteboard
+            EditorPanel.copyToClipboardOverride = true
+            NSPasteboard.general.clearContents()
+
+            panel.close()
+
+            let pasteboard = NSPasteboard.general
+            assert(pasteboard.data(forType: .png) != nil, "Closing panel must copy PNG composition to pasteboard when preference is enabled")
+            assert(pasteboard.canReadObject(forClasses: [NSImage.self], options: nil), "Pasteboard must contain readable NSImage object")
+
+            // Test 2: Disabled -> Closing panel does NOT copy to pasteboard
+            let doc2 = EditorDocument(image: cgImage)
+            let panel2 = EditorPanel(document: doc2)
+            EditorPanel.copyToClipboardOverride = false
+            NSPasteboard.general.clearContents()
+
+            panel2.close()
+
+            assert(NSPasteboard.general.data(forType: .png) == nil, "Closing panel must NOT copy to pasteboard when preference is disabled")
+
+            // Clean up override
+            EditorPanel.copyToClipboardOverride = nil
+        }
+
         testRunner("Editor - Arrow Annotation Tool 3-Point Control System") {
             let arrow = ArrowLayer(
                 start: CGPoint(x: 50, y: 50),
