@@ -157,8 +157,11 @@ public final class HighlighterLayer: AnnotationLayer {
     }
 
     public func contains(point: CGPoint) -> Bool {
-        guard points.count >= 2 else { return false }
+        guard !points.isEmpty else { return false }
         let threshold = strokeWidth / 2.0 + 4.0
+        if points.count == 1 {
+            return hypot(point.x - points[0].x, point.y - points[0].y) <= threshold
+        }
         for i in 0..<(points.count - 1) {
             let a = points[i]
             let b = points[i + 1]
@@ -195,21 +198,54 @@ public final class HighlighterLayer: AnnotationLayer {
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
-        guard points.count >= 2 else { return }
+        guard !points.isEmpty else { return }
         context.saveGState()
 
-        // Translucent highlight blending
         let baseColor = NSColor(hex: color)
-        context.setStrokeColor(baseColor.withAlphaComponent(0.40).cgColor)
-        context.setBlendMode(.multiply)
+        let rgbColor = baseColor.usingColorSpace(.sRGB) ?? baseColor
+        let r = rgbColor.redComponent
+        let g = rgbColor.greenComponent
+        let b = rgbColor.blueComponent
+        // White or near-white cannot use .multiply because 1.0 * background = background (invisible)
+        let isWhite = (r > 0.90 && g > 0.90 && b > 0.90)
+
+        let strokeColor: CGColor
+        if isWhite {
+            context.setBlendMode(.normal)
+            strokeColor = rgbColor.withAlphaComponent(0.55).cgColor
+        } else {
+            context.setBlendMode(.multiply)
+            strokeColor = rgbColor.withAlphaComponent(0.40).cgColor
+        }
+
+        if points.count == 1 {
+            let p = points[0]
+            context.setFillColor(strokeColor)
+            context.fillEllipse(in: CGRect(x: p.x - strokeWidth / 2.0, y: p.y - strokeWidth / 2.0, width: strokeWidth, height: strokeWidth))
+            context.restoreGState()
+            return
+        }
+
+        context.setStrokeColor(strokeColor)
         context.setLineWidth(strokeWidth)
-        context.setLineCap(.square)
+        context.setLineCap(.round)
         context.setLineJoin(.round)
 
         context.beginPath()
         context.move(to: points[0])
-        for i in 1..<points.count {
-            context.addLine(to: points[i])
+
+        if points.count == 2 {
+            context.addLine(to: points[1])
+        } else {
+            // Quadratic Bezier smoothing between midpoints
+            for i in 1..<points.count {
+                let mid = CGPoint(
+                    x: (points[i - 1].x + points[i].x) / 2.0,
+                    y: (points[i - 1].y + points[i].y) / 2.0
+                )
+                context.addQuadCurve(to: mid, control: points[i - 1])
+            }
+            context.addLine(to: points.last!)
         }
         context.strokePath()
 

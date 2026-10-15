@@ -21,6 +21,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var hoverAlpha: CGFloat = 0.0
     private var hoverTimer: Timer?
     private var canvasTrackingArea: NSTrackingArea?
+    private var currentMouseCanvasPoint: CGPoint?
 
     // Zoom & Pan
     public var zoomScale: CGFloat = 1.0
@@ -58,7 +59,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
             owner: self,
             userInfo: nil
         )
@@ -136,6 +137,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // 4. Draw Active Selection Handles & UI
         drawSelectionHandles(in: context)
+
+        // 5. Draw Highlighter Brush Outline Preview
+        if document.activeTool == .highlighter, activeCreatingLayer == nil, let pt = currentMouseCanvasPoint {
+            drawHighlighterOutline(at: pt, in: context)
+        }
 
         context.restoreGState()
     }
@@ -282,6 +288,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseDown(with event: NSEvent) {
         let point = canvasPoint(from: event)
+        currentMouseCanvasPoint = point
         dragStartPoint = point
         lastDragPoint = point
 
@@ -329,13 +336,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // If clicking on or inside an already selected layer (e.g. Rectangle), drag-move it
         if let selected = document.getSelectedLayers().first {
-            let isInsideOrOnBorder: Bool
-            if let rectLayer = selected as? RectangleLayer {
-                isInsideOrOnBorder = rectLayer.rect.contains(point) || rectLayer.contains(point: point)
-            } else {
-                isInsideOrOnBorder = selected.contains(point: point)
-            }
-            if isInsideOrOnBorder {
+            if selected.contains(point: point) {
                 document.saveSnapshot()
                 activeDraggingLayer = selected
                 activeHandleIndex = nil
@@ -349,7 +350,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // If clicking any existing visible annotation element while an annotation tool is active,
         // do not add a new element; immediately select it and revert activeTool to pointer (.select)
-        if let hit = document.layers.reversed().first(where: { $0.isVisible && ($0.contains(point: point) || (($0 as? RectangleLayer)?.rect.contains(point) ?? false)) }) {
+        if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }) {
             document.saveSnapshot()
             document.selectLayer(hit)
             activeDraggingLayer = hit
@@ -613,7 +614,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let pen = creating as? PenLayer {
                 pen.points.append(point)
             } else if let hl = creating as? HighlighterLayer {
-                hl.points.append(point)
+                if let last = hl.points.last {
+                    if hypot(point.x - last.x, point.y - last.y) >= 2.0 {
+                        hl.points.append(point)
+                    }
+                } else {
+                    hl.points.append(point)
+                }
             } else if let dim = creating as? DimensionLayer {
                 dim.end = point
             } else if let callout = creating as? CalloutLayer {
@@ -668,7 +675,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 } else if let pen = creating as? PenLayer {
                     isValidSize = pen.points.count >= 2
                 } else if let hl = creating as? HighlighterLayer {
-                    isValidSize = hl.points.count >= 2
+                    isValidSize = !hl.points.isEmpty
                 }
 
                 if isValidSize {
@@ -693,6 +700,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         activeDraggingLayer = nil
         activeHandleIndex = nil
         initialRectForDrag = nil
+        currentMouseCanvasPoint = canvasPoint(from: event)
         updateCursorForPoint(canvasPoint(from: event))
         needsDisplay = true
     }
@@ -728,13 +736,31 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         updateCursorForPoint(canvasPoint(from: event))
     }
 
+    override public func mouseEntered(with event: NSEvent) {
+        currentMouseCanvasPoint = canvasPoint(from: event)
+        if document.activeTool == .highlighter {
+            needsDisplay = true
+        }
+    }
+
+    override public func mouseExited(with event: NSEvent) {
+        currentMouseCanvasPoint = nil
+        if document.activeTool == .highlighter {
+            needsDisplay = true
+        }
+    }
+
     override public func mouseMoved(with event: NSEvent) {
         let point = canvasPoint(from: event)
+        currentMouseCanvasPoint = point
         let newlyHovered = document.layers.reversed().first { layer in
             layer.isVisible && (layer.contains(point: point) || layer.hitTestHandle(point: point) != nil)
         }
         updateHoverState(to: newlyHovered)
         updateCursorForPoint(point)
+        if document.activeTool == .highlighter {
+            needsDisplay = true
+        }
     }
 
     private func updateHoverState(to newLayer: AnnotationLayer?) {
@@ -752,9 +778,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         hoverTimer = nil
 
         if let target = targetLayer {
-            // Fade In quickly (approx 120ms total)
+            // Fade In quickly (approx 60ms total)
             hoverOutlineLayer = target
-            let step: CGFloat = 0.15
+            let step: CGFloat = 0.30
             hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] timer in
                 guard let self = self else {
                     timer.invalidate()
@@ -769,7 +795,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
         } else {
             // Fade Out quickly
-            let step: CGFloat = 0.15
+            let step: CGFloat = 0.30
             hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] timer in
                 guard let self = self else {
                     timer.invalidate()
@@ -793,6 +819,36 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         hoverOutlineLayer = nil
         hoverAlpha = 0.0
         needsDisplay = true
+    }
+
+    private func drawHighlighterOutline(at point: CGPoint, in context: CGContext) {
+        context.saveGState()
+
+        let strokeWidth: CGFloat = 20.0
+        let radius = strokeWidth / 2.0
+        let rect = CGRect(x: point.x - radius, y: point.y - radius, width: strokeWidth, height: strokeWidth)
+
+        let color = NSColor(hex: document.activeColor)
+
+        // Subtle color tint inside the brush outline
+        context.setFillColor(color.withAlphaComponent(0.25).cgColor)
+        context.fillEllipse(in: rect)
+
+        // Outer contrasting stroke (dark shadow/stroke)
+        context.setStrokeColor(NSColor.black.withAlphaComponent(0.60).cgColor)
+        context.setLineWidth(2.0)
+        context.strokeEllipse(in: rect)
+
+        // Inner bright stroke
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.95).cgColor)
+        context.setLineWidth(1.0)
+        context.strokeEllipse(in: rect)
+
+        // Center crosshair / precision dot
+        context.setFillColor(NSColor.white.cgColor)
+        context.fillEllipse(in: CGRect(x: point.x - 1.0, y: point.y - 1.0, width: 2.0, height: 2.0))
+
+        context.restoreGState()
     }
 
     override public func cursorUpdate(with event: NSEvent) {
@@ -864,10 +920,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // Also if any already selected layer contains the point (even if switching tools), dragging it moves it
         let hitsSelectedLayer = document.getSelectedLayers().contains { layer in
-            if let rectLayer = layer as? RectangleLayer {
-                return rectLayer.rect.contains(point) || rectLayer.contains(point: point)
-            }
-            return layer.isVisible && layer.contains(point: point)
+            layer.isVisible && layer.contains(point: point)
         }
         if hitsSelectedLayer {
             NSCursor.fourDirectionalMove.set()

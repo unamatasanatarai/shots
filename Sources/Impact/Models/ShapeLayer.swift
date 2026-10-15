@@ -52,12 +52,8 @@ public final class RectangleLayer: AnnotationLayer {
     }
 
     public func contains(point: CGPoint) -> Bool {
-        if fillStyle == .solid || fillStyle == .striped {
-            return rect.contains(point)
-        }
-        let outer = rect.insetBy(dx: -strokeWidth - 6, dy: -strokeWidth - 6)
-        let inner = rect.insetBy(dx: strokeWidth + 6, dy: strokeWidth + 6)
-        return outer.contains(point) && !inner.contains(point)
+        let tolerance = strokeWidth / 2.0 + 6.0
+        return rect.standardized.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
@@ -255,20 +251,14 @@ public final class EllipseLayer: AnnotationLayer {
     }
 
     public func contains(point: CGPoint) -> Bool {
-        let rx = rect.width / 2.0
-        let ry = rect.height / 2.0
+        let pad = strokeWidth / 2.0 + 6.0
+        let rx = rect.width / 2.0 + pad
+        let ry = rect.height / 2.0 + pad
         guard rx > 0 && ry > 0 else { return false }
         let cx = rect.midX
         let cy = rect.midY
         let val = pow((point.x - cx) / rx, 2) + pow((point.y - cy) / ry, 2)
-
-        if fillStyle == .solid || fillStyle == .striped {
-            return val <= 1.05
-        }
-        let innerRx = max(0.1, rx - strokeWidth - 6)
-        let innerRy = max(0.1, ry - strokeWidth - 6)
-        let innerVal = pow((point.x - cx) / innerRx, 2) + pow((point.y - cy) / innerRy, 2)
-        return val <= 1.15 && innerVal >= 0.85
+        return val <= 1.0
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
