@@ -588,6 +588,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 arrow.end = point
                 // Always start with straight: control point is collinear midpoint
                 arrow.control = CGPoint(x: (arrow.start.x + point.x) / 2.0, y: (arrow.start.y + point.y) / 2.0)
+                arrow.updateRelativeControl()
             } else if let rect = creating as? RectangleLayer {
                 rect.rect = CGRect(
                     x: min(dragStartPoint.x, point.x),

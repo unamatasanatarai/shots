@@ -15,6 +15,8 @@ public final class ArrowLayer: AnnotationLayer {
     public var end: CGPoint
     public var headType: ArrowHeadType
 
+    public var relativeControl: (u: CGFloat, v: CGFloat) = (u: 0.5, v: 0.0)
+
     public init(
         id: UUID = UUID(),
         start: CGPoint,
@@ -28,11 +30,26 @@ public final class ArrowLayer: AnnotationLayer {
         self.id = id
         self.start = start
         self.end = end
-        self.control = control ?? CGPoint(x: (start.x + end.x) / 2.0, y: (start.y + end.y) / 2.0)
+        let initialControl = control ?? CGPoint(x: (start.x + end.x) / 2.0, y: (start.y + end.y) / 2.0)
+        self.control = initialControl
         self.color = color
         self.strokeWidth = strokeWidth
         self.headType = headType
         self.zIndex = zIndex
+        self.updateRelativeControl()
+    }
+
+    public func updateRelativeControl() {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let lenSq = dx * dx + dy * dy
+        if lenSq > 0.001 {
+            let u = ((control.x - start.x) * dx + (control.y - start.y) * dy) / lenSq
+            let v = ((control.y - start.y) * dx - (control.x - start.x) * dy) / lenSq
+            relativeControl = (u: u, v: v)
+        } else {
+            relativeControl = (u: 0.5, v: 0.0)
+        }
     }
 
     // MARK: - Bounds Calculation
@@ -104,10 +121,27 @@ public final class ArrowLayer: AnnotationLayer {
 
     public func updateHandle(index: Int, to point: CGPoint) {
         switch index {
-        case 0: start = point
-        case 1: control = point
-        case 2: end = point
-        default: break
+        case 0:
+            start = point
+            let dx = end.x - start.x
+            let dy = end.y - start.y
+            control = CGPoint(
+                x: start.x + relativeControl.u * dx - relativeControl.v * dy,
+                y: start.y + relativeControl.u * dy + relativeControl.v * dx
+            )
+        case 1:
+            control = point
+            updateRelativeControl()
+        case 2:
+            end = point
+            let dx = end.x - start.x
+            let dy = end.y - start.y
+            control = CGPoint(
+                x: start.x + relativeControl.u * dx - relativeControl.v * dy,
+                y: start.y + relativeControl.u * dy + relativeControl.v * dx
+            )
+        default:
+            break
         }
     }
 
@@ -221,7 +255,7 @@ public final class ArrowLayer: AnnotationLayer {
     }
 
     public func clone() -> AnnotationLayer {
-        ArrowLayer(
+        let cloned = ArrowLayer(
             id: UUID(),
             start: start,
             control: control,
@@ -231,5 +265,7 @@ public final class ArrowLayer: AnnotationLayer {
             headType: headType,
             zIndex: zIndex
         )
+        cloned.relativeControl = relativeControl
+        return cloned
     }
 }

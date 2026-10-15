@@ -406,10 +406,14 @@ public enum EditorTests {
             assert(arrow.start == CGPoint(x: 20, y: 60), "Start point must remain anchored during bend adjustment")
             assert(arrow.end == CGPoint(x: 250, y: 50), "End point must remain anchored during bend adjustment")
 
-            // Test independent End Point repositioning
+            // Test End Point repositioning: reorients and scales while retaining curve shape
+            let origRelU = arrow.relativeControl.u
+            let origRelV = arrow.relativeControl.v
             arrow.updateHandle(index: 2, to: CGPoint(x: 300, y: 100))
             assert(arrow.end == CGPoint(x: 300, y: 100), "End point must update to (300, 100)")
             assert(arrow.start == CGPoint(x: 20, y: 60), "Start point must remain anchored")
+            assert(abs(arrow.relativeControl.u - origRelU) < 0.001, "Relative control U must remain fixed to retain shape")
+            assert(abs(arrow.relativeControl.v - origRelV) < 0.001, "Relative control V must remain fixed to retain shape")
         }
 
         testRunner("Editor - Rectangle Annotation Tool Freeform Resizing & Scaling") {
@@ -421,9 +425,11 @@ public enum EditorTests {
                 fillStyle: .outline
             )
 
-            // 1. Visual Anatomy: Outline fill is transparent (interior does not contain, border does)
-            assert(!rectLayer.contains(point: CGPoint(x: 200, y: 175)), "Transparent interior must not intercept clicks when unselected")
-            assert(rectLayer.contains(point: CGPoint(x: 100, y: 150)), "Outline stroke border must intercept clicks")
+            // 1. Visual Anatomy: Outline rectangle moves by dragging sides + 10px catchment area; center is non-draggable
+            assert(!rectLayer.contains(point: CGPoint(x: 200, y: 175)), "Rectangle center must not intercept clicks for dragging")
+            assert(rectLayer.contains(point: CGPoint(x: 100, y: 150)), "Sides with 10px catchment area must intercept clicks for moving")
+            assert(rectLayer.hitTestHandle(point: CGPoint(x: 100, y: 150)) == nil, "Arbitrary points on sides must not be resize handles")
+            assert(rectLayer.hitTestHandle(point: CGPoint(x: 100, y: 100)) == 0, "White dot handle must be resize handle")
 
             // 2. 8 Control handles: 4 corners + 4 edge midpoints
             let handles = rectLayer.getHandlePoints()
@@ -462,12 +468,13 @@ public enum EditorTests {
             // 5. Unconstrained Aspect Ratio: freeform distortion without maintaining aspect ratio
             assert(rectLayer.rect.width == 360 && rectLayer.rect.height == 260, "Aspect ratio must be completely freeform and unconstrained")
 
-            // 6. Boundary Edge hit testing: clicking near edge triggers edge handle
-            let topEdgeHit = rectLayer.hitTestHandle(point: CGPoint(x: 200, y: rectLayer.rect.minY))
-            assert(topEdgeHit == 1, "Clicking top edge must return handle 1 for vertical scaling")
+            // 6. Resize only by grabbing the white dots: arbitrary points on edge do not trigger resize handles
+            let topEdgePoint = CGPoint(x: 120, y: rectLayer.rect.minY)
+            assert(rectLayer.hitTestHandle(point: topEdgePoint) == nil, "Arbitrary point along top edge must not trigger resize")
+            assert(rectLayer.contains(point: topEdgePoint), "Arbitrary point along top edge must trigger move via contains(point:)")
 
-            let leftEdgeHit = rectLayer.hitTestHandle(point: CGPoint(x: rectLayer.rect.minX, y: 200))
-            assert(leftEdgeHit == 7, "Clicking left edge must return handle 7 for horizontal scaling")
+            let topCenterDot = CGPoint(x: rectLayer.rect.midX, y: rectLayer.rect.minY)
+            assert(rectLayer.hitTestHandle(point: topCenterDot) == 1, "Clicking white dot handle 1 must return handle 1 for vertical scaling")
         }
 
         testRunner("Editor - Line Annotation Tool Straight Segments & 2-Point Controls") {
