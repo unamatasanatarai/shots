@@ -253,6 +253,47 @@ public enum EditorTests {
             assert(rendered.height >= cgImage.height, "Rendered composition must have valid dimensions")
         }
 
+        testRunner("Editor - Composition Orientation Right-Side Up") {
+            let w = 100
+            let h = 100
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            guard let imgCtx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                throw NSError(domain: "EditorTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to create CGContext"])
+            }
+
+            // Top half RED (y=50..100 in unflipped CGContext), Bottom half GREEN (y=0..50 in unflipped CGContext)
+            imgCtx.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+            imgCtx.fill(CGRect(x: 0, y: 50, width: w, height: 50))
+            imgCtx.setFillColor(CGColor(red: 0, green: 1, blue: 0, alpha: 1))
+            imgCtx.fill(CGRect(x: 0, y: 0, width: w, height: 50))
+
+            guard let baseCG = imgCtx.makeImage() else {
+                throw NSError(domain: "EditorTests", code: 4, userInfo: [NSLocalizedDescriptionKey: "Failed to create CGImage"])
+            }
+
+            let doc = EditorDocument(image: baseCG)
+            // Add a blue rectangle at the top: x: 10, y: 15, width: 30, height: 15
+            let blueRect = RectangleLayer(rect: CGRect(x: 10, y: 15, width: 30, height: 15), color: "#0000FF", fillStyle: .solid)
+            doc.addLayer(blueRect)
+
+            guard let rendered = doc.renderComposition() else {
+                throw NSError(domain: "EditorTests", code: 5, userInfo: [NSLocalizedDescriptionKey: "renderComposition failed"])
+            }
+
+            let rep = NSBitmapImageRep(cgImage: rendered)
+            // Top region (y=5, outside blue rect) must be RED
+            let topColor = rep.colorAt(x: 80, y: 5)!
+            assert(topColor.redComponent > 0.8 && topColor.greenComponent < 0.3, "Top region must be RED, got red=\(topColor.redComponent) green=\(topColor.greenComponent)")
+
+            // Bottom region (y=80) must be GREEN
+            let bottomColor = rep.colorAt(x: 80, y: 80)!
+            assert(bottomColor.greenComponent > 0.8 && bottomColor.redComponent < 0.3, "Bottom region must be GREEN, got red=\(bottomColor.redComponent) green=\(bottomColor.greenComponent)")
+
+            // Blue rectangle stroke at (x=25, y=15) must be BLUE
+            let blueColor = rep.colorAt(x: 25, y: 15)!
+            assert(blueColor.blueComponent > 0.8, "Annotation at top must be BLUE, got blue=\(blueColor.blueComponent)")
+        }
+
         testRunner("Editor - Counter Pointer Handle Drag Manipulation") {
             let counter = CounterLayer(center: CGPoint(x: 100, y: 100), value: 3, pointerAngle: 0.0)
             let peak = counter.getPeakPoint()
@@ -723,6 +764,38 @@ public enum EditorTests {
             // Whole line translation
             line.move(by: CGPoint(x: 10, y: 20))
             assert(line.start == CGPoint(x: 40, y: 100) && line.end == CGPoint(x: 310, y: 100), "Move must translate entire line uniformly")
+
+            // 6. Canvas interactive creation & Hotkey 'L'
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let canvasDoc = EditorDocument(image: cgImage)
+            let panel = EditorPanel(document: canvasDoc)
+            let canvas = panel.canvasView
+
+            // Hotkey 'l' sets activeTool = .line
+            let keyEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "l", charactersIgnoringModifiers: "l", isARepeat: false, keyCode: 37)!
+            canvas.keyDown(with: keyEvent)
+            assert(canvasDoc.activeTool == .line, "Hotkey 'l' must switch activeTool to .line")
+
+            // Simulate mouse down, drag, and mouse up to draw straight line from (10, 10) to (100, 50)
+            let downEvent = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+            canvas.mouseDown(with: downEvent)
+
+            let dragEvent = NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 100, y: 50), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+            canvas.mouseDragged(with: dragEvent)
+
+            let upEvent = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 100, y: 50), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0.0)!
+            canvas.mouseUp(with: upEvent)
+
+            assert(canvasDoc.layers.count == 1, "MouseUp must commit created LineLayer to document layers")
+            guard let createdLine = canvasDoc.layers.first as? LineLayer else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Committed layer must be LineLayer"])
+            }
+            assert(abs(createdLine.end.x - createdLine.start.x - 90.0) < 0.001, "Line delta X must match drag delta")
+            assert(canvasDoc.selectedLayerIDs.contains(createdLine.id), "Created line must be automatically selected")
         }
 
         testRunner("Editor - Window Deactivation, Cmd-Tab & Scale-To-Fit") {
@@ -796,20 +869,104 @@ public enum EditorTests {
 
             let tempDir = FileManager.default.temporaryDirectory
             let sourceFile = tempDir.appendingPathComponent("arero.jpg")
-            try? Data([0x01, 0x02]).write(to: sourceFile)
-            defer { try? FileManager.default.removeItem(at: sourceFile) }
+            let originalBytes = Data([0x01, 0x02, 0x03, 0x04])
+            try? originalBytes.write(to: sourceFile)
+            defer {
+                try? FileManager.default.removeItem(at: sourceFile)
+                try? FileManager.default.removeItem(at: tempDir.appendingPathComponent("arero-2.jpg"))
+                try? FileManager.default.removeItem(at: tempDir.appendingPathComponent("arero-3.jpg"))
+            }
 
             let panel = EditorPanel(document: doc, title: "arero.jpg", sourceFileURL: sourceFile)
             let nextURL = panel.nextAvailableFileURL()
             assert(nextURL.lastPathComponent == "arero-2.jpg", "Next file must be arero-2.jpg, got: \(nextURL.lastPathComponent)")
 
-            // If arero-2.jpg also exists, it should increment to arero-3.jpg
-            let file2 = tempDir.appendingPathComponent("arero-2.jpg")
-            try? Data([0x01, 0x02]).write(to: file2)
-            defer { try? FileManager.default.removeItem(at: file2) }
+            // Test close: upon closing Impact, always save to file as originalfilename-2.extension-original without overwriting original
+            panel.close()
 
-            let nextURL2 = panel.nextAvailableFileURL()
-            assert(nextURL2.lastPathComponent == "arero-3.jpg", "Next file must be arero-3.jpg, got: \(nextURL2.lastPathComponent)")
+            let savedFile2 = tempDir.appendingPathComponent("arero-2.jpg")
+            assert(FileManager.default.fileExists(atPath: savedFile2.path), "Closing panel must automatically save to arero-2.jpg")
+
+            // Verify original file was not overwritten
+            let readOriginal = try? Data(contentsOf: sourceFile)
+            assert(readOriginal == originalBytes, "Original file arero.jpg must NEVER be overwritten")
+
+            // Next session: closing a new panel increments to arero-3.jpg without overwriting arero-2.jpg or arero.jpg
+            let doc2 = EditorDocument(image: img)
+            let panel2 = EditorPanel(document: doc2, title: "arero.jpg", sourceFileURL: sourceFile)
+            panel2.close()
+
+            let savedFile3 = tempDir.appendingPathComponent("arero-3.jpg")
+            assert(FileManager.default.fileExists(atPath: savedFile3.path), "Subsequent close must save to next numbered file arero-3.jpg")
+            assert(FileManager.default.fileExists(atPath: savedFile2.path), "arero-2.jpg must remain intact")
+        }
+
+        testRunner("Editor - Freehand Pen Tool (Shortcut P, Brush Preview, Smooth Curves, Non-Scalable Whole Move)") {
+            // 1. Layer Geometry & Highlighter Rule Conformance
+            let pen = PenLayer(
+                points: [CGPoint(x: 20, y: 20), CGPoint(x: 50, y: 40), CGPoint(x: 80, y: 30)],
+                color: "#007AFF",
+                strokeWidth: 4.0
+            )
+
+            // Radius is 2.0 (strokeWidth 4.0)
+            assert(pen.strokeWidth == 4.0, "Pen stroke width must default to 4.0 (radius 2.0)")
+
+            // Non-scalable: hitTestHandle must strictly return nil
+            assert(pen.hitTestHandle(point: CGPoint(x: 20, y: 20)) == nil, "Pen must not expose scalable control handles")
+            assert(pen.hitTestHandle(point: CGPoint(x: 80, y: 30)) == nil, "Pen must not expose scalable control handles")
+
+            // Whole layer translation
+            assert(pen.contains(point: CGPoint(x: 20, y: 20)), "Point on stroke must return contains == true")
+            pen.move(by: CGPoint(x: 10, y: 5))
+            assert(pen.points[0] == CGPoint(x: 30, y: 25), "Moving pen layer must translate all vertices uniformly")
+
+            // Single click dot support
+            let dotPen = PenLayer(points: [CGPoint(x: 50, y: 50)], color: "#FF3B30", strokeWidth: 4.0)
+            assert(dotPen.contains(point: CGPoint(x: 50, y: 50)), "Single dot pen must return contains == true")
+
+            // 2. Canvas & Hotkey Interaction
+            let context = CGContext(
+                data: nil,
+                width: 100,
+                height: 100,
+                bitsPerComponent: 8,
+                bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let panel = EditorPanel(document: doc)
+            let canvas = panel.canvasView
+
+            // Hotkey 'p' switches to .pen
+            let keyEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "p", charactersIgnoringModifiers: "p", isARepeat: false, keyCode: 35)!
+            canvas.keyDown(with: keyEvent)
+            assert(doc.activeTool == .pen, "Hotkey 'p' must switch activeTool to .pen")
+
+            // Draw freehand stroke: down at (10, 10), drag to (30, 20) and (50, 40), up at (50, 40)
+            let downEvent = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+            canvas.mouseDown(with: downEvent)
+
+            let dragEvent1 = NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 30, y: 20), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+            canvas.mouseDragged(with: dragEvent1)
+
+            let dragEvent2 = NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 50, y: 40), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+            canvas.mouseDragged(with: dragEvent2)
+
+            let upEvent = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 50, y: 40), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0.0)!
+            canvas.mouseUp(with: upEvent)
+
+            assert(doc.layers.count == 1, "Pen drawing must commit a PenLayer to document layers")
+            guard let createdPen = doc.layers.first as? PenLayer else {
+                throw NSError(domain: "EditorTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "Created layer must be PenLayer"])
+            }
+            assert(createdPen.points.count >= 2, "Pen layer must contain sampled points")
+            assert(doc.selectedLayerIDs.contains(createdPen.id), "Created pen layer must be automatically selected")
+
+            // Composition rendering must render the pen layer without failure
+            let rendered = doc.renderComposition()
+            assert(rendered != nil, "renderComposition with pen layer must succeed")
         }
     }
 }

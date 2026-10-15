@@ -234,6 +234,11 @@ public final class EditorDocument {
         // 1. Clear active bounds to transparent
         context.clear(CGRect(x: 0, y: 0, width: width, height: height))
 
+        // Set up flipped coordinate system to match EditorCanvasView (isFlipped = true)
+        // (0,0) at top-left, Y increasing downwards
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
+
         // Shift origin if minX or minY are negative so activeCanvasBounds.origin is at (0, 0)
         let offsetX = -activeCanvasBounds.origin.x
         let offsetY = -activeCanvasBounds.origin.y

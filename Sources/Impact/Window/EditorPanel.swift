@@ -106,10 +106,11 @@ public final class EditorPanel: NSPanel {
             canvasView.copyCompositionToClipboard()
         }
 
-        // When closing, if document has annotations and hasn't been saved yet, auto-save to new file
-        if !document.layers.isEmpty && !hasSavedComposition {
+        // Upon closing Impact, always save to file without overwriting original (e.g. original-2.ext)
+        if !hasSavedComposition {
             saveToNextNumberedFile()
         }
+
         super.close()
         onClose?()
     }
@@ -137,8 +138,21 @@ public final class EditorPanel: NSPanel {
             }
         } else {
             baseDir = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
-            baseName = "Annotation"
-            ext = "png"
+            let titleURL = URL(fileURLWithPath: title)
+            let fullFilename = titleURL.deletingPathExtension().lastPathComponent
+            ext = titleURL.pathExtension.isEmpty ? "png" : titleURL.pathExtension
+            if !fullFilename.isEmpty && fullFilename != "Impact" && fullFilename != "Shots Editor" {
+                let pattern = #"^(.*?)-(\d+)$"#
+                if let regex = try? NSRegularExpression(pattern: pattern),
+                   let match = regex.firstMatch(in: fullFilename, range: NSRange(fullFilename.startIndex..., in: fullFilename)) {
+                    let nameRange = Range(match.range(at: 1), in: fullFilename)!
+                    baseName = String(fullFilename[nameRange])
+                } else {
+                    baseName = fullFilename
+                }
+            } else {
+                baseName = "Annotation"
+            }
         }
 
         var counter = 2
@@ -155,7 +169,21 @@ public final class EditorPanel: NSPanel {
     public func saveToNextNumberedFile() -> URL? {
         let targetURL = nextAvailableFileURL()
         let ext = targetURL.pathExtension.lowercased()
-        let format: NSBitmapImageRep.FileType = (ext == "jpg" || ext == "jpeg") ? .jpeg : .png
+        let format: NSBitmapImageRep.FileType
+        switch ext {
+        case "jpg", "jpeg":
+            format = .jpeg
+        case "png":
+            format = .png
+        case "tiff", "tif":
+            format = .tiff
+        case "gif":
+            format = .gif
+        case "bmp":
+            format = .bmp
+        default:
+            format = .png
+        }
         canvasView.saveCompositionToFile(url: targetURL, format: format)
         hasSavedComposition = true
         return targetURL

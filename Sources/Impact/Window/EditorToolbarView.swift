@@ -52,13 +52,15 @@ public final class EditorToolbarView: NSVisualEffectView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
 
-        // Tool buttons: Pointer (V), Arrow (A), Rectangle (R), Counter (C), Highlighter (H), Spotlight (S), Blur (B)
+        // Tool buttons: Pointer (V), Arrow (A), Line (L), Rectangle (R), Pen (P), Highlighter (H), Counter (C), Spotlight (S), Blur (B)
         let tools: [(LayerType, String, String)] = [
             (.select, "cursorarrow", "Pointer (V)"),
             (.arrow, "arrow.up.right", "Arrow (A)"),
+            (.line, "line.diagonal", "Line (L)"),
             (.rectangle, "rectangle", "Rectangle (R)"),
-            (.counter, "1.circle", "Counter (C)"),
+            (.pen, "pencil.tip", "Pen (P)"),
             (.highlighter, "highlighter", "Highlighter (H)"),
+            (.counter, "1.circle", "Counter (C)"),
             (.spotlight, "camera.metering.spot", "Spotlight (S)"),
             (.blur, "drop.fill", "Blur (B)")
         ]

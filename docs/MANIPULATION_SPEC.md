@@ -124,11 +124,38 @@ Segment $i$ curves to $\text{mid}_i$ with control point $P_{i-1}$. The curve ter
 
 ---
 
-## 4. Rectangle Specification
+## 4. Freehand Pen Specification
+
+The Freehand Pen tool (`.pen`, shortcut `P`) creates smooth freehand vector ink strokes imitating a real pen, following the same interaction and smoothing rules as the Highlighter tool with an opaque ink profile and small radius.
+
+### 4.1 Core Geometry & Constants
+- **Radius & Stroke Width**: Small radius $r = 2.0\text{ px}$ (stroke width $W = 4.0\text{ px}$).
+- **Line Caps & Joins**: `.round` caps and `.round` joins.
+- **Sampling Distance Filter**: Consecutive sampled points enforce $\ge 2.0\text{ px}$ separation during drag to avoid vertex bloat while retaining high fidelity.
+
+### 4.2 Pre-Draw Pen Tip Preview (Hover State)
+While `.pen` is active without holding the mouse button down, an outline preview of the pen nib footprint is rendered centered at the cursor position:
+1. **Tip Circle**: Diameter $4.0\text{ px}$ (radius $2.0\text{ px}$).
+2. **Inner Tint**: `color.withAlphaComponent(0.25)`.
+3. **Contrast Stroke**: Outer dark line $1.0\text{ px}$, inner white line $0.75\text{ px}$.
+4. **Precision Center**: $1.5 \times 1.5\text{ px}$ center dot.
+
+### 4.3 Rendering & Single-Point Dots
+- **Ink Rendering**: Standard normal blend mode (`.normal`) with 100% opaque color ink.
+- **Single-Click Dot**: Clicking without dragging commits a solid circular pen dot with diameter $W = 4.0\text{ px}$.
+- **Multi-Point Smoothing**: Strokes with 3+ points construct quadratic Bezier curves through adjacent midpoints.
+
+### 4.4 Non-Scalable Whole-Layer Manipulation
+- Calling `hitTestHandle(point)` strictly returns `nil` (suppressing resize handles).
+- Clicking or dragging anywhere on the pen stroke translates all points uniformly ($P'_i = P_i + \Delta$).
+
+---
+
+## 5. Rectangle Specification
 
 The Rectangle tool (`.rectangle`, shortcut `R`) defines 2D bounding boxes with rounded corners, outline/solid/striped fills, strict handle-only resizing, and hollow boundary dragging.
 
-### 4.1 Structural Constants & Defaults
+### 5.1 Structural Constants & Defaults
 - **Corner Radius**: $R = 6.0\text{ px}$ (effective radius clamped to $\min(R, \frac{\text{width}}{2}, \frac{\text{height}}{2})$).
 - **Default Stroke Width**: $4.0\text{ px}$.
 - **Fill Styles**:
@@ -137,7 +164,7 @@ The Rectangle tool (`.rectangle`, shortcut `R`) defines 2D bounding boxes with r
   - `.striped`: $35\%$ alpha diagonal stripes clipped to rect + stroked perimeter.
 - **Minimum Valid Creation Dimensions**: $\text{width} \ge 6.0\text{ px} \land \text{height} \ge 6.0\text{ px}$.
 
-### 4.2 Control Handles (White Dots)
+### 5.2 Control Handles (White Dots)
 When selected, a rectangle exposes exactly **8 circular white control handles**:
 
 ```
@@ -164,7 +191,7 @@ When selected, a rectangle exposes exactly **8 circular white control handles**:
   - Effective hit radius: $R_{\text{hit}} = \max(\text{radius}, 10.0) = 10.0\text{ px}$.
   - Handle $i$ is hit if $\text{hypot}(P.x - P_{i}.x, P.y - P_{i}.y) \le 10.0\text{ px}$.
 
-### 4.3 Resizing Rules (Handle-Only)
+### 5.3 Resizing Rules (Handle-Only)
 - **Edge Perimeter Resizing Forbidden**: Dragging anywhere along the rectangle edges outside the 8 white dot hit zones **never** triggers resizing. Edge clicks strictly initiate translation.
 - **1D Edge Handle Resizing** ($i \in \{1, 3, 5, 7\}$):
   - Handles $1, 5$ (Top/Bottom): Modifies height against fixed opposite vertical anchor; X position and width remain pinned.
@@ -173,7 +200,7 @@ When selected, a rectangle exposes exactly **8 circular white control handles**:
   - Modifies both width and height simultaneously using the diagonally opposite corner as the fixed origin $(oppX, oppY)$.
   - Minimum dimension clamp: $\text{width} \ge 4.0\text{ px}, \, \text{height} \ge 4.0\text{ px}$.
 
-### 4.4 Catchment Area & Body Dragging
+### 5.4 Catchment Area & Body Dragging
 For outline rectangles, selection and movement are governed by a boundary catchment zone:
 - **Catchment Width**:
   $$C = \max(10.0, \, \text{strokeWidth} + 6.0)$$
@@ -190,7 +217,7 @@ For outline rectangles, selection and movement are governed by a boundary catchm
 
 ---
 
-## 5. Arrow Specification
+## 6. Arrow Specification
 
 The Arrow tool (`.arrow`, shortcut `A`) implements a 3-point quadratic Bezier curve with an auto-aligned arrowhead and shape-retaining affine reorientation.
 
@@ -261,7 +288,7 @@ When selected, the arrow displays **3 white circular handles**: Handle 0 ($P_0$)
 
 ---
 
-## 6. Spotlight Tool Specification
+## 7. Spotlight Tool Specification
 
 The Spotlight tool (`.spotlight`, shortcut `S`) provides a non-compounding dark mask overlay with punched, transparent rectangular highlight holes. It enforces single-overlay lifecycle management and follows all manipulation rules of the rectangle tool.
 
@@ -311,7 +338,7 @@ Spotlight rectangles strictly conform to the 4 core manipulation rules of the re
 
 ---
 
-## 7. Blur Tool Specification
+## 8. Blur Tool Specification
 
 The Blur tool (`.blur`, shortcut `B`) provides localized pixel blurring for privacy and redaction using rectangular selections.
 
@@ -361,7 +388,37 @@ The Blur tool strictly adheres to all standard rectangle manipulation rules:
 
 ---
 
-## 8. Verification & Test Criteria
+## 9. Line Tool Specification
+
+The Line tool (`.line`, shortcut `L`) provides straight line segments between a start point and an end point.
+
+```
+            (Handle 0: Start) ●─────────────────────────● (Handle 1: End)
+```
+
+### 8.1 Creation & Geometry
+1. **Straight Segment**:
+   - Starts at `mouseDown` location $P_0$ and terminates at current drag location $P_1$.
+   - Rendered with continuous stroke width $4.0\text{ px}$ and `.round` line caps.
+2. **Angle Snapping with Shift**:
+   - Holding Shift snaps the line angle to $45^\circ$ increments ($0^\circ, 45^\circ, 90^\circ, 135^\circ$, etc.).
+3. **Validation**:
+   - Lines must have length $\ge 6.0\text{ px}$ upon `mouseUp` to commit.
+
+### 8.2 Handles & Manipulation Rules
+1. **Exactly 2 Control Handles**:
+   - Handle 0 ($P_0$): Start point.
+   - Handle 1 ($P_1$): End point.
+   - Dragging Handle 0 updates $P_0$ while $P_1$ remains anchored.
+   - Dragging Handle 1 updates $P_1$ while $P_0$ remains anchored.
+   - No intermediary control points or bending.
+2. **Body Dragging & Translation**:
+   - Dragging anywhere along the line segment within hit-test catchment translates the whole line ($P_0$ and $P_1$) uniformly.
+   - Soft glowing bluish hover highlight on hover.
+
+---
+
+## 10. Verification & Test Criteria
 
 Any conformant implementation must satisfy the following automated validation assertions:
 

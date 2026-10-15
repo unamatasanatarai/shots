@@ -41,8 +41,11 @@ public final class PenLayer: AnnotationLayer {
     }
 
     public func contains(point: CGPoint) -> Bool {
-        guard points.count >= 2 else { return false }
-        let threshold = max(strokeWidth * 1.5, 10.0)
+        guard !points.isEmpty else { return false }
+        let threshold = max(strokeWidth / 2.0 + 4.0, 10.0)
+        if points.count == 1 {
+            return hypot(point.x - points[0].x, point.y - points[0].y) <= threshold
+        }
         for i in 0..<(points.count - 1) {
             let a = points[i]
             let b = points[i + 1]
@@ -61,9 +64,7 @@ public final class PenLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        guard !points.isEmpty else { return nil }
-        if hypot(point.x - points.first!.x, point.y - points.first!.y) <= radius { return 0 }
-        if hypot(point.x - points.last!.x, point.y - points.last!.y) <= radius { return points.count - 1 }
+        // Freehand pen strokes cannot be scaled, only moved (following highlighter rules).
         return nil
     }
 
@@ -81,7 +82,7 @@ public final class PenLayer: AnnotationLayer {
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
-        guard points.count >= 2 else { return }
+        guard !points.isEmpty else { return }
         context.saveGState()
 
         let strokeColor = NSColor(hex: color).cgColor
@@ -90,18 +91,30 @@ public final class PenLayer: AnnotationLayer {
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
+        if points.count == 1 {
+            let p = points[0]
+            context.setFillColor(strokeColor)
+            context.fillEllipse(in: CGRect(x: p.x - strokeWidth / 2.0, y: p.y - strokeWidth / 2.0, width: strokeWidth, height: strokeWidth))
+            context.restoreGState()
+            return
+        }
+
         context.beginPath()
         context.move(to: points[0])
 
-        // Quadratic smoothing between midpoints
-        for i in 1..<points.count {
-            let mid = CGPoint(
-                x: (points[i - 1].x + points[i].x) / 2.0,
-                y: (points[i - 1].y + points[i].y) / 2.0
-            )
-            context.addQuadCurve(to: mid, control: points[i - 1])
+        if points.count == 2 {
+            context.addLine(to: points[1])
+        } else {
+            // Quadratic smoothing between midpoints (following highlighter rules)
+            for i in 1..<points.count {
+                let mid = CGPoint(
+                    x: (points[i - 1].x + points[i].x) / 2.0,
+                    y: (points[i - 1].y + points[i].y) / 2.0
+                )
+                context.addQuadCurve(to: mid, control: points[i - 1])
+            }
+            context.addLine(to: points.last!)
         }
-        context.addLine(to: points.last!)
         context.strokePath()
 
         context.restoreGState()

@@ -166,9 +166,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // 5. Draw Active Selection Handles & UI
         drawSelectionHandles(in: context)
 
-        // 6. Draw Highlighter Brush Outline Preview
-        if document.activeTool == .highlighter, activeCreatingLayer == nil, let pt = currentMouseCanvasPoint {
-            drawHighlighterOutline(at: pt, in: context)
+        // 6. Draw Brush Outline Preview (Highlighter or Pen)
+        if (document.activeTool == .highlighter || document.activeTool == .pen), activeCreatingLayer == nil, let pt = currentMouseCanvasPoint {
+            let width = (document.activeTool == .highlighter) ? 20.0 : document.activeStrokeWidth
+            drawBrushOutline(at: pt, in: context, strokeWidth: width)
         }
 
         context.restoreGState()
@@ -205,6 +206,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 hoverPath = counter.pathForTeardrop()
             } else if let arrow = target as? ArrowLayer {
                 hoverPath = arrow.pathForArrow()
+            } else if let line = target as? LineLayer {
+                let path = CGMutablePath()
+                path.move(to: line.start)
+                path.addLine(to: line.end)
+                hoverPath = path
             } else {
                 hoverPath = nil
             }
@@ -273,8 +279,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 context.addPath(handlePath)
                 context.strokePath()
                 continue
-            } else if layer is HighlighterLayer {
-                // Highlighting cannot be scaled, only moved: drop control handles
+            } else if layer is HighlighterLayer || layer is PenLayer {
+                // Freehand strokes cannot be scaled, only moved: drop control handles
                 handlePoints = []
             } else if let textLayer = layer as? TextLayer {
                 let tBox = textLayer.getBoundingBox()
@@ -714,9 +720,24 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     height: abs(h)
                 )
             } else if let line = creating as? LineLayer {
-                line.end = point
+                if isShiftPressed {
+                    let dx = point.x - dragStartPoint.x
+                    let dy = point.y - dragStartPoint.y
+                    let angle = atan2(dy, dx)
+                    let snapped = (round(angle / (.pi / 4.0))) * (.pi / 4.0)
+                    let len = hypot(dx, dy)
+                    line.end = CGPoint(x: dragStartPoint.x + len * cos(snapped), y: dragStartPoint.y + len * sin(snapped))
+                } else {
+                    line.end = point
+                }
             } else if let pen = creating as? PenLayer {
-                pen.points.append(point)
+                if let last = pen.points.last {
+                    if hypot(point.x - last.x, point.y - last.y) >= 2.0 {
+                        pen.points.append(point)
+                    }
+                } else {
+                    pen.points.append(point)
+                }
             } else if let hl = creating as? HighlighterLayer {
                 if let last = hl.points.last {
                     if hypot(point.x - last.x, point.y - last.y) >= 2.0 {
@@ -777,7 +798,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 } else if let filter = creating as? FilterLayer {
                     isValidSize = filter.rects.first.map { $0.width >= 6.0 && $0.height >= 6.0 } ?? false
                 } else if let pen = creating as? PenLayer {
-                    isValidSize = pen.points.count >= 2
+                    isValidSize = !pen.points.isEmpty
                 } else if let hl = creating as? HighlighterLayer {
                     isValidSize = !hl.points.isEmpty
                 }
@@ -845,14 +866,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseEntered(with event: NSEvent) {
         currentMouseCanvasPoint = canvasPoint(from: event)
-        if document.activeTool == .highlighter {
+        if document.activeTool == .highlighter || document.activeTool == .pen {
             needsDisplay = true
         }
     }
 
     override public func mouseExited(with event: NSEvent) {
         currentMouseCanvasPoint = nil
-        if document.activeTool == .highlighter {
+        if document.activeTool == .highlighter || document.activeTool == .pen {
             needsDisplay = true
         }
     }
@@ -865,13 +886,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         updateHoverState(to: newlyHovered)
         updateCursorForPoint(point)
-        if document.activeTool == .highlighter {
+        if document.activeTool == .highlighter || document.activeTool == .pen {
             needsDisplay = true
         }
     }
 
     private func updateHoverState(to newLayer: AnnotationLayer?) {
-        let isSolid = (newLayer is CounterLayer || newLayer is ArrowLayer)
+        let isSolid = (newLayer is CounterLayer || newLayer is ArrowLayer || newLayer is LineLayer)
         let candidate = isSolid ? newLayer : nil
 
         if candidate?.id != hoveredLayer?.id {
@@ -928,10 +949,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         needsDisplay = true
     }
 
-    private func drawHighlighterOutline(at point: CGPoint, in context: CGContext) {
+    private func drawBrushOutline(at point: CGPoint, in context: CGContext, strokeWidth: CGFloat) {
         context.saveGState()
 
-        let strokeWidth: CGFloat = 20.0
         let radius = strokeWidth / 2.0
         let rect = CGRect(x: point.x - radius, y: point.y - radius, width: strokeWidth, height: strokeWidth)
 
@@ -943,17 +963,17 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // Outer contrasting stroke (dark shadow/stroke)
         context.setStrokeColor(NSColor.black.withAlphaComponent(0.60).cgColor)
-        context.setLineWidth(2.0)
+        context.setLineWidth(max(1.0, strokeWidth <= 6.0 ? 1.0 : 2.0))
         context.strokeEllipse(in: rect)
 
         // Inner bright stroke
         context.setStrokeColor(NSColor.white.withAlphaComponent(0.95).cgColor)
-        context.setLineWidth(1.0)
+        context.setLineWidth(max(0.5, strokeWidth <= 6.0 ? 0.75 : 1.0))
         context.strokeEllipse(in: rect)
 
         // Center crosshair / precision dot
         context.setFillColor(NSColor.white.cgColor)
-        context.fillEllipse(in: CGRect(x: point.x - 1.0, y: point.y - 1.0, width: 2.0, height: 2.0))
+        context.fillEllipse(in: CGRect(x: point.x - 0.75, y: point.y - 0.75, width: 1.5, height: 1.5))
 
         context.restoreGState()
     }
@@ -1188,12 +1208,20 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .arrow
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
+            } else if key == "l" {
+                document.activeTool = .line
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
             } else if key == "r" {
                 document.activeTool = .rectangle
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
             } else if key == "c" {
                 document.activeTool = .counter
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "p" {
+                document.activeTool = .pen
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
             } else if key == "h" {
@@ -1258,7 +1286,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     public func saveCompositionToFile(url: URL, format: NSBitmapImageRep.FileType = .png) {
         guard let rendered = document.renderComposition() else { return }
         let rep = NSBitmapImageRep(cgImage: rendered)
-        guard let data = rep.representation(using: format, properties: [:]) else { return }
+        let properties: [NSBitmapImageRep.PropertyKey: Any] = (format == .jpeg) ? [.compressionFactor: 0.95] : [:]
+        guard let data = rep.representation(using: format, properties: properties) else { return }
         try? data.write(to: url)
     }
 
