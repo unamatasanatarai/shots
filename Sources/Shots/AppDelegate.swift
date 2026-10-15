@@ -34,6 +34,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeyManager.shared.onScrollingCaptureTrigger = {
             CaptureManager.shared.startScrollingCapture()
         }
+        HotKeyManager.shared.onRulerTrigger = {
+            CaptureManager.shared.startRuler()
+        }
+        HotKeyManager.shared.onColorPickerTrigger = {
+            CaptureManager.shared.startColorPicker()
+        }
         HotKeyManager.shared.onTrigger = {
             CaptureManager.shared.startRegionCapture()
         }

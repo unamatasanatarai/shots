@@ -40,7 +40,16 @@ public enum KeyCodes {
         return result
     }
 
+    public static let noKey: UInt16 = 0xFFFF
+
+    public static func isShortcutAssigned(keyCode: UInt16, carbonMods: UInt32) -> Bool {
+        return keyCode != noKey && carbonMods != 0
+    }
+
     public static func shortcutString(keyCode: UInt16, carbonMods: UInt32) -> String {
+        guard isShortcutAssigned(keyCode: keyCode, carbonMods: carbonMods) else {
+            return "None"
+        }
         let mods = modifierSymbols(carbonMods: carbonMods)
         let key = keyName(for: keyCode)
         return mods + key

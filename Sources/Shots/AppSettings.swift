@@ -77,6 +77,11 @@ public final class AppSettings: ObservableObject {
         public static let ocrShortcutModifiers = "ocrShortcutModifiers"
         public static let scrollingShortcutKeyCode = "scrollingShortcutKeyCode"
         public static let scrollingShortcutModifiers = "scrollingShortcutModifiers"
+        public static let rulerShortcutKeyCode = "rulerShortcutKeyCode"
+        public static let rulerShortcutModifiers = "rulerShortcutModifiers"
+        public static let colorPickerShortcutKeyCode = "colorPickerShortcutKeyCode"
+        public static let colorPickerShortcutModifiers = "colorPickerShortcutModifiers"
+        public static let globalHotkeysEnabled = "globalHotkeysEnabled"
         public static let saveToDisk = "saveToDisk"
         public static let saveDirectoryPath = "saveDirectoryPath"
         public static let copyToClipboard = "copyToClipboard"
@@ -94,6 +99,14 @@ public final class AppSettings: ObservableObject {
     private var isSyncingActionFlags = false
 
     // MARK: - Hotkey Configurations
+
+    @Published public var globalHotkeysEnabled: Bool {
+        didSet {
+            defaults.set(globalHotkeysEnabled, forKey: Keys.globalHotkeysEnabled)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
 
     @Published public var hotkeyKeyCode: UInt16 {
         didSet {
@@ -185,6 +198,38 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    @Published public var rulerShortcutKeyCode: UInt16 {
+        didSet {
+            defaults.set(Int(rulerShortcutKeyCode), forKey: Keys.rulerShortcutKeyCode)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var rulerShortcutModifiers: UInt32 {
+        didSet {
+            defaults.set(Int(rulerShortcutModifiers), forKey: Keys.rulerShortcutModifiers)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var colorPickerShortcutKeyCode: UInt16 {
+        didSet {
+            defaults.set(Int(colorPickerShortcutKeyCode), forKey: Keys.colorPickerShortcutKeyCode)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
+    @Published public var colorPickerShortcutModifiers: UInt32 {
+        didSet {
+            defaults.set(Int(colorPickerShortcutModifiers), forKey: Keys.colorPickerShortcutModifiers)
+            checkForShortcutConflicts()
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
+
     // MARK: - Post-Capture Action & Storage Toggles
 
     @Published public var postCaptureAction: PostCaptureAction {
@@ -196,10 +241,7 @@ public final class AppSettings: ObservableObject {
             case .saveToDisk:
                 saveToDisk = true
                 copyToClipboard = false
-            case .copyToClipboard:
-                saveToDisk = false
-                copyToClipboard = true
-            case .both:
+            case .copyToClipboard, .both:
                 saveToDisk = true
                 copyToClipboard = true
             }
@@ -207,9 +249,13 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    /// Screenshots are always saved to disk.
     @Published public var saveToDisk: Bool {
         didSet {
-            defaults.set(saveToDisk, forKey: Keys.saveToDisk)
+            if !saveToDisk {
+                saveToDisk = true
+            }
+            defaults.set(true, forKey: Keys.saveToDisk)
             syncPostCaptureActionFromFlags()
         }
     }
@@ -229,14 +275,7 @@ public final class AppSettings: ObservableObject {
 
     private func syncPostCaptureActionFromFlags() {
         guard !isSyncingActionFlags else { return }
-        let newAction: PostCaptureAction
-        if saveToDisk && copyToClipboard {
-            newAction = .both
-        } else if copyToClipboard {
-            newAction = .copyToClipboard
-        } else {
-            newAction = .saveToDisk
-        }
+        let newAction: PostCaptureAction = copyToClipboard ? .both : .saveToDisk
         if postCaptureAction != newAction {
             isSyncingActionFlags = true
             postCaptureAction = newAction
@@ -309,6 +348,8 @@ public final class AppSettings: ObservableObject {
         // Scrolling: Cmd + Shift + 5 (kVK_ANSI_5)
         let defaultModifiers = UInt32(cmdKey | shiftKey)
 
+        self.globalHotkeysEnabled = defaults.object(forKey: Keys.globalHotkeysEnabled) as? Bool ?? true
+
         if defaults.object(forKey: Keys.hotkeyKeyCode) != nil {
             self.hotkeyKeyCode = UInt16(defaults.integer(forKey: Keys.hotkeyKeyCode))
         } else {
@@ -369,38 +410,40 @@ public final class AppSettings: ObservableObject {
             self.scrollingShortcutModifiers = defaultModifiers
         }
 
+        if defaults.object(forKey: Keys.rulerShortcutKeyCode) != nil {
+            self.rulerShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.rulerShortcutKeyCode))
+        } else {
+            self.rulerShortcutKeyCode = UInt16(kVK_ANSI_M)
+        }
+
+        if defaults.object(forKey: Keys.rulerShortcutModifiers) != nil {
+            self.rulerShortcutModifiers = UInt32(defaults.integer(forKey: Keys.rulerShortcutModifiers))
+        } else {
+            self.rulerShortcutModifiers = defaultModifiers
+        }
+
+        if defaults.object(forKey: Keys.colorPickerShortcutKeyCode) != nil {
+            self.colorPickerShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.colorPickerShortcutKeyCode))
+        } else {
+            self.colorPickerShortcutKeyCode = UInt16(kVK_ANSI_C)
+        }
+
+        if defaults.object(forKey: Keys.colorPickerShortcutModifiers) != nil {
+            self.colorPickerShortcutModifiers = UInt32(defaults.integer(forKey: Keys.colorPickerShortcutModifiers))
+        } else {
+            self.colorPickerShortcutModifiers = defaultModifiers
+        }
+
         let resolvedDefaultFolder = AppSettings.defaultSaveLocation()
         let configuredPath = defaults.string(forKey: Keys.saveDirectoryPath)
         let finalPath = (configuredPath != nil && !configuredPath!.isEmpty) ? configuredPath! : resolvedDefaultFolder
         self.saveDirectoryPath = finalPath
 
-        if let actionRaw = defaults.string(forKey: Keys.postCaptureAction),
-           let action = PostCaptureAction(rawValue: actionRaw) {
-            self.postCaptureAction = action
-            switch action {
-            case .saveToDisk:
-                self.saveToDisk = true
-                self.copyToClipboard = false
-            case .copyToClipboard:
-                self.saveToDisk = false
-                self.copyToClipboard = true
-            case .both:
-                self.saveToDisk = true
-                self.copyToClipboard = true
-            }
-        } else {
-            let savedDisk = defaults.object(forKey: Keys.saveToDisk) as? Bool ?? true
-            let copiedClip = defaults.object(forKey: Keys.copyToClipboard) as? Bool ?? true
-            self.saveToDisk = savedDisk
-            self.copyToClipboard = copiedClip
-            if savedDisk && copiedClip {
-                self.postCaptureAction = .both
-            } else if copiedClip {
-                self.postCaptureAction = .copyToClipboard
-            } else {
-                self.postCaptureAction = .saveToDisk
-            }
-        }
+        // Screenshots always save to disk
+        self.saveToDisk = true
+        let copiedClip = defaults.object(forKey: Keys.copyToClipboard) as? Bool ?? true
+        self.copyToClipboard = copiedClip
+        self.postCaptureAction = copiedClip ? .both : .saveToDisk
 
         self.includeCursor = defaults.object(forKey: Keys.includeCursor) as? Bool ?? false
         self.captureDelaySeconds = defaults.object(forKey: Keys.captureDelaySeconds) as? Int ?? 0
@@ -477,6 +520,14 @@ public final class AppSettings: ObservableObject {
         KeyCodes.shortcutString(keyCode: scrollingShortcutKeyCode, carbonMods: scrollingShortcutModifiers)
     }
 
+    public var rulerShortcutDisplayString: String {
+        KeyCodes.shortcutString(keyCode: rulerShortcutKeyCode, carbonMods: rulerShortcutModifiers)
+    }
+
+    public var colorPickerShortcutDisplayString: String {
+        KeyCodes.shortcutString(keyCode: colorPickerShortcutKeyCode, carbonMods: colorPickerShortcutModifiers)
+    }
+
     public var hotkeyDisplayString: String {
         areaShortcutDisplayString
     }
@@ -491,13 +542,21 @@ public final class AppSettings: ObservableObject {
     }
 
     public func checkForShortcutConflicts() {
+        guard globalHotkeysEnabled else {
+            isHotkeyConflict = false
+            hotkeyErrorMessage = nil
+            return
+        }
+
         let shortcuts = [
             ("Area", hotkeyKeyCode, hotkeyModifiers),
             ("Fullscreen", fullscreenShortcutKeyCode, fullscreenShortcutModifiers),
             ("Repeat", repeatShortcutKeyCode, repeatShortcutModifiers),
             ("OCR", ocrShortcutKeyCode, ocrShortcutModifiers),
-            ("Scrolling", scrollingShortcutKeyCode, scrollingShortcutModifiers)
-        ]
+            ("Scrolling", scrollingShortcutKeyCode, scrollingShortcutModifiers),
+            ("Ruler", rulerShortcutKeyCode, rulerShortcutModifiers),
+            ("Color Picker", colorPickerShortcutKeyCode, colorPickerShortcutModifiers)
+        ].filter { KeyCodes.isShortcutAssigned(keyCode: $0.1, carbonMods: $0.2) }
 
         for i in 0..<shortcuts.count {
             for j in (i + 1)..<shortcuts.count {
@@ -512,7 +571,27 @@ public final class AppSettings: ObservableObject {
         hotkeyErrorMessage = nil
     }
 
+    public func clearAllHotkeys() {
+        let noKey = KeyCodes.noKey
+        hotkeyKeyCode = noKey
+        hotkeyModifiers = 0
+        fullscreenShortcutKeyCode = noKey
+        fullscreenShortcutModifiers = 0
+        repeatShortcutKeyCode = noKey
+        repeatShortcutModifiers = 0
+        ocrShortcutKeyCode = noKey
+        ocrShortcutModifiers = 0
+        scrollingShortcutKeyCode = noKey
+        scrollingShortcutModifiers = 0
+        rulerShortcutKeyCode = noKey
+        rulerShortcutModifiers = 0
+        colorPickerShortcutKeyCode = noKey
+        colorPickerShortcutModifiers = 0
+        checkForShortcutConflicts()
+    }
+
     public func resetHotkeysToDefault() {
+        globalHotkeysEnabled = true
         hotkeyKeyCode = UInt16(kVK_ANSI_4)
         hotkeyModifiers = UInt32(cmdKey | shiftKey)
         fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
@@ -523,6 +602,10 @@ public final class AppSettings: ObservableObject {
         ocrShortcutModifiers = UInt32(cmdKey | shiftKey)
         scrollingShortcutKeyCode = UInt16(kVK_ANSI_5)
         scrollingShortcutModifiers = UInt32(cmdKey | shiftKey)
+        rulerShortcutKeyCode = UInt16(kVK_ANSI_M)
+        rulerShortcutModifiers = UInt32(cmdKey | shiftKey)
+        colorPickerShortcutKeyCode = UInt16(kVK_ANSI_C)
+        colorPickerShortcutModifiers = UInt32(cmdKey | shiftKey)
         checkForShortcutConflicts()
     }
 

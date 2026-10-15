@@ -11,15 +11,8 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var ocrRecognitionMenuItem: NSMenuItem!
     private var screenRulerMenuItem: NSMenuItem!
     private var colorPickerMenuItem: NSMenuItem!
-    private var revealLatestMenuItem: NSMenuItem!
     private var recentScreenshotsMenuItem: NSMenuItem!
-    private var saveToDiskMenuItem: NSMenuItem!
-    private var copyToClipboardMenuItem: NSMenuItem!
-    private var postCaptureActionMenuItem: NSMenuItem!
     private var includeCursorMenuItem: NSMenuItem!
-    private var delayMenuItem: NSMenuItem!
-    private var formatMenuItem: NSMenuItem!
-    private var qualityMenuItem: NSMenuItem!
     private var launchAtLoginMenuItem: NSMenuItem!
 
     public override init() {
@@ -174,18 +167,6 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             colorPickerMenuItem.image = pickerIcon
         }
         menu.addItem(colorPickerMenuItem)
-        revealLatestMenuItem = NSMenuItem(
-            title: "Reveal Latest Screenshot",
-            action: #selector(revealLatestScreenshotAction),
-            keyEquivalent: ""
-        )
-        revealLatestMenuItem.target = self
-        if let docIcon = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: nil) {
-            docIcon.isTemplate = true
-            revealLatestMenuItem.image = docIcon
-        }
-        menu.addItem(revealLatestMenuItem)
-
         // 5. Recent Screenshots
         recentScreenshotsMenuItem = NSMenuItem(
             title: "Recent Screenshots",
@@ -202,58 +183,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // 6. Impact Options
-        let openImpactMenuItem = NSMenuItem(
-            title: "Open Image in Impact...",
-            action: #selector(openImageInImpactAction),
-            keyEquivalent: "o"
-        )
-        openImpactMenuItem.target = self
-        if let editIcon = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil) {
-            editIcon.isTemplate = true
-            openImpactMenuItem.image = editIcon
-        }
-        menu.addItem(openImpactMenuItem)
-
-        let openTestImageMenuItem = NSMenuItem(
-            title: "Open Test Image in Impact",
-            action: #selector(openTestImageInImpactAction),
-            keyEquivalent: ""
-        )
-        openTestImageMenuItem.target = self
-        if let testIcon = NSImage(systemSymbolName: "photo.badge.checkmark", accessibilityDescription: nil) {
-            testIcon.isTemplate = true
-            openTestImageMenuItem.image = testIcon
-        }
-        menu.addItem(openTestImageMenuItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // 3. Quick Toggles
-        saveToDiskMenuItem = NSMenuItem(
-            title: "Save to Folder",
-            action: nil,
-            keyEquivalent: ""
-        )
-        saveToDiskMenuItem.toolTip = "Saving to disk is mandatory for all screenshots"
-        if let folderIcon = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
-            folderIcon.isTemplate = true
-            saveToDiskMenuItem.image = folderIcon
-        }
-        menu.addItem(saveToDiskMenuItem)
-
-        copyToClipboardMenuItem = NSMenuItem(
-            title: "Copy to Clipboard",
-            action: #selector(toggleCopyToClipboard),
-            keyEquivalent: ""
-        )
-        copyToClipboardMenuItem.target = self
-        if let clipIcon = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil) {
-            clipIcon.isTemplate = true
-            copyToClipboardMenuItem.image = clipIcon
-        }
-        menu.addItem(copyToClipboardMenuItem)
-
+        // Quick Toggles: Include Cursor & Launch at Login
         includeCursorMenuItem = NSMenuItem(
             title: "Include Cursor",
             action: #selector(toggleIncludeCursor),
@@ -266,77 +196,6 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(includeCursorMenuItem)
 
-        menu.addItem(NSMenuItem.separator())
-
-        // Capture Delay submenu
-        delayMenuItem = NSMenuItem(title: "Capture Delay", action: nil, keyEquivalent: "")
-        if let timerIcon = NSImage(systemSymbolName: "timer", accessibilityDescription: nil) {
-            timerIcon.isTemplate = true
-            delayMenuItem.image = timerIcon
-        }
-        let delayMenu = NSMenu()
-        let delays = [(0, "None (0s)"), (3, "3 seconds"), (5, "5 seconds"), (10, "10 seconds")]
-        for (sec, title) in delays {
-            let item = NSMenuItem(title: title, action: #selector(setDelayAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = sec
-            delayMenu.addItem(item)
-        }
-        delayMenuItem.submenu = delayMenu
-        menu.addItem(delayMenuItem)
-
-        // Image Format submenu
-        formatMenuItem = NSMenuItem(title: "Image Format", action: nil, keyEquivalent: "")
-        if let photoIcon = NSImage(systemSymbolName: "photo", accessibilityDescription: nil) {
-            photoIcon.isTemplate = true
-            formatMenuItem.image = photoIcon
-        }
-        let formatMenu = NSMenu()
-        for format in ImageFormat.allCases {
-            let item = NSMenuItem(title: format.displayName, action: #selector(setFormatAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = format
-            formatMenu.addItem(item)
-        }
-        formatMenuItem.submenu = formatMenu
-        menu.addItem(formatMenuItem)
-
-        // JPG Quality submenu
-        qualityMenuItem = NSMenuItem(title: "JPG Quality", action: nil, keyEquivalent: "")
-        if let sliderIcon = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil) {
-            sliderIcon.isTemplate = true
-            qualityMenuItem.image = sliderIcon
-        }
-        let qualityMenu = NSMenu()
-        let qualityOptions = [(60, "60% (Compact)"), (80, "80% (Default)"), (90, "90% (High)"), (100, "100% (Maximum)")]
-        for (q, title) in qualityOptions {
-            let item = NSMenuItem(title: title, action: #selector(setQualityAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = q
-            qualityMenu.addItem(item)
-        }
-        qualityMenuItem.submenu = qualityMenu
-        menu.addItem(qualityMenuItem)
-
-        // Post-Capture Action submenu
-        postCaptureActionMenuItem = NSMenuItem(title: "Post-Capture Action", action: nil, keyEquivalent: "")
-        if let docIcon = NSImage(systemSymbolName: "arrow.right.doc.on.clipboard", accessibilityDescription: nil) {
-            docIcon.isTemplate = true
-            postCaptureActionMenuItem.image = docIcon
-        }
-        let postCaptureMenu = NSMenu()
-        for action in PostCaptureAction.allCases {
-            let item = NSMenuItem(title: action.displayName, action: #selector(setPostCaptureAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = action
-            postCaptureMenu.addItem(item)
-        }
-        postCaptureActionMenuItem.submenu = postCaptureMenu
-        menu.addItem(postCaptureActionMenuItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Launch at Login
         launchAtLoginMenuItem = NSMenuItem(
             title: "Launch at Login",
             action: #selector(toggleLaunchAtLogin),
@@ -349,7 +208,9 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(launchAtLoginMenuItem)
 
-        // 4. Preferences & Hotkeys
+        menu.addItem(NSMenuItem.separator())
+
+        // Preferences & Screenshots Folder
         let prefsItem = NSMenuItem(
             title: "Preferences & Hotkeys...",
             action: #selector(openPreferencesAction),
@@ -362,7 +223,6 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(prefsItem)
 
-        // 5. Open Screenshots Folder
         let folderItem = NSMenuItem(
             title: "Open Screenshots Folder",
             action: #selector(openFolderAction),
@@ -375,22 +235,9 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(folderItem)
 
-        // 6. Change Save Location
-        let changeFolderItem = NSMenuItem(
-            title: "Change Save Location...",
-            action: #selector(changeFolderAction),
-            keyEquivalent: ""
-        )
-        changeFolderItem.target = self
-        if let folderBadgeIcon = NSImage(systemSymbolName: "folder.badge.gearshape", accessibilityDescription: nil) {
-            folderBadgeIcon.isTemplate = true
-            changeFolderItem.image = folderBadgeIcon
-        }
-        menu.addItem(changeFolderItem)
-
         menu.addItem(NSMenuItem.separator())
 
-        // 6. Quit Shots
+        // Quit Shots
         let quitItem = NSMenuItem(
             title: "Quit Shots",
             action: #selector(quitAction),
@@ -414,50 +261,29 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         let repShortcut = settings.repeatShortcutDisplayString
         let ocrShortcut = settings.ocrShortcutDisplayString
         let scrollShortcut = settings.scrollingShortcutDisplayString
-        captureRegionMenuItem.title = "Capture Region (\(areaShortcut))"
-        captureFullscreenMenuItem.title = "Capture Fullscreen (\(fsShortcut))"
-        scrollingCaptureMenuItem.title = "Scrolling Capture (\(scrollShortcut))"
-        repeatScreenshotMenuItem.title = "Repeat Previous Screenshot (\(repShortcut))"
-        ocrRecognitionMenuItem.title = "OCR Recognition (\(ocrShortcut))"
+        let rulerShortcut = settings.rulerShortcutDisplayString
+        let colorPickerShortcut = settings.colorPickerShortcutDisplayString
+
+        let showShortcuts = settings.globalHotkeysEnabled
+        let formatTitle: (String, String) -> String = { base, shortcut in
+            (showShortcuts && shortcut != "None") ? "\(base) (\(shortcut))" : base
+        }
+
+        captureRegionMenuItem.title = formatTitle("Capture Region", areaShortcut)
+        captureFullscreenMenuItem.title = formatTitle("Capture Fullscreen", fsShortcut)
+        scrollingCaptureMenuItem.title = formatTitle("Scrolling Capture", scrollShortcut)
+        repeatScreenshotMenuItem.title = formatTitle("Repeat Previous Screenshot", repShortcut)
+        ocrRecognitionMenuItem.title = formatTitle("OCR Recognition", ocrShortcut)
+        screenRulerMenuItem.title = formatTitle("Screen Ruler", rulerShortcut)
+        colorPickerMenuItem.title = formatTitle("Color Picker", colorPickerShortcut)
         repeatScreenshotMenuItem.isEnabled = (CaptureManager.shared.lastCapture != nil)
-        revealLatestMenuItem.isEnabled = (SaveService.shared.resolveLatestScreenshotURL() != nil)
-
         if let button = statusItem.button {
-            button.toolTip = "Shots — Click for options or press \(areaShortcut)"
+            button.toolTip = (showShortcuts && areaShortcut != "None")
+                ? "Shots — Click for options or press \(areaShortcut)"
+                : "Shots — Click for options"
         }
 
-        saveToDiskMenuItem.state = .on
-        copyToClipboardMenuItem.state = settings.copyToClipboard ? .on : .off
         includeCursorMenuItem.state = settings.includeCursor ? .on : .off
-
-        if let delayMenu = delayMenuItem?.submenu {
-            for item in delayMenu.items {
-                item.state = (item.tag == settings.captureDelaySeconds) ? .on : .off
-            }
-        }
-
-        if let formatMenu = formatMenuItem?.submenu {
-            for item in formatMenu.items {
-                if let fmt = item.representedObject as? ImageFormat {
-                    item.state = (fmt == settings.imageFormat) ? .on : .off
-                }
-            }
-        }
-
-        if let qualityMenu = qualityMenuItem?.submenu {
-            for item in qualityMenu.items {
-                item.state = (item.tag == settings.jpgQuality) ? .on : .off
-            }
-        }
-
-        if let postMenu = postCaptureActionMenuItem?.submenu {
-            for item in postMenu.items {
-                if let action = item.representedObject as? PostCaptureAction {
-                    item.state = (action == settings.postCaptureAction) ? .on : .off
-                }
-            }
-        }
-
         launchAtLoginMenuItem.state = settings.launchAtLogin ? .on : .off
 
         updateRecentScreenshotsMenu()
@@ -628,10 +454,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         _ = SaveService.shared.revealLatestScreenshot()
     }
 
-    @objc private func toggleSaveToDisk() {
-        AppSettings.shared.saveToDisk.toggle()
-        updateMenuItemsState()
-    }
+
 
     @objc private func toggleCopyToClipboard() {
         AppSettings.shared.copyToClipboard.toggle()
@@ -660,12 +483,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         updateMenuItemsState()
     }
 
-    @objc private func setPostCaptureAction(_ sender: NSMenuItem) {
-        if let action = sender.representedObject as? PostCaptureAction {
-            AppSettings.shared.postCaptureAction = action
-            updateMenuItemsState()
-        }
-    }
+
 
     @objc private func toggleLaunchAtLogin() {
         let current = AppSettings.shared.launchAtLogin

@@ -10,6 +10,8 @@ public final class HotKeyManager {
     private var hotKeyRefRepeat: EventHotKeyRef?
     private var hotKeyRefOCR: EventHotKeyRef?
     private var hotKeyRefScrolling: EventHotKeyRef?
+    private var hotKeyRefRuler: EventHotKeyRef?
+    private var hotKeyRefColorPicker: EventHotKeyRef?
 
     private let signature: OSType = 0x5343524E /* 'SCRN' */
 
@@ -19,6 +21,8 @@ public final class HotKeyManager {
     public var onRepeatCaptureTrigger: (() -> Void)?
     public var onOCRCaptureTrigger: (() -> Void)?
     public var onScrollingCaptureTrigger: (() -> Void)?
+    public var onRulerTrigger: (() -> Void)?
+    public var onColorPickerTrigger: (() -> Void)?
 
     public init() {
         installCarbonEventHandler()
@@ -82,6 +86,12 @@ public final class HotKeyManager {
         unregisterHotkey()
 
         let settings = AppSettings.shared
+        guard settings.globalHotkeysEnabled else {
+            settings.isHotkeyConflict = false
+            settings.hotkeyErrorMessage = nil
+            return true
+        }
+
         settings.checkForShortcutConflicts()
         if settings.isHotkeyConflict {
             return false
@@ -90,73 +100,115 @@ public final class HotKeyManager {
         var allSucceeded = true
 
         // 1. Area Screenshot (id: 1)
-        let areaStatus = RegisterEventHotKey(
-            UInt32(settings.hotkeyKeyCode),
-            settings.hotkeyModifiers,
-            EventHotKeyID(signature: signature, id: 1),
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRefArea
-        )
-        if areaStatus != noErr {
-            NSLog("Failed to register Area shortcut (%@): %d", settings.areaShortcutDisplayString, areaStatus)
-            allSucceeded = false
+        if KeyCodes.isShortcutAssigned(keyCode: settings.hotkeyKeyCode, carbonMods: settings.hotkeyModifiers) {
+            let areaStatus = RegisterEventHotKey(
+                UInt32(settings.hotkeyKeyCode),
+                settings.hotkeyModifiers,
+                EventHotKeyID(signature: signature, id: 1),
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRefArea
+            )
+            if areaStatus != noErr {
+                NSLog("Failed to register Area shortcut (%@): %d", settings.areaShortcutDisplayString, areaStatus)
+                allSucceeded = false
+            }
         }
 
         // 2. Fullscreen Screenshot (id: 2)
-        let fsStatus = RegisterEventHotKey(
-            UInt32(settings.fullscreenShortcutKeyCode),
-            settings.fullscreenShortcutModifiers,
-            EventHotKeyID(signature: signature, id: 2),
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRefFullscreen
-        )
-        if fsStatus != noErr {
-            NSLog("Failed to register Fullscreen shortcut (%@): %d", settings.fullscreenShortcutDisplayString, fsStatus)
-            allSucceeded = false
+        if KeyCodes.isShortcutAssigned(keyCode: settings.fullscreenShortcutKeyCode, carbonMods: settings.fullscreenShortcutModifiers) {
+            let fsStatus = RegisterEventHotKey(
+                UInt32(settings.fullscreenShortcutKeyCode),
+                settings.fullscreenShortcutModifiers,
+                EventHotKeyID(signature: signature, id: 2),
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRefFullscreen
+            )
+            if fsStatus != noErr {
+                NSLog("Failed to register Fullscreen shortcut (%@): %d", settings.fullscreenShortcutDisplayString, fsStatus)
+                allSucceeded = false
+            }
         }
 
         // 3. Repeat Previous Screenshot (id: 3)
-        let repStatus = RegisterEventHotKey(
-            UInt32(settings.repeatShortcutKeyCode),
-            settings.repeatShortcutModifiers,
-            EventHotKeyID(signature: signature, id: 3),
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRefRepeat
-        )
-        if repStatus != noErr {
-            NSLog("Failed to register Repeat shortcut (%@): %d", settings.repeatShortcutDisplayString, repStatus)
-            allSucceeded = false
+        if KeyCodes.isShortcutAssigned(keyCode: settings.repeatShortcutKeyCode, carbonMods: settings.repeatShortcutModifiers) {
+            let repStatus = RegisterEventHotKey(
+                UInt32(settings.repeatShortcutKeyCode),
+                settings.repeatShortcutModifiers,
+                EventHotKeyID(signature: signature, id: 3),
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRefRepeat
+            )
+            if repStatus != noErr {
+                NSLog("Failed to register Repeat shortcut (%@): %d", settings.repeatShortcutDisplayString, repStatus)
+                allSucceeded = false
+            }
         }
 
         // 4. OCR Recognition (id: 4)
-        let ocrStatus = RegisterEventHotKey(
-            UInt32(settings.ocrShortcutKeyCode),
-            settings.ocrShortcutModifiers,
-            EventHotKeyID(signature: signature, id: 4),
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRefOCR
-        )
-        if ocrStatus != noErr {
-            NSLog("Failed to register OCR shortcut (%@): %d", settings.ocrShortcutDisplayString, ocrStatus)
-            allSucceeded = false
+        if KeyCodes.isShortcutAssigned(keyCode: settings.ocrShortcutKeyCode, carbonMods: settings.ocrShortcutModifiers) {
+            let ocrStatus = RegisterEventHotKey(
+                UInt32(settings.ocrShortcutKeyCode),
+                settings.ocrShortcutModifiers,
+                EventHotKeyID(signature: signature, id: 4),
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRefOCR
+            )
+            if ocrStatus != noErr {
+                NSLog("Failed to register OCR shortcut (%@): %d", settings.ocrShortcutDisplayString, ocrStatus)
+                allSucceeded = false
+            }
         }
 
         // 5. Scrolling Capture (id: 5)
-        let scrollStatus = RegisterEventHotKey(
-            UInt32(settings.scrollingShortcutKeyCode),
-            settings.scrollingShortcutModifiers,
-            EventHotKeyID(signature: signature, id: 5),
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRefScrolling
-        )
-        if scrollStatus != noErr {
-            NSLog("Failed to register Scrolling shortcut (%@): %d", settings.scrollingShortcutDisplayString, scrollStatus)
-            allSucceeded = false
+        if KeyCodes.isShortcutAssigned(keyCode: settings.scrollingShortcutKeyCode, carbonMods: settings.scrollingShortcutModifiers) {
+            let scrollStatus = RegisterEventHotKey(
+                UInt32(settings.scrollingShortcutKeyCode),
+                settings.scrollingShortcutModifiers,
+                EventHotKeyID(signature: signature, id: 5),
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRefScrolling
+            )
+            if scrollStatus != noErr {
+                NSLog("Failed to register Scrolling shortcut (%@): %d", settings.scrollingShortcutDisplayString, scrollStatus)
+                allSucceeded = false
+            }
+        }
+
+        // 6. Screen Ruler (id: 6)
+        if KeyCodes.isShortcutAssigned(keyCode: settings.rulerShortcutKeyCode, carbonMods: settings.rulerShortcutModifiers) {
+            let rulerStatus = RegisterEventHotKey(
+                UInt32(settings.rulerShortcutKeyCode),
+                settings.rulerShortcutModifiers,
+                EventHotKeyID(signature: signature, id: 6),
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRefRuler
+            )
+            if rulerStatus != noErr {
+                NSLog("Failed to register Ruler shortcut (%@): %d", settings.rulerShortcutDisplayString, rulerStatus)
+                allSucceeded = false
+            }
+        }
+
+        // 7. Color Picker (id: 7)
+        if KeyCodes.isShortcutAssigned(keyCode: settings.colorPickerShortcutKeyCode, carbonMods: settings.colorPickerShortcutModifiers) {
+            let pickerStatus = RegisterEventHotKey(
+                UInt32(settings.colorPickerShortcutKeyCode),
+                settings.colorPickerShortcutModifiers,
+                EventHotKeyID(signature: signature, id: 7),
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRefColorPicker
+            )
+            if pickerStatus != noErr {
+                NSLog("Failed to register Color Picker shortcut (%@): %d", settings.colorPickerShortcutDisplayString, pickerStatus)
+                allSucceeded = false
+            }
         }
 
         if !allSucceeded {
@@ -191,6 +243,14 @@ public final class HotKeyManager {
             UnregisterEventHotKey(ref)
             hotKeyRefScrolling = nil
         }
+        if let ref = hotKeyRefRuler {
+            UnregisterEventHotKey(ref)
+            hotKeyRefRuler = nil
+        }
+        if let ref = hotKeyRefColorPicker {
+            UnregisterEventHotKey(ref)
+            hotKeyRefColorPicker = nil
+        }
     }
 
     private func handleHotkeyEvent(id: UInt32) {
@@ -211,6 +271,10 @@ public final class HotKeyManager {
                 self.onOCRCaptureTrigger?()
             case 5:
                 self.onScrollingCaptureTrigger?()
+            case 6:
+                self.onRulerTrigger?()
+            case 7:
+                self.onColorPickerTrigger?()
             default:
                 self.onTrigger?()
             }

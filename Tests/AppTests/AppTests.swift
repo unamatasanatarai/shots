@@ -75,9 +75,10 @@ public struct AppTests {
             assert(!settings.saveDirectoryPath.isEmpty, "saveDirectoryPath must have default path")
             assert(settings.scrollingCaptureSpeed == .normal, "scrollingCaptureSpeed must default to .normal")
 
-            // Verify mutations persist
+            // Verify saveToDisk is mandatory and remains true
             settings.saveToDisk = false
-            assert(testDefaults.bool(forKey: AppSettings.Keys.saveToDisk) == false, "UserDefaults must reflect mutation")
+            assert(settings.saveToDisk == true, "saveToDisk must remain true as disk saving is mandatory")
+            assert(testDefaults.bool(forKey: AppSettings.Keys.saveToDisk) == true, "UserDefaults must reflect mandatory saveToDisk")
 
             settings.scrollingCaptureSpeed = .slow
             assert(testDefaults.string(forKey: AppSettings.Keys.scrollingCaptureSpeed) == ScrollingCaptureSpeed.slow.rawValue, "UserDefaults must store updated scrollingCaptureSpeed")
@@ -458,32 +459,29 @@ public struct AppTests {
 
             let settings = AppSettings(defaults: defaults)
 
-            // Test 1: Setting .saveToDisk
+            // Test 1: Setting .saveToDisk (saves to disk, no clipboard copy)
             settings.postCaptureAction = .saveToDisk
-            assert(settings.saveToDisk == true, "saveToDisk must be true for .saveToDisk")
+            assert(settings.saveToDisk == true, "saveToDisk must always be true")
             assert(settings.copyToClipboard == false, "copyToClipboard must be false for .saveToDisk")
             assert(defaults.string(forKey: AppSettings.Keys.postCaptureAction) == PostCaptureAction.saveToDisk.rawValue, "UserDefaults must persist postCaptureAction")
 
-            // Test 2: Setting .copyToClipboard
+            // Test 2: Setting .copyToClipboard (saves to disk AND copies to clipboard)
             settings.postCaptureAction = .copyToClipboard
-            assert(settings.saveToDisk == false, "saveToDisk must be false for .copyToClipboard")
+            assert(settings.saveToDisk == true, "saveToDisk must always be true")
             assert(settings.copyToClipboard == true, "copyToClipboard must be true for .copyToClipboard")
-            assert(defaults.string(forKey: AppSettings.Keys.postCaptureAction) == PostCaptureAction.copyToClipboard.rawValue, "UserDefaults must persist postCaptureAction")
 
-            // Test 3: Setting .both
+            // Test 3: Setting .both (saves to disk AND copies to clipboard)
             settings.postCaptureAction = .both
             assert(settings.saveToDisk == true, "saveToDisk must be true for .both")
             assert(settings.copyToClipboard == true, "copyToClipboard must be true for .both")
             assert(defaults.string(forKey: AppSettings.Keys.postCaptureAction) == PostCaptureAction.both.rawValue, "UserDefaults must persist postCaptureAction")
 
             // Test 4: Mutating flags directly syncs postCaptureAction
-            settings.saveToDisk = true
             settings.copyToClipboard = false
             assert(settings.postCaptureAction == .saveToDisk, "Flag mutation must update postCaptureAction to .saveToDisk")
 
-            settings.saveToDisk = false
             settings.copyToClipboard = true
-            assert(settings.postCaptureAction == .copyToClipboard, "Flag mutation must update postCaptureAction to .copyToClipboard")
+            assert(settings.postCaptureAction == .both, "Flag mutation must update postCaptureAction to .both")
 
             // Test 5: Pasteboard copy verification with mock image
             let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -527,28 +525,22 @@ public struct AppTests {
             assert(titles.contains(where: { $0.contains("Capture Region") }), "Menu must contain Capture Region item")
             assert(titles.contains(where: { $0.contains("Capture Fullscreen") }), "Menu must contain Capture Fullscreen item")
             assert(titles.contains(where: { $0.contains("Repeat Previous Screenshot") }), "Menu must contain Repeat Previous Screenshot item")
-            assert(titles.contains("Save to Folder"), "Menu must contain Save to Folder item")
-            assert(titles.contains("Copy to Clipboard"), "Menu must contain Copy to Clipboard item")
+            assert(titles.contains(where: { $0.contains("Screen Ruler") }), "Menu must contain Screen Ruler item")
+            assert(titles.contains(where: { $0.contains("Color Picker") }), "Menu must contain Color Picker item")
             assert(titles.contains("Include Cursor"), "Menu must contain Include Cursor item")
-            assert(titles.contains("Capture Delay"), "Menu must contain Capture Delay submenu")
-            assert(titles.contains("Image Format"), "Menu must contain Image Format submenu")
-            assert(titles.contains("JPG Quality"), "Menu must contain JPG Quality submenu")
-            assert(titles.contains("Post-Capture Action"), "Menu must contain Post-Capture Action submenu")
             assert(titles.contains("Launch at Login"), "Menu must contain Launch at Login item")
             assert(titles.contains("Preferences & Hotkeys..."), "Menu must contain Preferences item")
             assert(titles.contains("Open Screenshots Folder"), "Menu must contain Open Screenshots Folder item")
-            assert(titles.contains("Change Save Location..."), "Menu must contain Change Save Location item")
             assert(titles.contains("Quit Shots"), "Menu must contain Quit item")
 
-            // Verify submenus have children
-            let delayItem = menu.items.first(where: { $0.title == "Capture Delay" })
-            assert(delayItem?.submenu?.items.count == 4, "Capture Delay submenu must have 4 options")
-
-            let formatItem = menu.items.first(where: { $0.title == "Image Format" })
-            assert(formatItem?.submenu?.items.count == 2, "Image Format submenu must have 2 options (PNG, JPG)")
-
-            let postCaptureItem = menu.items.first(where: { $0.title == "Post-Capture Action" })
-            assert(postCaptureItem?.submenu?.items.count == 3, "Post-Capture Action submenu must have 3 options")
+            // Struck items removed from dropdown and moved to preferences
+            assert(!titles.contains("Reveal Latest Screenshot"), "Reveal Latest Screenshot must be removed from dropdown")
+            assert(!titles.contains(where: { $0.contains("Impact") }), "Impact items must be removed from dropdown")
+            assert(!titles.contains("Copy to Clipboard"), "Copy to Clipboard must be removed from dropdown")
+            assert(!titles.contains("Capture Delay"), "Capture Delay must be removed from dropdown")
+            assert(!titles.contains("Image Format"), "Image Format must be removed from dropdown")
+            assert(!titles.contains("JPG Quality"), "JPG Quality must be removed from dropdown")
+            assert(!titles.contains("Change Save Location..."), "Change Save Location must be removed from dropdown")
         }
 
         // MARK: - Global Keyboard Shortcuts Suite
@@ -567,6 +559,8 @@ public struct AppTests {
             assert(settings.repeatShortcutDisplayString == "⇧⌘3", "Repeat shortcut default must be ⇧⌘3 (was \(settings.repeatShortcutDisplayString))")
             assert(settings.ocrShortcutDisplayString == "⇧⌘R", "OCR shortcut default must be ⇧⌘R (was \(settings.ocrShortcutDisplayString))")
             assert(settings.scrollingShortcutDisplayString == "⇧⌘5", "Scrolling shortcut default must be ⇧⌘5 (was \(settings.scrollingShortcutDisplayString))")
+            assert(settings.rulerShortcutDisplayString == "⇧⌘M", "Ruler shortcut default must be ⇧⌘M (was \(settings.rulerShortcutDisplayString))")
+            assert(settings.colorPickerShortcutDisplayString == "⇧⌘C", "Color Picker shortcut default must be ⇧⌘C (was \(settings.colorPickerShortcutDisplayString))")
 
             // Test custom assignment
             settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_8)
@@ -588,6 +582,8 @@ public struct AppTests {
             assert(settings.repeatShortcutDisplayString == "⇧⌘3", "Reset must restore Repeat shortcut")
             assert(settings.ocrShortcutDisplayString == "⇧⌘R", "Reset must restore OCR shortcut")
             assert(settings.scrollingShortcutDisplayString == "⇧⌘5", "Reset must restore Scrolling shortcut")
+            assert(settings.rulerShortcutDisplayString == "⇧⌘M", "Reset must restore Ruler shortcut")
+            assert(settings.colorPickerShortcutDisplayString == "⇧⌘C", "Reset must restore Color Picker shortcut")
 
             // Test HotKeyManager multi-mode dispatch callbacks
             let manager = HotKeyManager.shared
@@ -596,12 +592,16 @@ public struct AppTests {
             var repeatFired = false
             var ocrFired = false
             var scrollFired = false
+            var rulerFired = false
+            var pickerFired = false
 
             manager.onAreaCaptureTrigger = { areaFired = true }
             manager.onFullscreenCaptureTrigger = { fsFired = true }
             manager.onRepeatCaptureTrigger = { repeatFired = true }
             manager.onOCRCaptureTrigger = { ocrFired = true }
             manager.onScrollingCaptureTrigger = { scrollFired = true }
+            manager.onRulerTrigger = { rulerFired = true }
+            manager.onColorPickerTrigger = { pickerFired = true }
 
             // Trigger closures manually to verify wiring
             manager.onAreaCaptureTrigger?()
@@ -618,6 +618,35 @@ public struct AppTests {
 
             manager.onScrollingCaptureTrigger?()
             assert(scrollFired, "Scrolling capture trigger callback must execute")
+
+            manager.onRulerTrigger?()
+            assert(rulerFired, "Ruler trigger callback must execute")
+
+            manager.onColorPickerTrigger?()
+            assert(pickerFired, "Color Picker trigger callback must execute")
+
+            // Test clearing individual and all shortcuts
+            settings.areaShortcutKeyCode = KeyCodes.noKey
+            settings.areaShortcutModifiers = 0
+            assert(settings.areaShortcutDisplayString == "None", "Unassigned shortcut must display 'None'")
+            assert(!KeyCodes.isShortcutAssigned(keyCode: settings.areaShortcutKeyCode, carbonMods: settings.areaShortcutModifiers), "isShortcutAssigned must return false for noKey")
+
+            settings.clearAllHotkeys()
+            assert(settings.areaShortcutDisplayString == "None", "clearAllHotkeys must set Area to None")
+            assert(settings.fullscreenShortcutDisplayString == "None", "clearAllHotkeys must set Fullscreen to None")
+            assert(settings.repeatShortcutDisplayString == "None", "clearAllHotkeys must set Repeat to None")
+            assert(settings.ocrShortcutDisplayString == "None", "clearAllHotkeys must set OCR to None")
+            assert(settings.scrollingShortcutDisplayString == "None", "clearAllHotkeys must set Scrolling to None")
+            assert(settings.rulerShortcutDisplayString == "None", "clearAllHotkeys must set Ruler to None")
+            assert(settings.colorPickerShortcutDisplayString == "None", "clearAllHotkeys must set Color Picker to None")
+
+            // Test master toggle: globalHotkeysEnabled
+            settings.resetHotkeysToDefault()
+            assert(settings.globalHotkeysEnabled == true, "resetHotkeysToDefault must enable global hotkeys")
+            settings.globalHotkeysEnabled = false
+            assert(manager.registerCurrentHotkey() == true, "registerCurrentHotkey must return true when global hotkeys are disabled")
+
+            settings.resetHotkeysToDefault()
 
             defaults.removePersistentDomain(forName: testSuite)
         }
@@ -795,9 +824,8 @@ public struct AppTests {
             let controller = StatusBarController()
             let menu = controller.currentMenu
             let revealItem = menu.items.first(where: { $0.title == "Reveal Latest Screenshot" })
-            assert(revealItem != nil, "Reveal Latest Screenshot item must exist in menu")
-            assert(revealItem?.action == Selector(("revealLatestScreenshotAction")), "Action selector must be revealLatestScreenshotAction")
-            assert(revealItem?.isEnabled == true, "Reveal item must be enabled when latest screenshot exists")
+            assert(revealItem == nil, "Reveal Latest Screenshot item was removed from dropdown menu")
+            assert(saveService.resolveLatestScreenshotURL() != nil, "Latest screenshot URL must resolve")
         }
 
         // MARK: - Recent Screenshot List Suite
@@ -1364,12 +1392,12 @@ public struct AppTests {
             let controller = StatusBarController()
             let menu = controller.currentMenu
 
-            let rulerItem = menu.items.first(where: { $0.title == "Screen Ruler" })
+            let rulerItem = menu.items.first(where: { $0.title.contains("Screen Ruler") })
             assert(rulerItem != nil, "Screen Ruler menu item must exist")
             assert(rulerItem?.action == #selector(controller.screenRulerAction), "Screen Ruler action must match screenRulerAction")
             assert(rulerItem?.image != nil, "Screen Ruler item must have an icon")
 
-            let pickerItem = menu.items.first(where: { $0.title == "Color Picker" })
+            let pickerItem = menu.items.first(where: { $0.title.contains("Color Picker") })
             assert(pickerItem != nil, "Color Picker menu item must exist")
             assert(pickerItem?.action == #selector(controller.colorPickerAction), "Color Picker action must match colorPickerAction")
             assert(pickerItem?.image != nil, "Color Picker item must have an icon")
