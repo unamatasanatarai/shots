@@ -25,11 +25,9 @@ if [[ ! -d "$app_bundle" || ! -d "$impact_bundle" ]]; then
     "${script_dir}/build-impact.sh"
 fi
 
-if [[ ! -f "Resources/dmg_background.png" || ! -f "Resources/dmg_background@2x.png" ]]; then
-    if [[ -f "${script_dir}/generate_dmg_background.py" ]]; then
-        printf '%s\n' "Generating styled DMG background..."
-        python3 "${script_dir}/generate_dmg_background.py" || true
-    fi
+if [[ -f "${script_dir}/generate_dmg_background.py" ]]; then
+    printf '%s\n' "Generating styled DMG background..."
+    python3 "${script_dir}/generate_dmg_background.py" || true
 fi
 
 # Detach any existing mounted volumes with this name
@@ -87,16 +85,16 @@ tell application "Finder"
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
-        set the bounds of container window to {350, 100, 1150, 520}
+        set the bounds of container window to {300, 120, 1140, 580}
         set theViewOptions to the icon view options of container window
         set arrangement of theViewOptions to not arranged
-        set icon size of theViewOptions to 110
+        set icon size of theViewOptions to 100
         if exists file ".background:background.tiff" then
             set background picture of theViewOptions to file ".background:background.tiff"
         end if
-        set position of item "Shots.app" of container window to {140, 205}
-        set position of item "Impact.app" of container window to {320, 205}
-        set position of item "Applications" of container window to {560, 205}
+        set position of item "Shots.app" of container window to {150, 205}
+        set position of item "Impact.app" of container window to {370, 205}
+        set position of item "Applications" of container window to {690, 205}
         update without registering applications
         delay 1
         close

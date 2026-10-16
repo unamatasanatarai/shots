@@ -1,265 +1,262 @@
 #!/usr/bin/env python3
 """
-Generates a stunning, retina-resolution custom DMG installer background image
-for AbbrEx featuring an atmospheric blurred logo watermark, sleek directional
-installation arrows, and designated drop targets.
+Generates a minimal, ultra-clean retina-resolution custom DMG installer background
+for Shots & Impact. Keeps only the top typography, the 3 glowing glass pedestals,
+and two graceful rounded curved arrows guiding both apps into Applications.
 """
 
-import os
 import math
+import os
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-# Vector coordinates from AppIcon.svg
-cx_ref = 345.0
-cy_ref = 332.0
-w_ref = 668.0
 
-norm_p1 = [
-    ((339 - cx_ref) / w_ref, (94 - cy_ref) / w_ref),
-    ((471 - cx_ref) / w_ref, (226 - cy_ref) / w_ref),
-    ((471 - cx_ref) / w_ref, (347 - cy_ref) / w_ref),
-    ((339 - cx_ref) / w_ref, (215 - cy_ref) / w_ref),
-    ((131 - cx_ref) / w_ref, (423 - cy_ref) / w_ref),
-    ((11 - cx_ref) / w_ref,  (423 - cy_ref) / w_ref),
-]
+def get_font(size, weight="regular"):
+    """Loads macOS system fonts with fallback support."""
+    helvetica_path = "/System/Library/Fonts/HelveticaNeue.ttc"
+    sf_path = "/System/Library/Fonts/SFNS.ttf"
 
-norm_p2 = [
-    ((679 - cx_ref) / w_ref, (241 - cy_ref) / w_ref),
-    ((679 - cx_ref) / w_ref, (362 - cy_ref) / w_ref),
-    ((471 - cx_ref) / w_ref, (570 - cy_ref) / w_ref),
-    ((339 - cx_ref) / w_ref, (438 - cy_ref) / w_ref),
-    ((339 - cx_ref) / w_ref, (317 - cy_ref) / w_ref),
-    ((471 - cx_ref) / w_ref, (449 - cy_ref) / w_ref),
-]
+    index_map = {
+        "light": 7,
+        "regular": 0,
+        "bold": 1,
+        "heavy": 9,
+    }
 
-def draw_glyph(draw, cx, cy, width, fill_color, outline_color=None, outline_width=1):
-    poly1 = [(cx + x * width, cy + y * width) for x, y in norm_p1]
-    poly2 = [(cx + x * width, cy + y * width) for x, y in norm_p2]
-    if fill_color:
-        draw.polygon(poly1, fill=fill_color)
-        draw.polygon(poly2, fill=fill_color)
-    if outline_color:
-        for i in range(len(poly1)):
-            draw.line([poly1[i], poly1[(i+1)%len(poly1)]], fill=outline_color, width=outline_width)
-        for i in range(len(poly2)):
-            draw.line([poly2[i], poly2[(i+1)%len(poly2)]], fill=outline_color, width=outline_width)
-
-def get_font(size, bold=False):
-    # Try HelveticaNeue Bold if bold requested
-    if bold and os.path.exists("/System/Library/Fonts/HelveticaNeue.ttc"):
+    if os.path.exists(helvetica_path):
+        idx = index_map.get(weight, 0)
         try:
-            return ImageFont.truetype("/System/Library/Fonts/HelveticaNeue.ttc", size, index=1)
+            return ImageFont.truetype(helvetica_path, size, index=idx)
         except Exception:
             pass
-    font_paths = [
-        "/System/Library/Fonts/SFNS.ttf",
-        "/System/Library/Fonts/HelveticaNeue.ttc",
-        "/System/Library/Fonts/Supplemental/Arial.ttf"
-    ]
-    for path in font_paths:
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                continue
+
+    if os.path.exists(sf_path):
+        try:
+            return ImageFont.truetype(sf_path, size)
+        except Exception:
+            pass
+
+    arial_path = "/System/Library/Fonts/Supplemental/Arial.ttf"
+    if os.path.exists(arial_path):
+        try:
+            return ImageFont.truetype(arial_path, size)
+        except Exception:
+            pass
+
     return ImageFont.load_default()
 
-def draw_vector_arrow(draw, start_x, end_x, y, color=(56, 189, 248, 255), line_w=4, head_len=24):
-    # Main stem
-    draw.line([(start_x, y), (end_x, y)], fill=color, width=line_w)
-    # Sleek arrow head
-    wing_y = int(head_len * 0.75)
-    pts = [
-        (end_x - head_len, y - wing_y),
-        (end_x, y),
-        (end_x - head_len, y + wing_y)
-    ]
-    draw.line([pts[0], pts[1]], fill=color, width=line_w)
-    draw.line([pts[1], pts[2]], fill=color, width=line_w)
 
-def generate_background():
-    # 2x Retina resolution: 660 x 420 points = 1320 x 840 pixels
-    W, H = 1320, 840
+def draw_glow_circle(img, cx, cy, radius, color, blur=50):
+    """Draws a soft radial glow onto the image composite."""
+    glow_box = int(radius * 2.5)
+    glow_surf = Image.new("RGBA", (glow_box, glow_box), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glow_surf)
+    gcx, gcy = glow_box // 2, glow_box // 2
+
+    r_col, g_col, b_col, max_a = color
+    steps = 22
+    for step in range(steps, 0, -1):
+        ratio = step / float(steps)
+        rad = int(radius * ratio)
+        alpha = int(max_a * ((1.0 - ratio) ** 1.6))
+        if alpha > 0 and rad > 0:
+            gdraw.ellipse(
+                [gcx - rad, gcy - rad, gcx + rad, gcy + rad],
+                fill=(r_col, g_col, b_col, alpha),
+            )
+
+    glow_surf = glow_surf.filter(ImageFilter.GaussianBlur(blur))
+    img.alpha_composite(glow_surf, (cx - gcx, cy - gcy))
+
+
+def draw_glass_pedestal(draw, cx, cy, radius, accent_color):
+    """Draws a clean, modern frosted glass pedestal disc for an icon."""
+    # Subtle drop shadow
+    draw.ellipse(
+        [cx - radius - 4, cy - radius, cx + radius + 4, cy + radius + 8],
+        fill=(0, 0, 0, 50),
+    )
+
+    # Glass disc
+    draw.ellipse(
+        [cx - radius, cy - radius, cx + radius, cy + radius],
+        fill=(accent_color[0], accent_color[1], accent_color[2], 16),
+        outline=(255, 255, 255, 45),
+        width=2,
+    )
+
+    # Top rim reflection highlight
+    draw.arc(
+        [cx - radius + 2, cy - radius + 1, cx + radius - 2, cy + radius - 1],
+        start=205,
+        end=335,
+        fill=(255, 255, 255, 95),
+        width=2,
+    )
+
+    # Inner glowing accent ring
+    in_r = radius - 14
+    draw.ellipse(
+        [cx - in_r, cy - in_r, cx + in_r, cy + in_r],
+        outline=(accent_color[0], accent_color[1], accent_color[2], 80),
+        width=1,
+    )
+
+    # Subtle corner tick marks
+    tick_len = 10
+    for angle in [45, 135, 225, 315]:
+        rad = math.radians(angle)
+        p1_x = cx + math.cos(rad) * (radius - 5)
+        p1_y = cy + math.sin(rad) * (radius - 5)
+        p2_x = cx + math.cos(rad) * (radius + tick_len)
+        p2_y = cy + math.sin(rad) * (radius + tick_len)
+        draw.line(
+            [(p1_x, p1_y), (p2_x, p2_y)],
+            fill=(accent_color[0], accent_color[1], accent_color[2], 120),
+            width=2,
+        )
+
+
+def cubic_bezier_points(p0, p1, p2, p3, steps=60):
+    """Computes points along a cubic bezier curve."""
+    points = []
+    for i in range(steps + 1):
+        t = i / float(steps)
+        x = (
+            (1 - t) ** 3 * p0[0]
+            + 3 * (1 - t) ** 2 * t * p1[0]
+            + 3 * (1 - t) * t**2 * p2[0]
+            + t**3 * p3[0]
+        )
+        y = (
+            (1 - t) ** 3 * p0[1]
+            + 3 * (1 - t) ** 2 * t * p1[1]
+            + 3 * (1 - t) * t**2 * p2[1]
+            + t**3 * p3[1]
+        )
+        points.append((x, y))
+    return points
+
+
+def draw_curved_arrow(draw, p0, p1, p2, p3, color, width=4, head_len=26, head_wing=18):
+    """Draws a smooth cubic bezier arrow with a clean aerodynamic arrowhead."""
+    points = cubic_bezier_points(p0, p1, p2, p3, steps=60)
+
+    # Draw glow underneath
+    r, g, b = color[0], color[1], color[2]
+    for i in range(len(points) - 1):
+        draw.line([points[i], points[i + 1]], fill=(r, g, b, 45), width=width + 6)
+
+    # Draw core crisp line
+    for i in range(len(points) - 1):
+        draw.line([points[i], points[i + 1]], fill=color, width=width)
+
+    # Compute tangent angle at arrival
+    last_dx = points[-1][0] - points[-4][0]
+    last_dy = points[-1][1] - points[-4][1]
+    angle = math.atan2(last_dy, last_dx)
+
+    tip_x, tip_y = points[-1]
+    left_x = tip_x - head_len * math.cos(angle - 0.42)
+    left_y = tip_y - head_len * math.sin(angle - 0.42)
+    right_x = tip_x - head_len * math.cos(angle + 0.42)
+    right_y = tip_y - head_len * math.sin(angle + 0.42)
+    notch_x = tip_x - int(head_len * 0.7) * math.cos(angle)
+    notch_y = tip_y - int(head_len * 0.7) * math.sin(angle)
+
+    # Filled sleek arrow head
+    draw.polygon([(tip_x, tip_y), (left_x, left_y), (notch_x, notch_y), (right_x, right_y)], fill=color)
+
+
+def generate_dmg_background():
+    # 2x Retina resolution: 840 x 460 points = 1680 x 920 pixels
+    W, H = 1680, 920
     img = Image.new("RGBA", (W, H), (0, 0, 0, 255))
     draw = ImageDraw.Draw(img)
 
-    # 1. Base Gradient: Deep Space Obsidian to Navy Slate
+    # 1. Base Gradient: Deep Space Obsidian to Slate Midnight
     for y in range(H):
         ny = y / float(H)
-        r = int(10 + ny * 8)
-        g = int(14 + ny * 12)
-        b = int(24 + ny * 20)
+        r = int(12 + ny * 6)
+        g = int(16 + ny * 8)
+        b = int(28 + ny * 14)
         draw.line([(0, y), (W, y)], fill=(r, g, b, 255))
 
-    # Add soft radial atmospheric ambient glow
-    ambient = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    amb_draw = ImageDraw.Draw(ambient)
-    center_x, center_y = W // 2, int(H * 0.45)
-    max_r = int(W * 0.55)
-    for r in range(max_r, 0, -10):
-        factor = 1.0 - (r / max_r)
-        alpha = int(45 * (factor ** 1.8))
-        amb_draw.ellipse(
-            [center_x - r, center_y - int(r * 0.65), center_x + r, center_y + int(r * 0.65)],
-            fill=(38, 70, 115, alpha)
-        )
-    ambient = ambient.filter(ImageFilter.GaussianBlur(50))
-    img = Image.alpha_composite(img, ambient)
+    # 2. Key Anchor Coordinates (matching Finder coordinates 150, 370, 690 in 1x points)
+    shots_x, shots_y = 300, 430
+    impact_x, impact_y = 740, 430
+    apps_x, apps_y = 1380, 430
 
-    # 2. Large Faded & Blurred AbbrEx Logo Watermark
-    logo_cx = W // 2
-    logo_cy = int(H * 0.46)
-    logo_w = int(720)
+    # Soft radial spotlights under the 3 pedestals
+    draw_glow_circle(img, shots_x, shots_y, radius=220, color=(56, 189, 248, 60), blur=50)
+    draw_glow_circle(img, impact_x, impact_y, radius=220, color=(244, 63, 94, 60), blur=50)
+    draw_glow_circle(img, apps_x, apps_y, radius=240, color=(59, 130, 246, 75), blur=55)
 
-    # Soft glowing bloom under logo
-    glow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow_layer)
-    draw_glyph(glow_draw, logo_cx, logo_cy, logo_w, fill_color=(56, 189, 248, 55))
-    glow_layer = glow_layer.filter(ImageFilter.GaussianBlur(45))
-    img = Image.alpha_composite(img, glow_layer)
+    # Header glow
+    draw_glow_circle(img, W // 2, 110, radius=340, color=(99, 102, 241, 35), blur=60)
 
-    # Soft ambient shadow
-    shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow_layer)
-    draw_glyph(shadow_draw, logo_cx, logo_cy + 12, logo_w, fill_color=(15, 23, 42, 110))
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(25))
-    img = Image.alpha_composite(img, shadow_layer)
-
-    # Faded frosted translucent fill
-    logo_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    logo_draw = ImageDraw.Draw(logo_layer)
-    draw_glyph(logo_draw, logo_cx, logo_cy, logo_w, fill_color=(255, 255, 255, 14))
-    # Delicate frosted wireframe outline
-    draw_glyph(logo_draw, logo_cx, logo_cy, logo_w, fill_color=None, outline_color=(255, 255, 255, 40), outline_width=2)
-    img = Image.alpha_composite(img, logo_layer)
-
-    # 3. Designated Drop Zones for App & Applications Folder
-    # Left: AbbrEx.app at (320, 410)
-    # Right: Applications at (1000, 410)
+    # 3. Vector Overlay Layer
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     odraw = ImageDraw.Draw(overlay)
 
-    left_x, icon_y = 320, 410
-    right_x = 1000
+    # Pedestals
+    ped_radius = 114
+    draw_glass_pedestal(odraw, shots_x, shots_y, ped_radius, accent_color=(56, 189, 248))
+    draw_glass_pedestal(odraw, impact_x, impact_y, ped_radius, accent_color=(244, 63, 94))
+    draw_glass_pedestal(odraw, apps_x, apps_y, ped_radius, accent_color=(59, 130, 246))
 
-    def draw_drop_pedestal(cx, cy):
-        # 3D-like illuminated glass pedestal base under the icon
-        ped_rx, ped_ry = 135, 135
-        # Soft pedestal glow
-        odraw.ellipse([cx - ped_rx, cy - ped_ry, cx + ped_rx, cy + ped_ry], fill=(255, 255, 255, 5), outline=(255, 255, 255, 28), width=2)
-        # Inner accent ring
-        odraw.ellipse([cx - ped_rx + 8, cy - ped_ry + 8, cx + ped_rx - 8, cy + ped_ry - 8], fill=None, outline=(56, 189, 248, 20), width=1)
-        # 4 subtle corner tick marks
-        tick_len = 12
-        for angle in [45, 135, 225, 315]:
-            rad = math.radians(angle)
-            p1_x = cx + math.cos(rad) * (ped_rx - 6)
-            p1_y = cy + math.sin(rad) * (ped_ry - 6)
-            p2_x = cx + math.cos(rad) * (ped_rx + 6)
-            p2_y = cy + math.sin(rad) * (ped_ry + 6)
-            odraw.line([(p1_x, p1_y), (p2_x, p2_y)], fill=(56, 189, 248, 90), width=2)
+    # 4. Two Rounded Sweeping Arrows into Applications
+    # Arrow 1: High arching arrow from Shots (top-right) over to Applications (top-left)
+    # Starts at top-right of Shots pedestal, arcs high, lands at Applications top-left
+    arc_p0 = (shots_x + 85, shots_y - 75)
+    arc_p1 = (580, 210)
+    arc_p2 = (1100, 210)
+    arc_p3 = (apps_x - 90, apps_y - 65)
+    draw_curved_arrow(odraw, arc_p0, arc_p1, arc_p2, arc_p3, color=(244, 63, 94, 255), width=4, head_len=26, head_wing=18)
 
-    draw_drop_pedestal(left_x, icon_y)
-    draw_drop_pedestal(right_x, icon_y)
+    # Arrow 2: Lower sweeping arrow from Impact (bottom-right) under to Applications (bottom-left)
+    # Starts at bottom-right of Impact pedestal, swoops gently under, curves up into Applications
+    swoop_p0 = (impact_x + 80, impact_y + 45)
+    swoop_p1 = (960, 560)
+    swoop_p2 = (1160, 560)
+    swoop_p3 = (apps_x - 85, apps_y + 55)
+    draw_curved_arrow(odraw, swoop_p0, swoop_p1, swoop_p2, swoop_p3, color=(244, 63, 94, 255), width=4, head_len=26, head_wing=18)
 
-    # 4. Creative Flow & Transfer Arrows
-    # Connecting path from left icon to right icon (between x=465 and x=855, y=410)
-    track_start_x = 465
-    track_end_x = 855
+    # 5. Top Header Typography (The Callout Up Top)
+    # Eyebrow tag
+    eyebrow_text = "THE DYNAMIC SCREENSHOT & ANNOTATION DUO"
+    eyebrow_font = get_font(16, weight="bold")
+    ebbox = odraw.textbbox((0, 0), eyebrow_text, font=eyebrow_font)
+    ew = ebbox[2] - ebbox[0]
+    eh = ebbox[3] - ebbox[1]
+    eb_pad_x = 20
+    eb_pad_y = 8
+    eb_x1 = W // 2 - ew // 2 - eb_pad_x
+    eb_y1 = 46
+    eb_x2 = W // 2 + ew // 2 + eb_pad_x
+    eb_y2 = eb_y1 + eh + eb_pad_y * 2
+    odraw.rounded_rectangle([eb_x1, eb_y1, eb_x2, eb_y2], radius=16, fill=(30, 41, 59, 180), outline=(148, 163, 184, 50), width=1)
+    odraw.text((W // 2 - ew // 2, eb_y1 + eb_pad_y - 2), eyebrow_text, fill=(148, 163, 184, 230), font=eyebrow_font)
 
-    # Glowing pulse beam
-    beam_w = 4
-    for offset in range(-6, 7):
-        b_alpha = int(22 * (1.0 - abs(offset) / 7.0))
-        odraw.line([(track_start_x, icon_y + offset), (track_end_x, icon_y + offset)], fill=(56, 189, 248, b_alpha), width=1)
-    odraw.line([(track_start_x, icon_y), (track_end_x, icon_y)], fill=(125, 211, 252, 120), width=3)
+    # Main Headline
+    main_title = "Take a Shot. Make an Impact."
+    title_font = get_font(50, weight="bold")
+    tbbox = odraw.textbbox((0, 0), main_title, font=title_font)
+    tw = tbbox[2] - tbbox[0]
+    odraw.text((W // 2 - tw // 2, 98), main_title, fill=(255, 255, 255, 255), font=title_font)
 
-    # Dynamic chevron trail
-    for ch_x in [505, 545, 775, 815]:
-        ratio = (ch_x - track_start_x) / float(track_end_x - track_start_x)
-        alpha = int(70 + 150 * ratio)
-        c_size = 13
-        pts = [
-            (ch_x - c_size, icon_y - c_size),
-            (ch_x, icon_y),
-            (ch_x - c_size, icon_y + c_size)
-        ]
-        odraw.line([pts[0], pts[1]], fill=(147, 197, 253, alpha), width=3)
-        odraw.line([pts[1], pts[2]], fill=(147, 197, 253, alpha), width=3)
-
-    # Lead prominent arrow head approaching Applications folder
-    head_size = 22
-    lead_pts = [
-        (track_end_x - head_size, icon_y - head_size),
-        (track_end_x, icon_y),
-        (track_end_x - head_size, icon_y + head_size)
-    ]
-    odraw.line([lead_pts[0], lead_pts[1]], fill=(56, 189, 248, 255), width=4)
-    odraw.line([lead_pts[1], lead_pts[2]], fill=(56, 189, 248, 255), width=4)
-
-    # Frosted Glass "Drag to install" badge in the center
-    pill_w = 260
-    pill_h = 56
-    pill_x1 = (W - pill_w) // 2
-    pill_y1 = icon_y - pill_h // 2
-    pill_x2 = pill_x1 + pill_w
-    pill_y2 = pill_y1 + pill_h
-
-    # Frosted pill base with deep shadow
-    odraw.rounded_rectangle([pill_x1, pill_y1, pill_x2, pill_y2], radius=28, fill=(15, 23, 42, 220), outline=(255, 255, 255, 55), width=2)
-    # Inner luminous rim
-    odraw.rounded_rectangle([pill_x1 + 2, pill_y1 + 2, pill_x2 - 2, pill_y2 - 2], radius=26, fill=None, outline=(56, 189, 248, 65), width=1)
-
-    # Badge text: "Drag to install" + cleanly rendered vector arrow
-    font_badge = get_font(21, bold=True)
-    badge_label = "Drag to install"
-    bbox = odraw.textbbox((0, 0), badge_label, font=font_badge)
-    label_w = bbox[2] - bbox[0]
-    label_h = bbox[3] - bbox[1]
-
-    # Draw label text slightly left of center to leave room for vector arrow
-    arrow_w = 22
-    spacing = 10
-    total_content_w = label_w + spacing + arrow_w
-    content_start_x = (W - total_content_w) // 2
-    text_y = icon_y - label_h // 2 - 2
-
-    odraw.text((content_start_x, text_y), badge_label, fill=(241, 245, 249, 245), font=font_badge)
-
-    # Draw vector arrow inside pill badge
-    badge_arrow_start_x = content_start_x + label_w + spacing
-    badge_arrow_end_x = badge_arrow_start_x + arrow_w
-    draw_vector_arrow(odraw, badge_arrow_start_x, badge_arrow_end_x, icon_y, color=(56, 189, 248, 255), line_w=3, head_len=10)
-
-    # 5. Top Header Typography
-    app_name = os.environ.get("APP_NAME", "SwiftApp")
-    app_subtitle = os.environ.get("APP_SUBTITLE", "Native macOS Application")
-
-    title_font = get_font(42, bold=True)
-    title_text = app_name
-    t_bbox = odraw.textbbox((0, 0), title_text, font=title_font)
-    tw = t_bbox[2] - t_bbox[0]
-    odraw.text((W // 2 - tw // 2, 65), title_text, fill=(255, 255, 255, 245), font=title_font)
-
-    sub_font = get_font(20, bold=False)
-    sub_text = app_subtitle
-    s_bbox = odraw.textbbox((0, 0), sub_text, font=sub_font)
-    sw = s_bbox[2] - s_bbox[0]
-    odraw.text((W // 2 - sw // 2, 122), sub_text, fill=(148, 163, 184, 210), font=sub_font)
-
-    # 6. Bottom Helper Instruction
-    helper_font = get_font(18, bold=False)
-    helper_text = f"Drag {app_name} into Applications to install"
-    h_bbox = odraw.textbbox((0, 0), helper_text, font=helper_font)
-    hw = h_bbox[2] - h_bbox[0]
-    odraw.text((W // 2 - hw // 2, H - 75), helper_text, fill=(100, 116, 139, 220), font=helper_font)
+    # Subtitle
+    subtitle_text = "Drag both apps into Applications to unlock your new screenshot superpowers"
+    sub_font = get_font(21, weight="regular")
+    sbbox = odraw.textbbox((0, 0), subtitle_text, font=sub_font)
+    sw = sbbox[2] - sbbox[0]
+    odraw.text((W // 2 - sw // 2, 166), subtitle_text, fill=(148, 163, 184, 220), font=sub_font)
 
     # Composite layers
     img = Image.alpha_composite(img, overlay)
 
-    # Delicate outer window border (for crisp edge definition in Finder)
+    # Crisp window border
     final_draw = ImageDraw.Draw(img)
-    final_draw.rectangle([0, 0, W - 1, H - 1], outline=(255, 255, 255, 25), width=1)
+    final_draw.rectangle([0, 0, W - 1, H - 1], outline=(255, 255, 255, 28), width=1)
 
     # Save 2x Retina master and downsampled 1x
     out_dir = "Resources"
@@ -272,7 +269,8 @@ def generate_background():
 
     img_1x = img.resize((W // 2, H // 2), Image.Resampling.LANCZOS)
     img_1x.save(bg_1x_path, "PNG")
-    print(f"✅ Generated {bg_1x_path} ({W//2}x{H//2})")
+    print(f"✅ Generated {bg_1x_path} ({W // 2}x{H // 2})")
+
 
 if __name__ == "__main__":
-    generate_background()
+    generate_dmg_background()
