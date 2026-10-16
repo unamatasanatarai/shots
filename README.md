@@ -149,8 +149,7 @@ python3 scripts/generate_dmg_background.py
 | `make install` | Install the compiled `.app` into `/Applications` |
 | `make clean` | Remove all build artifacts and temporary binaries |
 | `make reset-cache` | Clear macOS LaunchServices and IconServices caches |
-| `make release-dry-run` | Preview version bump and release steps (`make release-dry-run [version]`) |
-| `make release` | Bump version, build DMG, create git tag, and publish release (`make release [version]`) |
+| `make release` | Bump version, build DMG, create git tag, and publish release (`make release <version>`) |
 
 ---
 
@@ -158,17 +157,11 @@ python3 scripts/generate_dmg_background.py
 
 To release a new version:
 
-1. Preview changes with dry-run:
-   ```bash
-   make release-dry-run
-   ```
-2. Publish an auto-bumped patch release or specify an exact version:
-   ```bash
-   make release          # Bumps patch: 1.0.0 -> 1.0.1
-   make release 1.1.0    # Explicit version: 1.1.0
-   ```
+```bash
+make release 1.0.1    # Specify exact version
+```
 
-The script will run the test suite, update [`VERSION`](VERSION), commit, tag, build the DMG, and publish a release via GitHub CLI (`gh`).
+The script will preview the AI-generated release notes, run the unit test suites, update [`VERSION`](VERSION), commit, tag, build the DMG, and publish a release via GitHub CLI (`gh`).
 
 ---
 
