@@ -398,10 +398,6 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         ImpactLauncher.shared.openImageFileDialog()
     }
 
-    @objc private func openTestImageInImpactAction() {
-        ImpactLauncher.shared.openTestImage()
-    }
-
     @objc public func openRecentInImpactAction(_ sender: NSMenuItem) {
         guard let fileURL = sender.representedObject as? URL else { return }
         ImpactLauncher.shared.openImageFile(url: fileURL)

@@ -92,21 +92,4 @@ public final class ImpactLauncher {
             }
         }
     }
-
-    public func openTestImage() {
-        let possiblePaths = [
-            Bundle.main.resourceURL?.appendingPathComponent("test-image.jpg"),
-            URL(fileURLWithPath: "Resources/test-image.jpg"),
-            URL(fileURLWithPath: "test-image.jpg"),
-            URL(fileURLWithPath: "/Users/citizen/dev/shots/Resources/test-image.jpg")
-        ]
-
-        for path in possiblePaths.compactMap({ $0 }) {
-            if FileManager.default.fileExists(atPath: path.path) {
-                openImageFile(url: path)
-                return
-            }
-        }
-        NSLog("ImpactLauncher: test-image.jpg not found")
-    }
 }

@@ -27,6 +27,7 @@ public final class ScreenshotHistoryService {
 
     private let lock = NSLock()
     private var _recentItems: [ScreenshotHistoryItem] = []
+    private let thumbnailCache = NSCache<NSURL, NSImage>()
 
     public var recentItems: [ScreenshotHistoryItem] {
         lock.lock()
@@ -40,6 +41,7 @@ public final class ScreenshotHistoryService {
     public func reset() {
         lock.lock()
         _recentItems = []
+        thumbnailCache.removeAllObjects()
         lock.unlock()
     }
 
@@ -93,8 +95,12 @@ public final class ScreenshotHistoryService {
         return items
     }
 
-    /// Generates an efficient thumbnail for a file URL using ImageIO.
+    /// Generates an efficient thumbnail for a file URL using ImageIO with in-memory caching.
     public func generateThumbnail(for url: URL, maxPixelSize: Int = 36) -> NSImage? {
+        let key = url as NSURL
+        if let cached = thumbnailCache.object(forKey: key) {
+            return cached
+        }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return nil
         }
@@ -107,7 +113,9 @@ public final class ScreenshotHistoryService {
         guard let cgThumb = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        return NSImage(cgImage: cgThumb, size: NSSize(width: maxPixelSize, height: maxPixelSize))
+        let image = NSImage(cgImage: cgThumb, size: NSSize(width: maxPixelSize, height: maxPixelSize))
+        thumbnailCache.setObject(image, forKey: key)
+        return image
     }
 
     /// Adds a newly captured screenshot directly to the history in memory.

@@ -47,13 +47,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Initialize status bar controller and dynamic menu
         statusBarController = StatusBarController()
 
-        // Handle CLI or initial test arguments
-        if CommandLine.arguments.contains("--test-impact") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                ImpactLauncher.shared.openTestImage()
-            }
-        } else if let impactIdx = CommandLine.arguments.firstIndex(of: "--impact"),
-                  impactIdx + 1 < CommandLine.arguments.count {
+        // Handle CLI or initial arguments
+        if let impactIdx = CommandLine.arguments.firstIndex(of: "--impact"),
+           impactIdx + 1 < CommandLine.arguments.count {
             let path = CommandLine.arguments[impactIdx + 1]
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 ImpactLauncher.shared.openImageFile(url: URL(fileURLWithPath: path))

@@ -267,9 +267,6 @@ public final class EditorDocument {
         NSGraphicsContext.current = nsCtx
 
         for layer in sorted {
-            if let magnifier = layer as? MagnifierLayer {
-                magnifier.renderMagnifiedLens(from: originalImage, in: context)
-            }
             layer.draw(in: context, scale: 1.0)
         }
 

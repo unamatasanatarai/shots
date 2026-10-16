@@ -7,15 +7,38 @@ public final class ArrowLayer: AnnotationLayer {
     public let type: LayerType = .arrow
     public var zIndex: Int
     public var isVisible: Bool = true
-    public var color: String
-    public var strokeWidth: CGFloat
+    public var color: String {
+        didSet { _cachedStrokeColor = nil }
+    }
+    public var strokeWidth: CGFloat {
+        didSet { invalidateCache() }
+    }
 
-    public var start: CGPoint
-    public var control: CGPoint // Midpoint quadratic Bezier control point
-    public var end: CGPoint
-    public var headType: ArrowHeadType
+    public var start: CGPoint {
+        didSet { invalidateCache() }
+    }
+    public var control: CGPoint { // Midpoint quadratic Bezier control point
+        didSet { invalidateCache() }
+    }
+    public var end: CGPoint {
+        didSet { invalidateCache() }
+    }
+    public var headType: ArrowHeadType {
+        didSet { invalidateCache() }
+    }
 
     public var relativeControl: (u: CGFloat, v: CGFloat) = (u: 0.5, v: 0.0)
+
+    // MARK: - Fast Performance Caches
+    private var _cachedBoundingBox: CGRect?
+    private var _cachedPath: CGPath?
+    private var _cachedStrokeColor: CGColor?
+
+    @inline(__always)
+    private func invalidateCache() {
+        _cachedBoundingBox = nil
+        _cachedPath = nil
+    }
 
     public init(
         id: UUID = UUID(),
@@ -55,6 +78,8 @@ public final class ArrowLayer: AnnotationLayer {
     // MARK: - Bounds Calculation
 
     public func getBoundingBox() -> CGRect {
+        if let cached = _cachedBoundingBox { return cached }
+
         // Sample points along the quadratic curve: B(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
         var minX = min(start.x, end.x, control.x)
         var minY = min(start.y, end.y, control.y)
@@ -82,23 +107,30 @@ public final class ArrowLayer: AnnotationLayer {
         }
 
         let padding = max(strokeWidth * 4.0 + 16.0, 48.0)
-        return CGRect(
+        let box = CGRect(
             x: minX - padding,
             y: minY - padding,
             width: maxX - minX + padding * 2,
             height: maxY - minY + padding * 2
         )
+        _cachedBoundingBox = box
+        return box
     }
 
     public func contains(point: CGPoint) -> Bool {
-        // Distance check along sampled Bezier curve
+        // Fast early rejection via cached bounding box
+        guard getBoundingBox().contains(point) else { return false }
+
+        // Distance check along sampled Bezier curve using squared distances (no sqrt/hypot)
         let steps = 30
         let threshold = max(strokeWidth * 1.5, 10.0)
+        let thresholdSq = threshold * threshold
+
         var prev = start
         for i in 1...steps {
             let t = CGFloat(i) / CGFloat(steps)
             let curr = pointOnCurve(t: t)
-            if distanceToSegment(p: point, a: prev, b: curr) <= threshold {
+            if distanceToSegmentSq(p: point, a: prev, b: curr) <= thresholdSq {
                 return true
             }
             prev = curr
@@ -107,9 +139,19 @@ public final class ArrowLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        if hypot(point.x - start.x, point.y - start.y) <= radius { return 0 }
-        if hypot(point.x - control.x, point.y - control.y) <= radius { return 1 }
-        if hypot(point.x - end.x, point.y - end.y) <= radius { return 2 }
+        let rSq = radius * radius
+        let dx0 = point.x - start.x
+        let dy0 = point.y - start.y
+        if dx0 * dx0 + dy0 * dy0 <= rSq { return 0 }
+
+        let dx1 = point.x - control.x
+        let dy1 = point.y - control.y
+        if dx1 * dx1 + dy1 * dy1 <= rSq { return 1 }
+
+        let dx2 = point.x - end.x
+        let dy2 = point.y - end.y
+        if dx2 * dx2 + dy2 * dy2 <= rSq { return 2 }
+
         return nil
     }
 
@@ -117,6 +159,7 @@ public final class ArrowLayer: AnnotationLayer {
         start = CGPoint(x: start.x + delta.x, y: start.y + delta.y)
         control = CGPoint(x: control.x + delta.x, y: control.y + delta.y)
         end = CGPoint(x: end.x + delta.x, y: end.y + delta.y)
+        invalidateCache()
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
@@ -143,6 +186,7 @@ public final class ArrowLayer: AnnotationLayer {
         default:
             break
         }
+        invalidateCache()
     }
 
     // MARK: - Drawing
@@ -150,7 +194,12 @@ public final class ArrowLayer: AnnotationLayer {
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
-        let strokeColor = NSColor(hex: color).cgColor
+        let strokeColor = _cachedStrokeColor ?? {
+            let c = FastColor.shared.cgColor(hex: color)
+            _cachedStrokeColor = c
+            return c
+        }()
+
         context.setStrokeColor(strokeColor)
         context.setLineCap(.round)
         context.setLineJoin(.round)
@@ -158,11 +207,14 @@ public final class ArrowLayer: AnnotationLayer {
         // Subtle natural shadow for depth and crispness
         context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
 
-        let totalDist = hypot(end.x - start.x, end.y - start.y)
-        guard totalDist > 4.0 else {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let totalDistSq = dx * dx + dy * dy
+        guard totalDistSq > 16.0 else { // > 4.0 px distance
             context.restoreGState()
             return
         }
+        let totalDist = sqrt(totalDistSq)
 
         // Maximum width scale: stroke scales slightly with arrow length, but strictly capped at a maximum width
         let lengthFactor = min(1.0, max(0.0, (totalDist - 20.0) / 350.0))
@@ -198,10 +250,17 @@ public final class ArrowLayer: AnnotationLayer {
     }
 
     public func pathForArrow() -> CGPath {
-        let totalDist = hypot(end.x - start.x, end.y - start.y)
-        guard totalDist > 4.0 else {
-            return CGMutablePath()
+        if let cached = _cachedPath { return cached }
+
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let totalDistSq = dx * dx + dy * dy
+        guard totalDistSq > 16.0 else {
+            let empty = CGMutablePath()
+            _cachedPath = empty
+            return empty
         }
+        let totalDist = sqrt(totalDistSq)
 
         let path = CGMutablePath()
 
@@ -224,6 +283,7 @@ public final class ArrowLayer: AnnotationLayer {
         path.addLine(to: end)
         path.addLine(to: rightBarb)
 
+        _cachedPath = path
         return path
     }
 
@@ -231,8 +291,11 @@ public final class ArrowLayer: AnnotationLayer {
 
     private func pointOnCurve(t: CGFloat) -> CGPoint {
         let u = 1.0 - t
-        let x = u * u * start.x + 2 * u * t * control.x + t * t * end.x
-        let y = u * u * start.y + 2 * u * t * control.y + t * t * end.y
+        let u2 = u * u
+        let ut2 = 2.0 * u * t
+        let t2 = t * t
+        let x = u2 * start.x + ut2 * control.x + t2 * end.x
+        let y = u2 * start.y + ut2 * control.y + t2 * end.y
         return CGPoint(x: x, y: y)
     }
 
@@ -244,14 +307,22 @@ public final class ArrowLayer: AnnotationLayer {
         return atan2(dy, dx)
     }
 
-    private func distanceToSegment(p: CGPoint, a: CGPoint, b: CGPoint) -> CGFloat {
+    @inline(__always)
+    private func distanceToSegmentSq(p: CGPoint, a: CGPoint, b: CGPoint) -> CGFloat {
         let dx = b.x - a.x
         let dy = b.y - a.y
         let lenSq = dx * dx + dy * dy
-        if lenSq < 0.001 { return hypot(p.x - a.x, p.y - a.y) }
+        if lenSq < 0.001 {
+            let px = p.x - a.x
+            let py = p.y - a.y
+            return px * px + py * py
+        }
         let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq))
-        let proj = CGPoint(x: a.x + t * dx, y: a.y + t * dy)
-        return hypot(p.x - proj.x, p.y - proj.y)
+        let projX = a.x + t * dx
+        let projY = a.y + t * dy
+        let dpx = p.x - projX
+        let dpy = p.y - projY
+        return dpx * dpx + dpy * dpy
     }
 
     public func clone() -> AnnotationLayer {

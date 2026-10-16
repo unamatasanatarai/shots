@@ -22,11 +22,19 @@ public final class RectangleLayer: AnnotationLayer {
     public var zIndex: Int
     public var isVisible: Bool = true
     public var color: String
-    public var strokeWidth: CGFloat
+    public var strokeWidth: CGFloat {
+        didSet { _cachedBoundingBox = nil }
+    }
 
-    public var rect: CGRect
-    public var cornerRadius: CGFloat
+    public var rect: CGRect {
+        didSet { _cachedBoundingBox = nil }
+    }
+    public var cornerRadius: CGFloat {
+        didSet { _cachedBoundingBox = nil }
+    }
     public var fillStyle: ShapeFillStyle
+
+    private var _cachedBoundingBox: CGRect?
 
     public init(
         id: UUID = UUID(),
@@ -47,11 +55,15 @@ public final class RectangleLayer: AnnotationLayer {
     }
 
     public func getBoundingBox() -> CGRect {
+        if let cached = _cachedBoundingBox { return cached }
         let padding = strokeWidth / 2.0 + 8.0
-        return rect.insetBy(dx: -padding, dy: -padding)
+        let box = rect.insetBy(dx: -padding, dy: -padding)
+        _cachedBoundingBox = box
+        return box
     }
 
     public func contains(point: CGPoint) -> Bool {
+        guard getBoundingBox().contains(point) else { return false }
         if fillStyle == .solid || fillStyle == .striped {
             return rect.standardized.contains(point)
         }
@@ -65,12 +77,16 @@ public final class RectangleLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
+        guard getBoundingBox().insetBy(dx: -12, dy: -12).contains(point) else { return nil }
         let handles = getHandlePoints()
         let hitRadius = max(radius, 10.0)
+        let hitRadiusSq = hitRadius * hitRadius
 
         // Resize only by grabbing the white dots (circular handle points)
         for (i, hp) in handles.enumerated() {
-            if hypot(point.x - hp.x, point.y - hp.y) <= hitRadius {
+            let dx = point.x - hp.x
+            let dy = point.y - hp.y
+            if dx * dx + dy * dy <= hitRadiusSq {
                 return i
             }
         }
@@ -95,6 +111,7 @@ public final class RectangleLayer: AnnotationLayer {
     public func move(by delta: CGPoint) {
         rect.origin.x += delta.x
         rect.origin.y += delta.y
+        _cachedBoundingBox = nil
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
@@ -121,13 +138,13 @@ public final class RectangleLayer: AnnotationLayer {
             width: max(abs(maxX - minX), 4.0),
             height: max(abs(maxY - minY), 4.0)
         )
+        _cachedBoundingBox = nil
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
-        let strokeNSColor = NSColor(hex: color)
-        let strokeCGColor = strokeNSColor.cgColor
+        let strokeCGColor = FastColor.shared.cgColor(hex: color)
 
         let effectiveRadius = max(0.0, min(cornerRadius, min(rect.width / 2.0, rect.height / 2.0)))
         let path = CGPath(roundedRect: rect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
@@ -140,7 +157,7 @@ public final class RectangleLayer: AnnotationLayer {
             context.strokePath()
 
         case .solid:
-            context.setFillColor(strokeNSColor.withAlphaComponent(0.25).cgColor)
+            context.setFillColor(FastColor.shared.cgColor(hex: color, alpha: 0.25))
             context.fillPath()
             context.addPath(path)
             context.setStrokeColor(strokeCGColor)
@@ -153,7 +170,7 @@ public final class RectangleLayer: AnnotationLayer {
             context.clip()
 
             // Draw diagonal stripes
-            context.setStrokeColor(strokeNSColor.withAlphaComponent(0.35).cgColor)
+            context.setStrokeColor(FastColor.shared.cgColor(hex: color, alpha: 0.35))
             context.setLineWidth(max(2.0, strokeWidth * 0.75))
             let spacing: CGFloat = 12.0
             let start = rect.minX - rect.height
@@ -198,11 +215,17 @@ public final class EllipseLayer: AnnotationLayer {
     public var zIndex: Int
     public var isVisible: Bool = true
     public var color: String
-    public var strokeWidth: CGFloat
+    public var strokeWidth: CGFloat {
+        didSet { _cachedBoundingBox = nil }
+    }
 
-    public var rect: CGRect
+    public var rect: CGRect {
+        didSet { _cachedBoundingBox = nil }
+    }
     public var isPerfectCircle: Bool
     public var fillStyle: ShapeFillStyle
+
+    private var _cachedBoundingBox: CGRect?
 
     public init(
         id: UUID = UUID(),
@@ -223,20 +246,28 @@ public final class EllipseLayer: AnnotationLayer {
     }
 
     public func getBoundingBox() -> CGRect {
+        if let cached = _cachedBoundingBox { return cached }
         let padding = strokeWidth / 2.0 + 8.0
-        return rect.insetBy(dx: -padding, dy: -padding)
+        let box = rect.insetBy(dx: -padding, dy: -padding)
+        _cachedBoundingBox = box
+        return box
     }
 
     public func contains(point: CGPoint) -> Bool {
+        guard getBoundingBox().contains(point) else { return false }
         let stdRect = rect.standardized
         guard stdRect.width > 0 && stdRect.height > 0 else { return false }
         let cx = stdRect.midX
         let cy = stdRect.midY
+        let dx = point.x - cx
+        let dy = point.y - cy
 
         if fillStyle == .solid || fillStyle == .striped {
             let rx = stdRect.width / 2.0
             let ry = stdRect.height / 2.0
-            return (pow((point.x - cx) / rx, 2) + pow((point.y - cy) / ry, 2)) <= 1.0
+            let nx = dx / rx
+            let ny = dy / ry
+            return (nx * nx + ny * ny) <= 1.0
         }
 
         // Outline oval: drag only from edge plus margin (catchment), never from the middle
@@ -246,19 +277,27 @@ public final class EllipseLayer: AnnotationLayer {
         let rxInner = stdRect.width / 2.0 - catchment
         let ryInner = stdRect.height / 2.0 - catchment
 
-        let valOuter = pow((point.x - cx) / rxOuter, 2) + pow((point.y - cy) / ryOuter, 2)
+        let nxOuter = dx / rxOuter
+        let nyOuter = dy / ryOuter
+        let valOuter = nxOuter * nxOuter + nyOuter * nyOuter
         if rxInner <= 0 || ryInner <= 0 {
             return valOuter <= 1.0
         }
-        let valInner = pow((point.x - cx) / rxInner, 2) + pow((point.y - cy) / ryInner, 2)
+        let nxInner = dx / rxInner
+        let nyInner = dy / ryInner
+        let valInner = nxInner * nxInner + nyInner * nyInner
         return valOuter <= 1.0 && valInner > 1.0
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
+        guard getBoundingBox().insetBy(dx: -12, dy: -12).contains(point) else { return nil }
         let handles = getHandlePoints()
         let hitRadius = max(radius, 10.0)
+        let hitRadiusSq = hitRadius * hitRadius
         for (i, hp) in handles.enumerated() {
-            if hypot(point.x - hp.x, point.y - hp.y) <= hitRadius {
+            let dx = point.x - hp.x
+            let dy = point.y - hp.y
+            if dx * dx + dy * dy <= hitRadiusSq {
                 return i
             }
         }
@@ -279,6 +318,7 @@ public final class EllipseLayer: AnnotationLayer {
     public func move(by delta: CGPoint) {
         rect.origin.x += delta.x
         rect.origin.y += delta.y
+        _cachedBoundingBox = nil
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
@@ -330,19 +370,19 @@ public final class EllipseLayer: AnnotationLayer {
             width: max(abs(maxX - minX), 4.0),
             height: max(abs(maxY - minY), 4.0)
         )
+        _cachedBoundingBox = nil
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
-        let strokeNSColor = NSColor(hex: color)
-        let strokeCGColor = strokeNSColor.cgColor
+        let strokeCGColor = FastColor.shared.cgColor(hex: color)
 
         let path = CGPath(ellipseIn: rect, transform: nil)
         context.addPath(path)
 
         if fillStyle == .solid {
-            context.setFillColor(strokeNSColor.withAlphaComponent(0.25).cgColor)
+            context.setFillColor(FastColor.shared.cgColor(hex: color, alpha: 0.25))
             context.fillPath()
             context.addPath(path)
         }
@@ -375,11 +415,19 @@ public final class LineLayer: AnnotationLayer {
     public var zIndex: Int
     public var isVisible: Bool = true
     public var color: String
-    public var strokeWidth: CGFloat
+    public var strokeWidth: CGFloat {
+        didSet { _cachedBoundingBox = nil }
+    }
 
-    public var start: CGPoint
-    public var end: CGPoint
+    public var start: CGPoint {
+        didSet { _cachedBoundingBox = nil }
+    }
+    public var end: CGPoint {
+        didSet { _cachedBoundingBox = nil }
+    }
     public var lineStyle: LineStyle
+
+    private var _cachedBoundingBox: CGRect?
 
     public init(
         id: UUID = UUID(),
@@ -400,46 +448,66 @@ public final class LineLayer: AnnotationLayer {
     }
 
     public func getBoundingBox() -> CGRect {
+        if let cached = _cachedBoundingBox { return cached }
         let padding = strokeWidth / 2.0 + 8.0
         let minX = min(start.x, end.x) - padding
         let minY = min(start.y, end.y) - padding
         let maxX = max(start.x, end.x) + padding
         let maxY = max(start.y, end.y) + padding
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        let box = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        _cachedBoundingBox = box
+        return box
     }
 
     public func contains(point: CGPoint) -> Bool {
+        guard getBoundingBox().contains(point) else { return false }
         let threshold = max(strokeWidth * 1.5, 10.0)
+        let thresholdSq = threshold * threshold
         let dx = end.x - start.x
         let dy = end.y - start.y
         let lenSq = dx * dx + dy * dy
-        if lenSq < 0.001 { return hypot(point.x - start.x, point.y - start.y) <= threshold }
+        if lenSq < 0.001 {
+            let px = point.x - start.x
+            let py = point.y - start.y
+            return px * px + py * py <= thresholdSq
+        }
         let t = max(0, min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lenSq))
-        let proj = CGPoint(x: start.x + t * dx, y: start.y + t * dy)
-        return hypot(point.x - proj.x, point.y - proj.y) <= threshold
+        let projX = start.x + t * dx
+        let projY = start.y + t * dy
+        let px = point.x - projX
+        let py = point.y - projY
+        return px * px + py * py <= thresholdSq
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
         let hitRadius = max(radius, 10.0)
-        if hypot(point.x - start.x, point.y - start.y) <= hitRadius { return 0 }
-        if hypot(point.x - end.x, point.y - end.y) <= hitRadius { return 1 }
+        let hitRadiusSq = hitRadius * hitRadius
+        let dx0 = point.x - start.x
+        let dy0 = point.y - start.y
+        if dx0 * dx0 + dy0 * dy0 <= hitRadiusSq { return 0 }
+
+        let dx1 = point.x - end.x
+        let dy1 = point.y - end.y
+        if dx1 * dx1 + dy1 * dy1 <= hitRadiusSq { return 1 }
         return nil
     }
 
     public func move(by delta: CGPoint) {
         start = CGPoint(x: start.x + delta.x, y: start.y + delta.y)
         end = CGPoint(x: end.x + delta.x, y: end.y + delta.y)
+        _cachedBoundingBox = nil
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
         if index == 0 { start = point }
         else if index == 1 { end = point }
+        _cachedBoundingBox = nil
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
-        let strokeColor = NSColor(hex: color).cgColor
+        let strokeColor = FastColor.shared.cgColor(hex: color)
         context.setStrokeColor(strokeColor)
         context.setLineWidth(strokeWidth)
         context.setLineCap(.round)

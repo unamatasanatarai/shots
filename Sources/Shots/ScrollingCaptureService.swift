@@ -81,15 +81,45 @@ public final class ScrollingCaptureService {
         var minDifference = Double.greatestFiniteMagnitude
         var maxDifference = 0.0
 
-        // Exact single-pixel precision search: tests every candidate shift
-        for shift in 1...maxShift {
-            let avgDiff = calcDiff(forShift: shift)
-            if avgDiff < minDifference {
-                minDifference = avgDiff
-                bestShift = shift
+        // Coarse-to-fine search when maxShift is large for 3x faster alignment
+        if maxShift > 30 {
+            let step = 3
+            var coarseBest = 1
+            for shift in stride(from: 1, through: maxShift, by: step) {
+                let avgDiff = calcDiff(forShift: shift)
+                if avgDiff < minDifference {
+                    minDifference = avgDiff
+                    coarseBest = shift
+                    bestShift = shift
+                }
+                if avgDiff > maxDifference {
+                    maxDifference = avgDiff
+                }
             }
-            if avgDiff > maxDifference {
-                maxDifference = avgDiff
+            // Refine in a tight window around coarse best
+            let refineMin = max(1, coarseBest - step)
+            let refineMax = min(maxShift, coarseBest + step)
+            for shift in refineMin...refineMax where shift != coarseBest {
+                let avgDiff = calcDiff(forShift: shift)
+                if avgDiff < minDifference {
+                    minDifference = avgDiff
+                    bestShift = shift
+                }
+                if avgDiff > maxDifference {
+                    maxDifference = avgDiff
+                }
+            }
+        } else {
+            // Exact single-pixel precision search for small ranges
+            for shift in 1...maxShift {
+                let avgDiff = calcDiff(forShift: shift)
+                if avgDiff < minDifference {
+                    minDifference = avgDiff
+                    bestShift = shift
+                }
+                if avgDiff > maxDifference {
+                    maxDifference = avgDiff
+                }
             }
         }
 

@@ -332,17 +332,13 @@ public final class EditorToolbarView: NSVisualEffectView {
         }
     }
 
-    /// Full suite of tools presented in the dropdown menu when narrow (matching CleanShot X reference)
+    /// Full suite of tools presented in the dropdown menu when narrow
     public let dropdownToolDefinitions: [ToolDefinition] = [
         ToolDefinition(type: .arrow, title: "Arrow", iconName: "arrow.up.right", shortcut: "a"),
-        ToolDefinition(type: .text, title: "Text", iconName: "textformat", shortcut: "t"),
         ToolDefinition(type: .dimension, title: "Ruler (1 or 2)", iconName: "ruler", shortcut: ""),
         ToolDefinition(type: .rectangle, title: "Rectangle", iconName: "square", shortcut: "r"),
-        ToolDefinition(type: .bezel, title: "Backdrop", iconName: "macwindow", shortcut: "k"),
         ToolDefinition(type: .pen, title: "Freehand Drawing", iconName: "pencil.tip", shortcut: "d"),
-        ToolDefinition(type: .magnifier, title: "Magnifier", iconName: "magnifyingglass", shortcut: "m"),
-        ToolDefinition(type: .imageOverlay, title: "Add Capture", iconName: "plus.viewfinder", shortcut: "a", shortcutModifiers: [.command]),
-        ToolDefinition(type: .blur, title: "Blur/Erase", iconName: "drop.fill", shortcut: "b"),
+        ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b"),
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .spotlight, title: "Spotlight", iconName: "camera.metering.spot", shortcut: "s"),
         ToolDefinition(type: .counter, title: "Counter", iconName: "number.circle.fill", shortcut: "c"),
@@ -358,7 +354,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .counter, title: "Counter", iconName: "number.circle.fill", shortcut: "c"),
         ToolDefinition(type: .spotlight, title: "Spotlight", iconName: "camera.metering.spot", shortcut: "s"),
-        ToolDefinition(type: .blur, title: "Blur/Erase", iconName: "drop.fill", shortcut: "b")
+        ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b")
     ]
 
     public internal(set) var toolButtons: [LayerType: ModernToolbarButton] = [:]
@@ -371,6 +367,7 @@ public final class EditorToolbarView: NSVisualEffectView {
     public internal(set) var zoomResetButton: ModernToolbarButton?
     public internal(set) var actionSeparatorView: NSView?
     public internal(set) var undoButton: ModernToolbarButton?
+    public internal(set) var openButton: ModernToolbarButton?
     public internal(set) var copyButton: ModernToolbarButton?
     public internal(set) var saveButton: ModernToolbarButton?
     public internal(set) var pinButton: ModernToolbarButton?
@@ -388,6 +385,7 @@ public final class EditorToolbarView: NSVisualEffectView {
     private var colorButtons: [ModernColorButton] = []
 
     public var onPinToggle: ((Bool) -> Void)?
+    public var onOpenRequested: (() -> Void)?
     public var onSaveRequested: (() -> Void)?
     public var onCopyRequested: (() -> Void)?
     public var onZoomInRequested: (() -> Void)?
@@ -562,13 +560,20 @@ public final class EditorToolbarView: NSVisualEffectView {
         self.actionSeparatorView = actionSep
         stack.addArrangedSubview(actionSep)
 
-        // 4. Action Buttons: Undo [Cmd Z], Copy [Cmd C], Save [Cmd S], Pin Window (Always on Top)
+        // 4. Action Buttons: Undo [Cmd Z], Open [Cmd O], Copy [Cmd C], Save [Cmd S], Pin Window (Always on Top)
         let undoBtn = ModernToolbarButton(systemName: "arrow.uturn.backward", tooltip: "Undo [Cmd Z]", pointSize: 12.0)
         undoBtn.onAction = { [weak self] in
             self?.canvasView?.document.undo()
         }
         self.undoButton = undoBtn
         stack.addArrangedSubview(undoBtn)
+
+        let openBtn = ModernToolbarButton(systemName: "folder", tooltip: "Open Image… [Cmd O]", pointSize: 12.0)
+        openBtn.onAction = { [weak self] in
+            self?.onOpenRequested?()
+        }
+        self.openButton = openBtn
+        stack.addArrangedSubview(openBtn)
 
         let copyBtn = ModernToolbarButton(systemName: "doc.on.doc", tooltip: "Copy [Cmd C]", pointSize: 12.0)
         copyBtn.onAction = { [weak self] in
@@ -668,8 +673,9 @@ public final class EditorToolbarView: NSVisualEffectView {
             }
         }
 
-        // Pointer, Copy, Save, Pin are strictly always visible
+        // Pointer, Open, Copy, Save, Pin are strictly always visible
         toolButtons[.select]?.isHidden = false
+        openButton?.isHidden = false
         copyButton?.isHidden = false
         saveButton?.isHidden = false
         pinButton?.isHidden = false
@@ -678,12 +684,16 @@ public final class EditorToolbarView: NSVisualEffectView {
         contentStackView?.layoutSubtreeIfNeeded()
     }
 
-    public func showOverflowMenu() {
-        guard let overflowBtn = overflowButton else { return }
+    public func buildOverflowMenu() -> NSMenu {
         let menu = NSMenu(title: "Tools")
         menu.autoenablesItems = false
 
         for def in dropdownToolDefinitions {
+            // Do not repeat tools that are currently visible on the main toolbar
+            if let btn = toolButtons[def.type], !btn.isHidden {
+                continue
+            }
+
             let item = NSMenuItem(
                 title: def.title,
                 action: #selector(overflowToolSelected(_:)),
@@ -708,7 +718,12 @@ public final class EditorToolbarView: NSVisualEffectView {
             }
             menu.addItem(item)
         }
+        return menu
+    }
 
+    public func showOverflowMenu() {
+        guard let overflowBtn = overflowButton else { return }
+        let menu = buildOverflowMenu()
         let location = NSPoint(x: 0, y: -4)
         menu.popUp(positioning: nil, at: location, in: overflowBtn)
     }

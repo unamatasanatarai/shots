@@ -10,11 +10,40 @@ public final class CounterLayer: AnnotationLayer {
     public var color: String
     public var strokeWidth: CGFloat
 
-    public var center: CGPoint
-    public var radius: CGFloat
-    public var value: Int
-    public var pointerAngle: CGFloat // Radians for the teardrop peak
-    public var tailDistance: CGFloat
+    public var center: CGPoint {
+        didSet { invalidateCache() }
+    }
+    public var radius: CGFloat {
+        didSet { invalidateCache() }
+    }
+    public var value: Int {
+        didSet {
+            _cachedAttributedString = nil
+            _cachedTextSize = nil
+        }
+    }
+    public var pointerAngle: CGFloat { // Radians for the teardrop peak
+        didSet { invalidateCache() }
+    }
+    public var tailDistance: CGFloat {
+        didSet { invalidateCache() }
+    }
+
+    private var _cachedPath: CGPath?
+    private var _cachedBoundingBox: CGRect?
+    private var _cachedPeak: CGPoint?
+    private var _cachedAttributedString: NSAttributedString?
+    private var _cachedTextSize: CGSize?
+    private var _cachedBadgeColor: CGColor?
+
+    @inline(__always)
+    private func invalidateCache() {
+        _cachedPath = nil
+        _cachedBoundingBox = nil
+        _cachedPeak = nil
+        _cachedAttributedString = nil
+        _cachedTextSize = nil
+    }
 
     public init(
         id: UUID = UUID(),
@@ -70,15 +99,20 @@ public final class CounterLayer: AnnotationLayer {
     }
 
     public func getPeakPoint() -> CGPoint {
-        let angle = pointerAngle
-        let dist = max(radius * 1.35, tailDistance)
-        return CGPoint(x: center.x + dist * cos(angle), y: center.y + dist * sin(angle))
-    }
-
-    public func pathForTeardrop() -> CGPath {
+        if let cached = _cachedPeak { return cached }
         let angle = pointerAngle
         let dist = max(radius * 1.35, tailDistance)
         let peak = CGPoint(x: center.x + dist * cos(angle), y: center.y + dist * sin(angle))
+        _cachedPeak = peak
+        return peak
+    }
+
+    public func pathForTeardrop() -> CGPath {
+        if let cached = _cachedPath { return cached }
+
+        let angle = pointerAngle
+        let dist = max(radius * 1.35, tailDistance)
+        let peak = getPeakPoint()
 
         // Departure angle beta from peak axis to flank base on circle (~48 deg = 0.84 rad)
         let beta: CGFloat = 0.84
@@ -114,16 +148,10 @@ public final class CounterLayer: AnnotationLayer {
 
         let path = CGMutablePath()
 
-        // 1. Circular back arc along the body from t2Angle around back to t1Angle
+        // 1. Hardware-accelerated circular back arc along the body from t2Angle around to t1Angle
         let arcSpan = 2.0 * .pi - 2.0 * beta
-        let steps = 36
         path.move(to: p2)
-        for i in 1...steps {
-            let frac = CGFloat(i) / CGFloat(steps)
-            let a = t2Angle + frac * arcSpan
-            let pt = CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a))
-            path.addLine(to: pt)
-        }
+        path.addArc(center: center, radius: radius, startAngle: t2Angle, endAngle: t2Angle + arcSpan, clockwise: false)
 
         // 2. Smooth bezier flank from p1 to tip1
         path.addCurve(to: tip1, control1: c1P1, control2: c2Tip1)
@@ -140,24 +168,37 @@ public final class CounterLayer: AnnotationLayer {
         path.addCurve(to: p2, control1: c2Tip2, control2: c1P2)
         path.closeSubpath()
 
+        _cachedPath = path
         return path
     }
 
     public func getBoundingBox() -> CGRect {
+        if let cached = _cachedBoundingBox { return cached }
         let peak = getPeakPoint()
         let circleBox = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
         let peakBox = CGRect(x: peak.x - 4, y: peak.y - 4, width: 8, height: 8)
-        return circleBox.union(peakBox).insetBy(dx: -6.0, dy: -6.0)
+        let box = circleBox.union(peakBox).insetBy(dx: -6.0, dy: -6.0)
+        _cachedBoundingBox = box
+        return box
     }
 
     public func contains(point: CGPoint) -> Bool {
-        let path = pathForTeardrop()
-        return path.contains(point) || hypot(point.x - center.x, point.y - center.y) <= radius + 4.0
+        guard getBoundingBox().contains(point) else { return false }
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        let rCheck = radius + 4.0
+        if dx * dx + dy * dy <= rCheck * rCheck {
+            return true
+        }
+        return pathForTeardrop().contains(point)
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
         let peak = getPeakPoint()
-        if hypot(point.x - peak.x, point.y - peak.y) <= max(radius, 10.0) {
+        let hitRadius = max(radius, 10.0)
+        let dx = point.x - peak.x
+        let dy = point.y - peak.y
+        if dx * dx + dy * dy <= hitRadius * hitRadius {
             return 0
         }
         return nil
@@ -166,6 +207,7 @@ public final class CounterLayer: AnnotationLayer {
     public func move(by delta: CGPoint) {
         center.x += delta.x
         center.y += delta.y
+        invalidateCache()
     }
 
     public func updateHandle(index: Int, to point: CGPoint) {
@@ -175,13 +217,18 @@ public final class CounterLayer: AnnotationLayer {
             pointerAngle = atan2(dy, dx)
             // Fixed tip distance locked at constant radial distance
             tailDistance = radius * 1.68
+            invalidateCache()
         }
     }
 
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
-        let badgeColor = NSColor(hex: color).cgColor
+        let badgeColor = _cachedBadgeColor ?? {
+            let c = FastColor.shared.cgColor(hex: color)
+            _cachedBadgeColor = c
+            return c
+        }()
         context.setFillColor(badgeColor)
 
         // Draw solid teardrop / waterdrop shape
@@ -190,15 +237,27 @@ public final class CounterLayer: AnnotationLayer {
         context.fillPath()
 
         // Draw number text in pure white, bold and centered in the circular body
-        let text = "\(value)"
-        let fontSize = max(11.0, radius * 1.1)
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
-        let textAttrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.white
-        ]
-        let attrString = NSAttributedString(string: text, attributes: textAttrs)
-        let textSize = attrString.size()
+        let attrString: NSAttributedString
+        let textSize: CGSize
+        if let cachedStr = _cachedAttributedString, let cachedSz = _cachedTextSize {
+            attrString = cachedStr
+            textSize = cachedSz
+        } else {
+            let text = "\(value)"
+            let fontSize = max(11.0, radius * 1.1)
+            let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+            let textAttrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor.white
+            ]
+            let str = NSAttributedString(string: text, attributes: textAttrs)
+            let sz = str.size()
+            _cachedAttributedString = str
+            _cachedTextSize = sz
+            attrString = str
+            textSize = sz
+        }
+
         let textOrigin = CGPoint(
             x: center.x - textSize.width / 2.0,
             y: center.y - textSize.height / 2.0

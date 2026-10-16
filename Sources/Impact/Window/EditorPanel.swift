@@ -60,6 +60,8 @@ public final class EditorPanel: NSPanel {
         hasShadow = true
         collectionBehavior = [.managed, .participatesInCycle, .fullScreenPrimary]
 
+        registerForDraggedTypes([.fileURL])
+
         setupContentView()
         setupToolbarActions()
 
@@ -98,6 +100,10 @@ public final class EditorPanel: NSPanel {
     override public func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
             canvasView.handleEscapeKey()
+            return
+        }
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers?.lowercased() == "o" {
+            ImpactAppCoordinator.shared.openImageFileDialog()
             return
         }
         super.keyDown(with: event)
@@ -368,6 +374,10 @@ public final class EditorPanel: NSPanel {
             NSApp.activate(ignoringOtherApps: true)
         }
 
+        toolbarView.onOpenRequested = {
+            ImpactAppCoordinator.shared.openImageFileDialog()
+        }
+
         toolbarView.onCopyRequested = { [weak self] in
             self?.showCopiedToClipboardToast()
         }
@@ -427,16 +437,160 @@ public final class EditorPanel: NSPanel {
         canvasView.zoomScale = sv.magnification
         updateMetaLabel()
     }
+    // MARK: - Drag and Drop Support
+
+    private var dropOverlay: DropOverlayView?
+
+    public func showDropTargetOverlay(_ show: Bool) {
+        if show {
+            if dropOverlay == nil {
+                guard let container = contentView else { return }
+                let overlay = DropOverlayView()
+                overlay.translatesAutoresizingMaskIntoConstraints = false
+                container.addSubview(overlay, positioned: .above, relativeTo: nil)
+                NSLayoutConstraint.activate([
+                    overlay.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                    overlay.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+                ])
+                self.dropOverlay = overlay
+            }
+        } else {
+            dropOverlay?.removeFromSuperview()
+            dropOverlay = nil
+        }
+    }
+
+    public func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if extractImageURL(from: sender) != nil {
+            showDropTargetOverlay(true)
+            return .copy
+        }
+        return []
+    }
+
+    public func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return extractImageURL(from: sender) != nil ? .copy : []
+    }
+
+    public func draggingExited(_ sender: NSDraggingInfo?) {
+        showDropTargetOverlay(false)
+    }
+
+    public func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        showDropTargetOverlay(false)
+        guard let url = extractImageURL(from: sender) else { return false }
+        ImpactAppCoordinator.shared.openImageFile(url: url)
+        return true
+    }
+
+    private func extractImageURL(from sender: NSDraggingInfo) -> URL? {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              let first = urls.first else {
+            return nil
+        }
+        let ext = first.pathExtension.lowercased()
+        return WelcomeDropView.supportedExtensions.contains(ext) ? first : nil
+    }
 }
 
-/// An NSScrollView subclass that forwards Cmd + mousewheel events to zoom handling
+/// An NSScrollView subclass that forwards Cmd + mousewheel events to zoom handling and supports drag & drop
 final class EditorScrollView: NSScrollView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if extractImageURL(from: sender) != nil {
+            (window as? EditorPanel)?.showDropTargetOverlay(true)
+            return .copy
+        }
+        return []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return extractImageURL(from: sender) != nil ? .copy : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        (window as? EditorPanel)?.showDropTargetOverlay(false)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        (window as? EditorPanel)?.showDropTargetOverlay(false)
+        guard let url = extractImageURL(from: sender) else { return false }
+        ImpactAppCoordinator.shared.openImageFile(url: url)
+        return true
+    }
+
+    private func extractImageURL(from sender: NSDraggingInfo) -> URL? {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              let first = urls.first else {
+            return nil
+        }
+        let ext = first.pathExtension.lowercased()
+        return WelcomeDropView.supportedExtensions.contains(ext) ? first : nil
+    }
+
     override func scrollWheel(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
             (window as? EditorPanel)?.handleZoomWheel(with: event)
             return
         }
         super.scrollWheel(with: event)
+    }
+}
+
+/// HUD Overlay shown when dragging an image file over EditorPanel
+final class DropOverlayView: NSVisualEffectView {
+    init() {
+        super.init(frame: .zero)
+        material = .hudWindow
+        state = .active
+        blendingMode = .withinWindow
+        wantsLayer = true
+        layer?.cornerRadius = 14.0
+        layer?.masksToBounds = true
+        layer?.borderWidth = 1.5
+        layer?.borderColor = NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor
+
+        let iconView = NSImageView()
+        if #available(macOS 11.0, *) {
+            let config = NSImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+            iconView.image = NSImage(systemSymbolName: "arrow.down.doc.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config)
+        }
+        iconView.contentTintColor = NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 1.0)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+
+        let label = NSTextField(labelWithString: "Drop image to open in Impact")
+        label.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconView.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            iconView.widthAnchor.constraint(equalToConstant: 30),
+            iconView.heightAnchor.constraint(equalToConstant: 30),
+
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
 

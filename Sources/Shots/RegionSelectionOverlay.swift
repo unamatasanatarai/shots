@@ -122,9 +122,14 @@ public final class RegionSelectionCoordinator {
 
         for screen in screens {
             let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
-            let snapshot = CGDisplayCreateImage(displayID) ?? CaptureService.shared.captureFullscreen(displayID: displayID)
-            if let snap = snapshot {
-                screenSnapshots[displayID] = snap
+            let snapshot: CGImage?
+            if activeMode == .colorPicker {
+                snapshot = CGDisplayCreateImage(displayID) ?? CaptureService.shared.captureFullscreen(displayID: displayID)
+                if let snap = snapshot {
+                    screenSnapshots[displayID] = snap
+                }
+            } else {
+                snapshot = nil
             }
 
             let panel = RegionOverlayPanel(
@@ -747,6 +752,12 @@ private final class RegionSelectionView: NSView {
         selectionStart: NSPoint?,
         selectionCurrent: NSPoint?
     ) {
+        let changed = (currentMousePoint != mousePoint) ||
+                      (isDragging != dragging) ||
+                      (startPoint != selectionStart) ||
+                      (currentPoint != selectionCurrent)
+        guard changed else { return }
+
         currentMousePoint = mousePoint
         isDragging = dragging
         startPoint = selectionStart

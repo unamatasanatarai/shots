@@ -11,11 +11,7 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
         setupDoubleCmdQMonitor()
 
         let args = CommandLine.arguments
-        if args.contains("--test-editor") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                ImpactAppCoordinator.shared.openTestImage()
-            }
-        } else if let idx = args.firstIndex(of: "--file"), idx + 1 < args.count {
+        if let idx = args.firstIndex(of: "--file"), idx + 1 < args.count {
             let path = args[idx + 1]
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 ImpactAppCoordinator.shared.openImageFile(url: URL(fileURLWithPath: path))
@@ -26,12 +22,11 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
                 ImpactAppCoordinator.shared.openImageFile(url: URL(fileURLWithPath: path))
             }
         } else {
-            // Defer the default image: if macOS is about to deliver an openFile Apple Event
-            // (e.g. Finder "Open With"), it arrives between didFinishLaunching and the next
-            // run-loop cycle. Wait briefly so we can skip the default if a file is incoming.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            // If macOS delivered an openFile Apple Event (e.g. Finder "Open With"), it arrives
+            // between didFinishLaunching and next cycle. Wait briefly to skip welcome if file is incoming.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                 guard let self = self, !self.receivedOpenFileEvent else { return }
-                ImpactAppCoordinator.shared.openTestImage()
+                ImpactAppCoordinator.shared.openWelcome()
             }
         }
     }
@@ -39,6 +34,13 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
     public func application(_ application: NSApplication, openFile filename: String) -> Bool {
         receivedOpenFileEvent = true
         ImpactAppCoordinator.shared.openImageFile(url: URL(fileURLWithPath: filename))
+        return true
+    }
+
+    public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            ImpactAppCoordinator.shared.openWelcome()
+        }
         return true
     }
 

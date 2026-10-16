@@ -139,32 +139,23 @@ public enum EditorTests {
             assert(!filter.contains(point: CGPoint(x: 10, y: 10)), "Point outside spotlights must not be contained")
         }
 
-        testRunner("Editor - Magnifier Lens Math & Sampling Bounds") {
-            let mag = MagnifierLayer(
-                sourceCenter: CGPoint(x: 150, y: 150),
-                targetCenter: CGPoint(x: 300, y: 300),
-                radius: 40.0,
-                zoomFactor: 2.5
+        testRunner("Editor - Blur Intensity Default Strength & Scope") {
+            let blur = FilterLayer(
+                rects: [CGRect(x: 50, y: 50, width: 100, height: 100)],
+                filterMode: .gaussian
             )
-
-            assert(mag.hitTestHandle(point: CGPoint(x: 150, y: 150)) == 0, "Handle 0 must be source center")
-            assert(mag.hitTestHandle(point: CGPoint(x: 300, y: 300)) == 1, "Handle 1 must be target center")
-
-            let box = mag.getBoundingBox()
-            assert(box.contains(CGPoint(x: 150, y: 150)), "Bounds must contain source")
-            assert(box.contains(CGPoint(x: 300, y: 300)), "Bounds must contain target lens")
+            assert(blur.intensity == 6.0, "Default blur intensity must be calibrated to 6.0")
+            assert(blur.type == .blur, "FilterLayer with gaussian mode must report .blur type")
         }
 
-        testRunner("Editor - Callout Speech Bubble & Tail Anchor") {
-            let callout = CalloutLayer(
-                frame: CGRect(x: 50, y: 50, width: 120, height: 50),
-                text: "Hello World",
-                tailTip: CGPoint(x: 110, y: 140)
+        testRunner("Editor - Reduced Blur Filter Strength Calibration") {
+            let blur = FilterLayer(
+                rects: [CGRect(x: 50, y: 50, width: 100, height: 100)],
+                filterMode: .gaussian,
+                intensity: 6.0
             )
-
-            assert(callout.contains(point: CGPoint(x: 70, y: 70)), "Point in bubble must be contained")
-            assert(callout.hitTestHandle(point: CGPoint(x: 110, y: 140)) == 0, "Handle 0 must be tail anchor")
-            assert(callout.getBoundingBox().contains(CGPoint(x: 110, y: 140)), "Bounding box must encompass tail tip")
+            assert(blur.intensity == 6.0, "Blur intensity must reflect calibrated reduced strength of 6.0")
+            assert(blur.rects.count == 1, "Blur layer should maintain target rects")
         }
 
         testRunner("Editor - Counter Badge Auto-Increment & Pointer Angle") {
@@ -189,11 +180,13 @@ public enum EditorTests {
             assert(dim.hitTestHandle(point: CGPoint(x: 300, y: 400)) == 1, "Handle 1 must be end")
         }
 
-        testRunner("Editor - Bezel macOS Window Frame Bounding Box") {
-            let bezel = BezelLayer(targetBounds: CGRect(x: 100, y: 100, width: 600, height: 400))
-            let box = bezel.getBoundingBox()
-            assert(box.width > 600, "Bezel bounding box must include shadow padding")
-            assert(box.height > 400, "Bezel bounding box must include titlebar and shadow padding")
+        testRunner("Editor - Dead Features Removed from LayerType") {
+            let allTypes = LayerType.allCases.map { $0.rawValue }
+            assert(!allTypes.contains("Crop"), "LayerType must not contain Crop")
+            assert(!allTypes.contains("Plain Text"), "LayerType must not contain Plain Text")
+            assert(!allTypes.contains("Magnifier"), "LayerType must not contain Magnifier")
+            assert(!allTypes.contains("Bezel / Frame"), "LayerType must not contain Bezel")
+            assert(!allTypes.contains("Image Overlay"), "LayerType must not contain Image Overlay")
         }
 
         testRunner("Editor - Color Swatch Updates Selected Layers") {
@@ -209,27 +202,21 @@ public enum EditorTests {
             assert(arrow.color == "#007AFF", "Selected layer color must be updated to swatch color")
         }
 
-        testRunner("Editor - Magnifier Draggable Source & Target Handles") {
-            let mag = MagnifierLayer(
-                sourceCenter: CGPoint(x: 100, y: 100),
-                targetCenter: CGPoint(x: 250, y: 250),
-                radius: 40.0
-            )
+        testRunner("Editor - Overflow Menu Deduplication Against Main Toolbar") {
+            let doc = EditorDocument(image: CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithURL(resolveTestImageURL()! as CFURL, nil)!, 0, nil)!)
+            let canvas = EditorCanvasView(document: doc)
+            let toolbar = EditorToolbarView(canvasView: canvas)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 900, height: 44)
+            toolbar.layout()
 
-            // Hit test source handle (0) and move to a new independent location
-            assert(mag.hitTestHandle(point: CGPoint(x: 100, y: 100)) == 0, "Handle 0 must be source")
-            mag.updateHandle(index: 0, to: CGPoint(x: 50, y: 70))
-            assert(mag.sourceCenter == CGPoint(x: 50, y: 70), "Source center must be moved independently")
-            assert(mag.targetCenter == CGPoint(x: 250, y: 250), "Target center must remain unchanged")
-
-            // Hit test target handle (1) and move to a new independent location
-            assert(mag.hitTestHandle(point: CGPoint(x: 250, y: 250)) == 1, "Handle 1 must be target")
-            mag.updateHandle(index: 1, to: CGPoint(x: 400, y: 350))
-            assert(mag.targetCenter == CGPoint(x: 400, y: 350), "Target center must be moved independently")
-            assert(mag.sourceCenter == CGPoint(x: 50, y: 70), "Source center must remain unchanged")
+            let menu = toolbar.buildOverflowMenu()
+            let titles = menu.items.map { $0.title }
+            for def in toolbar.collapsibleToolDefinitions {
+                assert(!titles.contains(def.title), "Visible tool \(def.title) must NOT be repeated in overflow menu")
+            }
         }
 
-        testRunner("Editor - Text, Callout, and Counter Render Composition Verification") {
+        testRunner("Editor - Blur and Counter Render Composition Verification") {
             guard let imageURL = resolveTestImageURL(),
                   let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
                   let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
@@ -237,12 +224,10 @@ public enum EditorTests {
             }
 
             let doc = EditorDocument(image: cgImage)
-            let textLayer = TextLayer(origin: CGPoint(x: 50, y: 50), text: "Notice", color: "#FFCC00")
-            let callout = CalloutLayer(frame: CGRect(x: 100, y: 100, width: 140, height: 48), tailTip: CGPoint(x: 180, y: 180), color: "#FF3B30")
+            let blur = FilterLayer(rects: [CGRect(x: 100, y: 100, width: 140, height: 48)], filterMode: .gaussian, intensity: 6.0)
             let counter = CounterLayer(center: CGPoint(x: 250, y: 80), value: 1, pointerAngle: 0.0, color: "#007AFF")
 
-            doc.addLayer(textLayer)
-            doc.addLayer(callout)
+            doc.addLayer(blur)
             doc.addLayer(counter)
 
             guard let rendered = doc.renderComposition() else {
@@ -328,58 +313,19 @@ public enum EditorTests {
             assert(doc.nextCounterValue() == 6, "Next counter value must read highest existing value (5) and assign 6")
         }
 
-        testRunner("Editor - Text Callout Auto-Sizing & Edge Snapped Tail") {
-            let callout = CalloutLayer(
-                origin: CGPoint(x: 100, y: 100),
-                text: "one line",
-                tailTip: CGPoint(x: 120, y: 160)
+        testRunner("Editor - Blur Filter Calibration & Multi-Rect Support") {
+            let blur = FilterLayer(
+                rects: [
+                    CGRect(x: 10, y: 10, width: 80, height: 40),
+                    CGRect(x: 120, y: 60, width: 90, height: 50)
+                ],
+                filterMode: .gaussian,
+                intensity: 6.0
             )
-
-            let initialSize = callout.frame.size
-            assert(initialSize.width > 0 && initialSize.height > 0, "Initial size must be auto-calculated")
-
-            // Test dynamic auto-sizing when multiline text is provided
-            callout.text = "multiline\nmulti\nline"
-            assert(callout.frame.height > initialSize.height, "Height must automatically grow for multiline content")
-
-            // Single line change dynamically resizes back
-            callout.text = "short"
-            assert(callout.frame.height < initialSize.height || callout.frame.width < initialSize.width, "Dimensions strictly dictated by entered text")
-
-            // Hit test handle: only handle 0 (tail tip) is adjustable; user cannot manually resize bounding box
-            assert(callout.hitTestHandle(point: CGPoint(x: 120, y: 160)) == 0, "Handle 0 must be tail tip")
-            assert(callout.hitTestHandle(point: CGPoint(x: callout.frame.maxX, y: callout.frame.maxY)) == nil, "Bounding box resize handle must be excluded")
-
-            // Variable tail length & orientation: snap to right
-            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.maxX + 150, y: callout.frame.midY))
-            assert(callout.tailTip == CGPoint(x: callout.frame.maxX + 150, y: callout.frame.midY), "Tail tip must update to new position")
-            let pathRight = callout.pathForCallout()
-            assert(!pathRight.isEmpty, "Path for right-snapped callout must be valid")
-
-            // Variable tail length & orientation: snap to top
-            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.midX, y: callout.frame.minY - 100))
-            let pathTop = callout.pathForCallout()
-            assert(!pathTop.isEmpty, "Path for top-snapped callout must be valid")
-
-            // Variable tail length & orientation: snap to left
-            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.minX - 120, y: callout.frame.midY))
-            let pathLeft = callout.pathForCallout()
-            assert(!pathLeft.isEmpty, "Path for left-snapped callout must be valid")
-
-            // Variable tail length: very short nub (5px) to long pointer (400px)
-            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.midX, y: callout.frame.maxY + 5))
-            assert(!callout.pathForCallout().isEmpty, "Short nub tail must render valid path")
-
-            callout.updateHandle(index: 0, to: CGPoint(x: callout.frame.midX + 300, y: callout.frame.maxY + 350))
-            assert(!callout.pathForCallout().isEmpty, "Long pointer tail must render valid path")
-
-            // Hit testing: contains point inside body and inside tail
-            assert(callout.contains(point: CGPoint(x: callout.frame.midX, y: callout.frame.midY)), "Body center must be contained")
-            assert(callout.contains(point: callout.tailTip), "Tail tip must be contained")
-
-            // Bounding box encompasses the entire extended tail
-            let bbox = callout.getBoundingBox()
-            assert(bbox.contains(callout.tailTip), "Bounding box must encompass extended tail tip")
+            assert(blur.intensity == 6.0, "Blur intensity must be 6.0")
+            assert(blur.rects.count == 2, "Blur should support multiple redacted rects")
+            assert(blur.contains(point: CGPoint(x: 12, y: 12)), "Border point of rect 0 must be contained")
+            assert(blur.type == .blur, "FilterLayer must report .blur type")
         }
 
         testRunner("Editor - 4-Directional Move Cursor & Hit Testing") {
@@ -989,8 +935,6 @@ public enum EditorTests {
 
             let rectLayer = RectangleLayer(rect: CGRect(x: 10, y: 10, width: 60, height: 40))
             let ellipseLayer = EllipseLayer(rect: CGRect(x: 80, y: 10, width: 50, height: 50))
-            let textLayer = TextLayer(origin: CGPoint(x: 10, y: 60), text: "Test Hover")
-            let calloutLayer = CalloutLayer(frame: CGRect(x: 10, y: 120, width: 80, height: 40), tailTip: CGPoint(x: 50, y: 170))
             let arrowLayer = ArrowLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 40, y: 40))
             let counterLayer = CounterLayer(center: CGPoint(x: 100, y: 100), value: 1)
             let lineLayer = LineLayer(start: CGPoint(x: 0, y: 10), end: CGPoint(x: 50, y: 10))
@@ -999,13 +943,11 @@ public enum EditorTests {
             let spotlightFilter = FilterLayer(rects: [CGRect(x: 5, y: 5, width: 30, height: 30)], filterMode: .spotlight)
             let blurFilter = FilterLayer(rects: [CGRect(x: 10, y: 10, width: 30, height: 30)], filterMode: .gaussian)
             let dimLayer = DimensionLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 100, y: 0))
-            let magLayer = MagnifierLayer(sourceCenter: CGPoint(x: 50, y: 50), targetCenter: CGPoint(x: 100, y: 100))
-            let bezelLayer = BezelLayer(targetBounds: CGRect(x: 20, y: 20, width: 100, height: 80))
 
             let allLayers: [AnnotationLayer] = [
-                rectLayer, ellipseLayer, textLayer, calloutLayer, arrowLayer, counterLayer,
+                rectLayer, ellipseLayer, arrowLayer, counterLayer,
                 lineLayer, penLayer, highlighterLayer, spotlightFilter, blurFilter,
-                dimLayer, magLayer, bezelLayer
+                dimLayer
             ]
 
             // 1. Verify hoverPath generates a valid CGPath for every layer
@@ -1015,19 +957,19 @@ public enum EditorTests {
                 assert(!path!.isEmpty, "hoverPath must not be empty for \(type(of: layer))")
             }
 
-            // 2. Verify hover state updates for arbitrary layers (rectLayer, textLayer, etc.)
+            // 2. Verify hover state updates for arbitrary layers (rectLayer, counterLayer, etc.)
             doc.addLayer(rectLayer)
-            doc.addLayer(textLayer)
+            doc.addLayer(counterLayer)
 
             // Hover over rectLayer
             canvas.updateHoverState(to: rectLayer)
             assert(canvas.hoveredLayer?.id == rectLayer.id, "Setting hover on RectangleLayer must update hoveredLayer")
             assert(canvas.hoverOutlineLayer?.id == rectLayer.id, "Setting hover on RectangleLayer must update hoverOutlineLayer")
 
-            // Hover over textLayer
-            canvas.updateHoverState(to: textLayer)
-            assert(canvas.hoveredLayer?.id == textLayer.id, "Setting hover on TextLayer must update hoveredLayer")
-            assert(canvas.hoverOutlineLayer?.id == textLayer.id, "Setting hover on TextLayer must update hoverOutlineLayer")
+            // Hover over counterLayer
+            canvas.updateHoverState(to: counterLayer)
+            assert(canvas.hoveredLayer?.id == counterLayer.id, "Setting hover on CounterLayer must update hoveredLayer")
+            assert(canvas.hoverOutlineLayer?.id == counterLayer.id, "Setting hover on CounterLayer must update hoverOutlineLayer")
 
             // Clear hover state
             canvas.updateHoverState(to: nil)
@@ -1186,6 +1128,7 @@ public enum EditorTests {
             assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must be visible when wide")
             assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur must be visible when wide")
             assert(toolbar.overflowButton?.isHidden == true, "3-dots overflow must be hidden when wide")
+            assert(toolbar.openButton?.isHidden == false, "Open must be visible")
             assert(toolbar.copyButton?.isHidden == false, "Copy must be visible")
             assert(toolbar.saveButton?.isHidden == false, "Save must be visible")
             assert(toolbar.pinButton?.isHidden == false, "Pin must be visible")
@@ -1196,6 +1139,7 @@ public enum EditorTests {
 
             // Essential icons strictly preserved
             assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must ALWAYS remain visible when narrow")
+            assert(toolbar.openButton?.isHidden == false, "Open must ALWAYS remain visible when narrow")
             assert(toolbar.copyButton?.isHidden == false, "Copy must ALWAYS remain visible when narrow")
             assert(toolbar.saveButton?.isHidden == false, "Save must ALWAYS remain visible when narrow")
             assert(toolbar.pinButton?.isHidden == false, "Pin must ALWAYS remain visible when narrow")
@@ -1204,39 +1148,43 @@ public enum EditorTests {
             assert(toolbar.toolButtons[.blur]?.isHidden == true, "Rightmost tool (Blur) must hide when narrow")
             assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible when narrow")
 
-            // 3. Very narrow window (340pt): Still preserves Pointer, Copy, Save, Pin and 3-dots
+            // 3. Very narrow window (340pt): Still preserves Pointer, Open, Copy, Save, Pin and 3-dots
             toolbar.frame = NSRect(x: 0, y: 0, width: 340, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must remain visible even at 340pt")
+            assert(toolbar.openButton?.isHidden == false, "Open must remain visible even at 340pt")
             assert(toolbar.copyButton?.isHidden == false, "Copy must remain visible even at 340pt")
             assert(toolbar.saveButton?.isHidden == false, "Save must remain visible even at 340pt")
             assert(toolbar.pinButton?.isHidden == false, "Pin must remain visible even at 340pt")
             assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible at 340pt")
 
             // 4. Overflow menu tool activation & dropdown items matching reference image
-            assert(toolbar.dropdownToolDefinitions.count >= 13, "Dropdown must contain full suite of tools from reference image")
+            assert(toolbar.dropdownToolDefinitions.count == 10, "Dropdown must contain full suite of remaining tools")
             let titles = toolbar.dropdownToolDefinitions.map { $0.title }
             assert(titles.contains("Arrow"), "Dropdown must contain Arrow")
-            assert(titles.contains("Text"), "Dropdown must contain Text")
+            assert(!titles.contains("Speech Bubble"), "Dropdown must NOT contain removed Speech Bubble")
             assert(titles.contains("Ruler (1 or 2)"), "Dropdown must contain Ruler (1 or 2)")
             assert(titles.contains("Rectangle"), "Dropdown must contain Rectangle")
-            assert(titles.contains("Backdrop"), "Dropdown must contain Backdrop")
+            assert(!titles.contains("Backdrop"), "Dropdown must NOT contain removed Backdrop")
             assert(titles.contains("Freehand Drawing"), "Dropdown must contain Freehand Drawing")
-            assert(titles.contains("Magnifier"), "Dropdown must contain Magnifier")
-            assert(titles.contains("Add Capture"), "Dropdown must contain Add Capture")
-            assert(titles.contains("Blur/Erase"), "Dropdown must contain Blur/Erase")
+            assert(!titles.contains("Magnifier"), "Dropdown must NOT contain removed Magnifier")
+            assert(!titles.contains("Add Capture"), "Dropdown must NOT contain removed Add Capture")
+            assert(!titles.contains("Text"), "Dropdown must NOT contain removed Text")
+            assert(titles.contains("Blur"), "Dropdown must contain renamed Blur")
+            assert(!titles.contains("Blur/Erase"), "Dropdown must NOT contain Blur/Erase")
             assert(titles.contains("Highlighter"), "Dropdown must contain Highlighter")
             assert(titles.contains("Spotlight"), "Dropdown must contain Spotlight")
             assert(titles.contains("Counter"), "Dropdown must contain Counter")
             assert(titles.contains("Oval"), "Dropdown must contain Oval")
+            assert(titles.contains("Line"), "Dropdown must contain Line")
 
             canvas.document.activeTool = .blur
             toolbar.updateSelectedToolVisuals()
             assert(toolbar.overflowButton?.isActive == true, "3-dots overflow button must show active state when an overflowed tool is active")
 
-            canvas.document.activeTool = .text
+            canvas.document.activeTool = .counter
             toolbar.updateSelectedToolVisuals()
-            assert(toolbar.overflowButton?.isActive == true, "3-dots overflow button must show active state for Text dropdown tool")
+            assert(toolbar.overflowButton?.isActive == true, "3-dots overflow button must show active state for dropdown tool (Counter)")
         }
 
         testRunner("Editor - Cmd + Mousewheel Zooms In and Out") {
@@ -1474,6 +1422,7 @@ public enum EditorTests {
             // Essential buttons strictly preserved at 280pt
             assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer strictly visible at 280pt")
             assert(panel.toolbarView.overflowButton?.isHidden == false, "3-dots overflow strictly visible at 280pt")
+            assert(panel.toolbarView.openButton?.isHidden == false, "Open strictly visible at 280pt")
             assert(panel.toolbarView.copyButton?.isHidden == false, "Copy strictly visible at 280pt")
             assert(panel.toolbarView.saveButton?.isHidden == false, "Save strictly visible at 280pt")
             assert(panel.toolbarView.pinButton?.isHidden == false, "Pin strictly visible at 280pt")
@@ -1539,6 +1488,57 @@ public enum EditorTests {
             oval.updateHandle(index: 1, to: CGPoint(x: 350, y: 120))
             assert(oval.rect.minY == 80 && oval.rect.maxY == 200, "Horizontal resize must not alter height or Y coordinates")
             assert(oval.rect.maxX == 350 && oval.rect.width == 250, "Horizontal resize must update right and width")
+        }
+
+        testRunner("Editor - Welcome CTA Panel & Drag-and-Drop Image Acceptance") {
+            let welcome = WelcomePanel()
+            assert(welcome.frame.width == 520, "WelcomePanel width must be 520pt")
+            assert(welcome.frame.height == 360, "WelcomePanel height must be 360pt")
+            assert(welcome.dropView.openButton.isHidden == false, "Open button in welcome drop view must be visible")
+
+            // Verify supported file extension filtering
+            let supported = ["photo.png", "image.jpg", "scan.jpeg", "layer.tiff", "shot.heic", "icon.webp", "anim.gif", "drawing.bmp"]
+            for name in supported {
+                let url = URL(fileURLWithPath: "/tmp/\(name)")
+                let ext = url.pathExtension.lowercased()
+                assert(WelcomeDropView.supportedExtensions.contains(ext), "Extension \(ext) must be supported")
+            }
+
+            let unsupported = ["document.pdf", "readme.txt", "archive.zip", "script.sh"]
+            for name in unsupported {
+                let url = URL(fileURLWithPath: "/tmp/\(name)")
+                let ext = url.pathExtension.lowercased()
+                assert(!WelcomeDropView.supportedExtensions.contains(ext), "Extension \(ext) must be rejected")
+            }
+
+            welcome.close()
+        }
+
+        testRunner("Editor - Open Button Action & Drag-and-Drop on EditorPanel") {
+            let context = CGContext(
+                data: nil,
+                width: 200,
+                height: 200,
+                bitsPerComponent: 8,
+                bytesPerRow: 800,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let doc = EditorDocument(image: context.makeImage()!)
+            let panel = EditorPanel(document: doc)
+
+            var openRequested = false
+            panel.toolbarView.onOpenRequested = {
+                openRequested = true
+            }
+            panel.toolbarView.openButton?.onAction?()
+            assert(openRequested == true, "Triggering openButton action must fire onOpenRequested")
+
+            // Verify drag target overlay toggle
+            panel.showDropTargetOverlay(true)
+            panel.showDropTargetOverlay(false)
+
+            panel.close()
         }
     }
 }

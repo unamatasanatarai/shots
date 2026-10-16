@@ -1,5 +1,7 @@
 import Cocoa
 import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 
 public enum ImageFormat: String, CaseIterable, Identifiable {
     case png = "png"
@@ -43,22 +45,40 @@ public final class SaveService {
 
     // MARK: - Image Output Pipeline: Encoding
 
-    /// Encodes a CGImage into lossless PNG data.
+    /// Encodes a CGImage into lossless PNG data using fast hardware-accelerated ImageIO.
     public func encodePNG(image: CGImage) -> Data? {
-        let bitmapRep = NSBitmapImageRep(cgImage: image)
-        return bitmapRep.representation(using: .png, properties: [:])
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data as CFMutableData, UTType.png.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return data as Data
     }
 
-    /// Generic image encoder supporting configured formats (PNG, JPG).
+    /// Generic image encoder supporting configured formats (PNG, JPG) using direct ImageIO.
     public func encodeImage(_ image: CGImage, format: ImageFormat = .png, quality: Double = 0.8) -> Data? {
-        let bitmapRep = NSBitmapImageRep(cgImage: image)
+        let typeIdentifier: CFString
+        var options: [CFString: Any] = [:]
         switch format {
         case .png:
-            return bitmapRep.representation(using: .png, properties: [:])
+            typeIdentifier = UTType.png.identifier as CFString
         case .jpg:
+            typeIdentifier = UTType.jpeg.identifier as CFString
             let clampedQuality = max(0.01, min(1.0, quality))
-            return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: clampedQuality])
+            options[kCGImageDestinationLossyCompressionQuality] = clampedQuality
         }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data as CFMutableData, typeIdentifier, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, image, options.isEmpty ? nil : (options as CFDictionary))
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return data as Data
     }
 
     // MARK: - Filename Generation & Collision Handling
@@ -116,11 +136,9 @@ public final class SaveService {
         }
     }
 
-    /// Encodes a CGImage into JPEG data at the specified quality factor (0.01 - 1.0).
+    /// Encodes a CGImage into JPEG data at the specified quality factor (0.01 - 1.0) using ImageIO.
     public func encodeJPG(image: CGImage, quality: Double = 0.8) -> Data? {
-        let clampedQuality = max(0.01, min(1.0, quality))
-        let bitmapRep = NSBitmapImageRep(cgImage: image)
-        return bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: clampedQuality])
+        return encodeImage(image, format: .jpg, quality: quality)
     }
 
     /// Persists a CGImage as JPEG to the target directory.
