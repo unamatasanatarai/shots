@@ -113,11 +113,12 @@ public final class WelcomeDropView: NSView {
         }
     }
 
-    private let iconImageView = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "Drag and drop an image here")
-    private let subtitleLabel = NSTextField(labelWithString: "or click anywhere to browse")
-    private let formatsLabel = NSTextField(labelWithString: "Supports PNG, JPEG, TIFF, HEIC, WebP, GIF")
+    public let iconImageView = NSImageView()
+    public let titleLabel = NSTextField(labelWithString: "Drag or click to open")
+    public let subtitleLabel = NSTextField(labelWithString: "Drop an image here or click anywhere to browse")
+    public let formatsLabel = NSTextField(labelWithString: "Supports PNG, JPEG, TIFF, HEIC, WebP, GIF, BMP")
     public let openButton = WelcomePillButton()
+    private let centerContainer = NSView()
     private var trackingArea: NSTrackingArea?
 
     override public init(frame frameRect: NSRect) {
@@ -135,6 +136,9 @@ public final class WelcomeDropView: NSView {
     }
 
     private func setupUI() {
+        centerContainer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(centerContainer)
+
         if #available(macOS 11.0, *) {
             let config = NSImage.SymbolConfiguration(pointSize: 42, weight: .light)
             iconImageView.image = NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: "Open Image")?
@@ -143,56 +147,70 @@ public final class WelcomeDropView: NSView {
         iconImageView.imageScaling = .scaleProportionallyDown
         iconImageView.contentTintColor = NSColor(white: 0.85, alpha: 1.0)
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(iconImageView)
+        centerContainer.addSubview(iconImageView)
 
         titleLabel.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
         titleLabel.textColor = .white
         titleLabel.alignment = .center
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleLabel)
+        centerContainer.addSubview(titleLabel)
 
         subtitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
         subtitleLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
         subtitleLabel.alignment = .center
+        subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(subtitleLabel)
+        centerContainer.addSubview(subtitleLabel)
 
         openButton.translatesAutoresizingMaskIntoConstraints = false
         openButton.onAction = {
             ImpactAppCoordinator.shared.openImageFileDialog()
         }
-        addSubview(openButton)
+        centerContainer.addSubview(openButton)
 
         formatsLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         formatsLabel.textColor = NSColor(white: 0.42, alpha: 1.0)
         formatsLabel.alignment = .center
+        formatsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         formatsLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(formatsLabel)
+        centerContainer.addSubview(formatsLabel)
 
         NSLayoutConstraint.activate([
-            iconImageView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            iconImageView.topAnchor.constraint(equalTo: topAnchor, constant: 58),
+            centerContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
+            centerContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
+            centerContainer.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
+            centerContainer.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
+
+            iconImageView.centerXAnchor.constraint(equalTo: centerContainer.centerXAnchor),
+            iconImageView.topAnchor.constraint(equalTo: centerContainer.topAnchor),
             iconImageView.widthAnchor.constraint(equalToConstant: 48),
             iconImageView.heightAnchor.constraint(equalToConstant: 48),
 
-            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: centerContainer.centerXAnchor),
             titleLabel.topAnchor.constraint(equalTo: iconImageView.bottomAnchor, constant: 16),
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: centerContainer.leadingAnchor, constant: 10),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: centerContainer.trailingAnchor, constant: -10),
 
-            subtitleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            subtitleLabel.centerXAnchor.constraint(equalTo: centerContainer.centerXAnchor),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
-            subtitleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
-            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
+            subtitleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: centerContainer.leadingAnchor, constant: 10),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: centerContainer.trailingAnchor, constant: -10),
 
-            openButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            openButton.centerXAnchor.constraint(equalTo: centerContainer.centerXAnchor),
             openButton.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 18),
             openButton.widthAnchor.constraint(equalToConstant: 148),
             openButton.heightAnchor.constraint(equalToConstant: 34),
 
-            formatsLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            formatsLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -38)
+            formatsLabel.centerXAnchor.constraint(equalTo: centerContainer.centerXAnchor),
+            formatsLabel.topAnchor.constraint(equalTo: openButton.bottomAnchor, constant: 20),
+            formatsLabel.bottomAnchor.constraint(equalTo: centerContainer.bottomAnchor)
         ])
+    }
+
+    override public func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
     }
 
     override public func updateTrackingAreas() {
@@ -202,12 +220,16 @@ public final class WelcomeDropView: NSView {
         }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
         addTrackingArea(area)
         self.trackingArea = area
+    }
+
+    override public func cursorUpdate(with event: NSEvent) {
+        NSCursor.pointingHand.set()
     }
 
     override public func mouseEntered(with event: NSEvent) {

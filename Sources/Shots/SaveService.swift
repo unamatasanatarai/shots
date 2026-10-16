@@ -165,11 +165,7 @@ public final class SaveService {
         let pb = NSPasteboard.general
         pb.clearContents()
 
-        var objects: [NSPasteboardWriting] = [nsImage]
-        if let fileURL = fileURL {
-            objects.append(fileURL as NSURL)
-        }
-        pb.writeObjects(objects)
+        pb.writeObjects([nsImage])
 
         if let data = pngData ?? encodePNG(image: image) {
             pb.setData(data, forType: .png)

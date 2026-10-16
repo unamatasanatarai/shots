@@ -7,7 +7,9 @@ public final class CounterLayer: AnnotationLayer {
     public let type: LayerType = .counter
     public var zIndex: Int
     public var isVisible: Bool = true
-    public var color: String
+    public var color: String {
+        didSet { _cachedBadgeColor = nil }
+    }
     public var strokeWidth: CGFloat
 
     public var center: CGPoint {
@@ -43,6 +45,7 @@ public final class CounterLayer: AnnotationLayer {
         _cachedPeak = nil
         _cachedAttributedString = nil
         _cachedTextSize = nil
+        _cachedBadgeColor = nil
     }
 
     public init(
@@ -231,10 +234,16 @@ public final class CounterLayer: AnnotationLayer {
         }()
         context.setFillColor(badgeColor)
 
+        // Subtle natural shadow for depth and crispness on badge body
+        context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
+
         // Draw solid teardrop / waterdrop shape
         let path = pathForTeardrop()
         context.addPath(path)
         context.fillPath()
+
+        // Remove shadow before drawing text so number stays crisp
+        context.setShadow(offset: .zero, blur: 0, color: nil)
 
         // Draw number text in pure white, bold and centered in the circular body
         let attrString: NSAttributedString

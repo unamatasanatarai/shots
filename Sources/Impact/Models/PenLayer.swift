@@ -178,6 +178,9 @@ public final class PenLayer: AnnotationLayer {
         guard !points.isEmpty else { return }
         context.saveGState()
 
+        // Subtle natural shadow for depth and crispness
+        context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
+
         let strokeColor = _cachedStrokeColor ?? {
             let c = FastColor.shared.cgColor(hex: color)
             _cachedStrokeColor = c

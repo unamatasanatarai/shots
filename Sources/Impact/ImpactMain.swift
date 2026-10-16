@@ -23,10 +23,10 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             // If macOS delivered an openFile Apple Event (e.g. Finder "Open With"), it arrives
-            // between didFinishLaunching and next cycle. Wait briefly to skip welcome if file is incoming.
+            // between didFinishLaunching and next cycle. Wait briefly to skip empty state if file is incoming.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                 guard let self = self, !self.receivedOpenFileEvent else { return }
-                ImpactAppCoordinator.shared.openWelcome()
+                ImpactAppCoordinator.shared.openEmptyEditor()
             }
         }
     }
@@ -39,7 +39,7 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            ImpactAppCoordinator.shared.openWelcome()
+            ImpactAppCoordinator.shared.openEmptyEditor()
         }
         return true
     }

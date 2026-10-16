@@ -8,7 +8,15 @@ public final class EditorDocument {
     public private(set) var activeCanvasBounds: CGRect
 
     public var layers: [AnnotationLayer] = []
-    public var selectedLayerIDs: Set<UUID> = []
+    public var onSelectionChanged: (() -> Void)?
+
+    public var selectedLayerIDs: Set<UUID> = [] {
+        didSet {
+            if selectedLayerIDs != oldValue {
+                onSelectionChanged?()
+            }
+        }
+    }
 
     public var activeTool: LayerType = .select {
         didSet {
@@ -21,6 +29,7 @@ public final class EditorDocument {
                 }
                 selectedLayerIDs.removeAll()
                 onNeedsDisplay?()
+                onSelectionChanged?()
             }
         }
     }
@@ -74,6 +83,20 @@ public final class EditorDocument {
         self.activeCanvasBounds = self.originalImageBounds
     }
 
+    /// Creates a minimal 1x1 placeholder document when EditorPanel opens without an image
+    public static func makePlaceholder() -> EditorDocument {
+        let context = CGContext(
+            data: nil,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        return EditorDocument(image: context.makeImage()!)
+    }
+
     // MARK: - Layer Management
 
     public func addLayer(_ layer: AnnotationLayer) {
@@ -119,6 +142,9 @@ public final class EditorDocument {
 
     public func selectLayer(_ layer: AnnotationLayer) {
         selectedLayerIDs = [layer.id]
+        if layer.type != .spotlight {
+            activeColor = layer.color
+        }
         onNeedsDisplay?()
     }
 
@@ -127,6 +153,9 @@ public final class EditorDocument {
         for layer in layers.reversed() {
             if layer.isVisible && layer.contains(point: point) {
                 selectedLayerIDs = [layer.id]
+                if layer.type != .spotlight {
+                    activeColor = layer.color
+                }
                 onNeedsDisplay?()
                 return layer
             }

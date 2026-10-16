@@ -249,7 +249,7 @@ public final class CaptureManager {
             // 4. System Pasteboard Synchronization
             if settings.copyToClipboard {
                 DispatchQueue.main.async {
-                    saveService.copyToPasteboard(image: cgImage, fileURL: savedFileURL)
+                    saveService.copyToPasteboard(image: cgImage, pngData: format == .png ? encodedData : nil, fileURL: savedFileURL)
                 }
             }
         }

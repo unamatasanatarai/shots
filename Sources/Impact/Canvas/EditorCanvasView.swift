@@ -3,7 +3,7 @@ import CoreGraphics
 import AppKit
 
 public final class EditorCanvasView: NSView, NSDraggingSource {
-    public let document: EditorDocument
+    public private(set) var document: EditorDocument
 
     // Interactive drawing & manipulation state
     private var activeCreatingLayer: AnnotationLayer?
@@ -33,6 +33,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
 
+        setupDocumentCallbacks()
+    }
+
+    private func setupDocumentCallbacks() {
         document.onNeedsDisplay = { [weak self] in
             self?.needsDisplay = true
         }
@@ -42,6 +46,22 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             self.frame = NSRect(origin: .zero, size: newBounds.size)
             self.needsDisplay = true
         }
+    }
+
+    /// Dynamically loads a new document into this canvas view
+    public func setDocument(_ newDoc: EditorDocument) {
+        self.document = newDoc
+        self.activeCreatingLayer = nil
+        self.activeDraggingLayer = nil
+        self.activeHandleIndex = nil
+        self.activeDraggingRectIndex = nil
+        self.initialRectForDrag = nil
+        self.hoveredLayer = nil
+        self.hoverOutlineLayer = nil
+        self.zoomScale = 1.0
+        self.frame = NSRect(origin: .zero, size: newDoc.activeCanvasBounds.size)
+        setupDocumentCallbacks()
+        self.needsDisplay = true
     }
 
     required init?(coder: NSCoder) {
@@ -58,7 +78,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         let area = NSTrackingArea(
             rect: bounds,
-            options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
+            options: [.mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect, .mouseEnteredAndExited],
             owner: self,
             userInfo: nil
         )
@@ -97,7 +117,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     drawnSpotlight = true
                     if let liveSpotlight = activeCreatingLayer as? FilterLayer, liveSpotlight.filterMode == .spotlight, let liveRect = liveSpotlight.rects.first {
                         let combinedRects = filter.rects + [liveRect]
-                        let combined = FilterLayer(rects: combinedRects, filterMode: .spotlight, intensity: filter.intensity)
+                        let combined = FilterLayer(
+                            rects: combinedRects,
+                            filterMode: .spotlight,
+                            intensity: filter.intensity,
+                            color: filter.color,
+                            strokeWidth: filter.strokeWidth,
+                            cornerRadius: filter.cornerRadius
+                        )
                         combined.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
                     } else {
                         filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
@@ -411,12 +438,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.saveSnapshot()
                 activeDraggingLayer = layer
                 activeHandleIndex = nil
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             } else {
                 document.selectedLayerIDs.removeAll()
                 if document.activeTool != .select {
                     document.activeTool = .select
-                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
 
         case .arrow:
@@ -812,6 +840,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 }
             }
             activeCreatingLayer = nil
+            (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
         }
         activeDraggingLayer = nil
         activeHandleIndex = nil
@@ -918,7 +947,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             let path = CGMutablePath()
             for r in filter.rects {
                 guard r.width > 0 && r.height > 0 else { continue }
-                let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
+                let effectiveRadius = max(0.0, min(filter.cornerRadius, min(r.width / 2.0, r.height / 2.0)))
                 path.addPath(CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil))
             }
             return path.isEmpty ? nil : path
@@ -999,7 +1028,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func resetCursorRects() {
         super.resetCursorRects()
-        addCursorRect(visibleRect, cursor: NSCursor.arrow)
+        let cursor = (document.activeTool == .select) ? NSCursor.arrow : NSCursor.crosshair
+        addCursorRect(bounds, cursor: cursor)
     }
 
     override public func cursorUpdate(with event: NSEvent) {
@@ -1199,6 +1229,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             (window as? EditorPanel)?.zoomIn()
         } else if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "-" || event.charactersIgnoringModifiers == "_") {
             (window as? EditorPanel)?.zoomOut()
+        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "1" {
+            (window as? EditorPanel)?.scaleToFit()
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "0" {
             (window as? EditorPanel)?.resetZoom()
         } else if !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
@@ -1223,7 +1255,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .counter
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
-            } else if key == "p" {
+            } else if key == "p" || key == "d" {
                 document.activeTool = .pen
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
@@ -1235,7 +1267,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .spotlight
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
-            } else if key == "b" {
+            } else if key == "b" || key == "u" {
                 document.activeTool = .blur
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
@@ -1243,11 +1275,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .ellipse
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
-            } else if key == "d" {
-                document.activeTool = .pen
-                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
-                needsDisplay = true
-            } else if key == "1" || key == "2" {
+            } else if key == "1" || key == "2" || key == "m" {
                 document.activeTool = .dimension
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true

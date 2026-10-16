@@ -23,6 +23,9 @@ build-shots:
 build-impact:
 	@./scripts/build-impact.sh
 
+## Run shots
+run: kill build-impact run-shots
+
 ## run-shots: Kill running apps, rebuild shots, and launch Shots.app
 run-shots: kill build-shots
 	@echo "==> Launching Shots.app..."

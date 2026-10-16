@@ -181,7 +181,10 @@ public final class RegionSelectionCoordinator {
     // MARK: - Finish
 
     private func finish(with image: CGImage?, measurement: String? = nil, colorHex: String? = nil) {
-        guard isSelecting else { return }
+        guard isSelecting else {
+            showSystemCursor()
+            return
+        }
         isSelecting = false
 
         showSystemCursor()
@@ -268,16 +271,18 @@ public final class RegionSelectionCoordinator {
     }
 
     private func showSystemCursor() {
-        guard isCursorHidden else { return }
         isCursorHidden = false
 
-        NSCursor.pop()
-        NSCursor.unhide()
-        for screen in NSScreen.screens {
-            let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
-            CGDisplayShowCursor(displayID)
+        for _ in 0..<2 {
+            for screen in NSScreen.screens {
+                let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
+                CGDisplayShowCursor(displayID)
+            }
+            CGDisplayShowCursor(kCGNullDirectDisplay)
+            NSCursor.unhide()
         }
-        CGDisplayShowCursor(kCGNullDirectDisplay)
+        NSCursor.pop()
+        NSCursor.arrow.set()
     }
 
     // MARK: - Consuming Event Tap (Live Mode)

@@ -111,7 +111,8 @@ public final class CaptureService {
         mouseLocation: NSPoint = NSEvent.mouseLocation,
         cursor: NSCursor = NSCursor.current
     ) -> CGImage? {
-        guard cursor.image.size.width > 0 && cursor.image.size.height > 0 else {
+        let effectiveCursor = (cursor.image.size.width <= 1 && cursor.image.size.height <= 1) ? NSCursor.arrow : cursor
+        guard effectiveCursor.image.size.width > 0 && effectiveCursor.image.size.height > 0 else {
             return baseImage
         }
 
@@ -154,8 +155,8 @@ public final class CaptureService {
         let scaleX = CGFloat(width) / targetLogicalRect.width
         let scaleY = CGFloat(height) / targetLogicalRect.height
 
-        let cursorImage = cursor.image
-        let hotSpot = cursor.hotSpot
+        let cursorImage = effectiveCursor.image
+        let hotSpot = effectiveCursor.hotSpot
 
         // Logical position relative to bottom-left of targetLogicalRect
         let cursorLogicalX = (mouseLocation.x - targetLogicalRect.origin.x) - hotSpot.x

@@ -144,6 +144,9 @@ public final class RectangleLayer: AnnotationLayer {
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
+        // Subtle natural shadow for depth and crispness
+        context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
+
         let strokeCGColor = FastColor.shared.cgColor(hex: color)
 
         let effectiveRadius = max(0.0, min(cornerRadius, min(rect.width / 2.0, rect.height / 2.0)))
@@ -376,6 +379,9 @@ public final class EllipseLayer: AnnotationLayer {
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
+        // Subtle natural shadow for depth and crispness
+        context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
+
         let strokeCGColor = FastColor.shared.cgColor(hex: color)
 
         let path = CGPath(ellipseIn: rect, transform: nil)
@@ -506,6 +512,9 @@ public final class LineLayer: AnnotationLayer {
 
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
+
+        // Subtle natural shadow for depth and crispness
+        context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
 
         let strokeColor = FastColor.shared.cgColor(hex: color)
         context.setStrokeColor(strokeColor)

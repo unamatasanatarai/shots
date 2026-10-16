@@ -9,8 +9,16 @@ public final class FilterLayer: AnnotationLayer {
     public var type: LayerType { filterMode == .spotlight ? .spotlight : .blur }
     public var zIndex: Int
     public var isVisible: Bool = true
-    public var color: String = "#000000"
-    public var strokeWidth: CGFloat = 2.0
+    public var color: String = "#FFFFFF"
+    public var strokeWidth: CGFloat = 4.0 {
+        didSet { _cachedBoundingBox = nil }
+    }
+    public var cornerRadius: CGFloat = 6.0 {
+        didSet {
+            _cachedBoundingBox = nil
+            cachedSpotlightMask = nil
+        }
+    }
 
     public var rects: [CGRect] {
         didSet {
@@ -33,7 +41,10 @@ public final class FilterLayer: AnnotationLayer {
         intensity: CGFloat = 6.0,
         isTextOnlyMode: Bool = false,
         selectedRectIndex: Int? = nil,
-        zIndex: Int = -10 // Destructive / Masking layers drawn under vector annotations
+        zIndex: Int = -10, // Destructive / Masking layers drawn under vector annotations
+        color: String = "#FFFFFF",
+        strokeWidth: CGFloat = 4.0,
+        cornerRadius: CGFloat = 6.0
     ) {
         self.id = id
         self.rects = rects
@@ -42,6 +53,9 @@ public final class FilterLayer: AnnotationLayer {
         self.isTextOnlyMode = isTextOnlyMode
         self.selectedRectIndex = selectedRectIndex
         self.zIndex = zIndex
+        self.color = color
+        self.strokeWidth = strokeWidth
+        self.cornerRadius = cornerRadius
     }
 
     public func getBoundingBox() -> CGRect {
@@ -51,7 +65,8 @@ public final class FilterLayer: AnnotationLayer {
         for r in rects.dropFirst() {
             union = union.union(r)
         }
-        let box = union.insetBy(dx: -4, dy: -4)
+        let padding = strokeWidth / 2.0 + 8.0
+        let box = union.insetBy(dx: -padding, dy: -padding)
         _cachedBoundingBox = box
         return box
     }
@@ -184,26 +199,35 @@ public final class FilterLayer: AnnotationLayer {
 
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
-        context.setLineWidth(1.5)
-        for (idx, r) in rects.enumerated() {
-            guard r.width > 0 && r.height > 0 else { continue }
-            let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
-            let path = CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
-            context.addPath(path)
-            if filterMode == .spotlight {
-                if selectedRectIndex == idx {
-                    context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor)
-                } else {
-                    context.setStrokeColor(NSColor.white.withAlphaComponent(0.85).cgColor)
-                }
+
+        if filterMode == .spotlight {
+            // Subtle natural shadow for depth and crispness matching RectangleLayer
+            context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
+            let strokeCGColor = FastColor.shared.cgColor(hex: color.isEmpty ? "#FFFFFF" : color)
+            context.setStrokeColor(strokeCGColor)
+            context.setLineWidth(strokeWidth)
+
+            for r in rects {
+                guard r.width > 0 && r.height > 0 else { continue }
+                let effectiveRadius = max(0.0, min(cornerRadius, min(r.width / 2.0, r.height / 2.0)))
+                let path = CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
+                context.addPath(path)
                 context.strokePath()
-            } else {
+            }
+        } else {
+            context.setLineWidth(1.5)
+            for (idx, r) in rects.enumerated() {
+                guard r.width > 0 && r.height > 0 else { continue }
                 if selectedRectIndex == idx {
+                    let effectiveRadius = max(0.0, min(cornerRadius, min(r.width / 2.0, r.height / 2.0)))
+                    let path = CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
+                    context.addPath(path)
                     context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor)
                     context.strokePath()
                 }
             }
         }
+
         context.restoreGState()
     }
 
@@ -293,7 +317,7 @@ public final class FilterLayer: AnnotationLayer {
                     width: r.width,
                     height: r.height
                 )
-                let effectiveRadius = max(0.0, min(6.0, min(r.width / 2.0, r.height / 2.0)))
+                let effectiveRadius = max(0.0, min(cornerRadius, min(r.width / 2.0, r.height / 2.0)))
                 let path = CGPath(roundedRect: localRect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
                 maskContext.addPath(path)
                 maskContext.fillPath()
@@ -481,7 +505,10 @@ public final class FilterLayer: AnnotationLayer {
             intensity: intensity,
             isTextOnlyMode: isTextOnlyMode,
             selectedRectIndex: selectedRectIndex,
-            zIndex: zIndex
+            zIndex: zIndex,
+            color: color,
+            strokeWidth: strokeWidth,
+            cornerRadius: cornerRadius
         )
         copy.detectedTextRects = detectedTextRects
         return copy

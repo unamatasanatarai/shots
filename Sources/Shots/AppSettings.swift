@@ -269,6 +269,7 @@ public final class AppSettings: ObservableObject {
     @Published public var copyToClipboard: Bool {
         didSet {
             defaults.set(copyToClipboard, forKey: Keys.copyToClipboard)
+            defaults.synchronize()
             syncPostCaptureActionFromFlags()
         }
     }
@@ -280,6 +281,7 @@ public final class AppSettings: ObservableObject {
             isSyncingActionFlags = true
             postCaptureAction = newAction
             defaults.set(newAction.rawValue, forKey: Keys.postCaptureAction)
+            defaults.synchronize()
             isSyncingActionFlags = false
         }
     }

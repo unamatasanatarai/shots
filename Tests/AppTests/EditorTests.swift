@@ -139,6 +139,33 @@ public enum EditorTests {
             assert(!filter.contains(point: CGPoint(x: 10, y: 10)), "Point outside spotlights must not be contained")
         }
 
+        testRunner("Editor - Spotlight Outline Attributes Matching Rectangle") {
+            let spot = FilterLayer(rects: [CGRect(x: 20, y: 20, width: 80, height: 60)], filterMode: .spotlight)
+            assert(spot.strokeWidth == 4.0, "Spotlight outline strokeWidth must be 4.0 matching RectangleLayer")
+            assert(spot.cornerRadius == 6.0, "Spotlight outline cornerRadius must be 6.0 matching RectangleLayer")
+            assert(spot.color.uppercased() == "#FFFFFF", "Spotlight outline color must default to white")
+
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            guard let ctx = CGContext(
+                data: nil,
+                width: 120,
+                height: 100,
+                bitsPerComponent: 8,
+                bytesPerRow: 120 * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                assertionFailure("Failed to create CGContext")
+                return
+            }
+            spot.draw(in: ctx, scale: 1.0)
+            guard let img = ctx.makeImage() else {
+                assertionFailure("Failed to render spotlight outline")
+                return
+            }
+            assert(img.width == 120 && img.height == 100, "Rendered context should produce valid CGImage")
+        }
+
         testRunner("Editor - Blur Intensity Default Strength & Scope") {
             let blur = FilterLayer(
                 rects: [CGRect(x: 50, y: 50, width: 100, height: 100)],
@@ -574,6 +601,51 @@ public enum EditorTests {
             EditorPanel.copyToClipboardOverride = nil
         }
 
+        testRunner("Editor - Automatically Copy to Clipboard on Capture / Editor Open Preference") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            // Test 1: Enabled -> openEditor copies screenshot composition to pasteboard and shows toast
+            EditorPanel.copyToClipboardOverride = true
+            NSPasteboard.general.clearContents()
+
+            ImpactAppCoordinator.shared.openEditor(with: cgImage, title: "TestCapture.png")
+
+            // Wait for main queue dispatch
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+            let pasteboard = NSPasteboard.general
+            assert(pasteboard.data(forType: .png) != nil, "Opening editor must automatically copy PNG to pasteboard when copyToClipboard is enabled")
+            assert(pasteboard.canReadObject(forClasses: [NSImage.self], options: nil), "Pasteboard must contain readable NSImage object")
+
+            guard let activePanel = ImpactAppCoordinator.shared.activePanel else {
+                assertionFailure("activePanel must be populated after openEditor")
+                return
+            }
+
+            let toast = activePanel.contentView?.subviews.first(where: { $0.identifier == EditorToastView.sharedIdentifier })
+            assert(toast != nil, "Opening editor must automatically show Copied to Clipboard toast")
+
+            // Test 2: Replacing activePanel does not let old panel overwrite clipboard
+            activePanel.close()
+            ImpactAppCoordinator.shared.closeEditor()
+
+            // Test 3: Disabled -> opening editor does not copy
+            EditorPanel.copyToClipboardOverride = false
+            NSPasteboard.general.clearContents()
+
+            ImpactAppCoordinator.shared.openEditor(with: cgImage, title: "TestDisabled.png")
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+            assert(NSPasteboard.general.data(forType: .png) == nil, "Opening editor must NOT copy when copyToClipboard is disabled")
+
+            ImpactAppCoordinator.shared.closeEditor()
+            EditorPanel.copyToClipboardOverride = nil
+        }
+
         testRunner("Editor - Arrow Annotation Tool 3-Point Control System") {
             let arrow = ArrowLayer(
                 start: CGPoint(x: 50, y: 50),
@@ -890,10 +962,18 @@ public enum EditorTests {
             let panel = EditorPanel(document: doc)
             let canvas = panel.canvasView
 
-            // Hotkey 'p' switches to .pen
-            let keyEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "p", charactersIgnoringModifiers: "p", isARepeat: false, keyCode: 35)!
-            canvas.keyDown(with: keyEvent)
+            // Hotkey 'p' switches to .pen (Pen)
+            let keyEventP = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "p", charactersIgnoringModifiers: "p", isARepeat: false, keyCode: 35)!
+            canvas.keyDown(with: keyEventP)
             assert(doc.activeTool == .pen, "Hotkey 'p' must switch activeTool to .pen")
+
+            // Hotkey 'b' switches to .blur (Blur)
+            let keyEventB = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "b", charactersIgnoringModifiers: "b", isARepeat: false, keyCode: 11)!
+            canvas.keyDown(with: keyEventB)
+            assert(doc.activeTool == .blur, "Hotkey 'b' must switch activeTool to .blur")
+
+            canvas.keyDown(with: keyEventP)
+            assert(doc.activeTool == .pen, "Hotkey 'p' must switch activeTool back to .pen")
 
             // Draw freehand stroke: down at (10, 10), drag to (30, 20) and (50, 40), up at (50, 40)
             let downEvent = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
@@ -1083,6 +1163,7 @@ public enum EditorTests {
             let toolbar = EditorToolbarView(canvasView: canvas)
             let selectBtn = toolbar.toolButtons[.select]
             assert(selectBtn != nil, "Toolbar must have a .select tool button")
+            assert(selectBtn?.tooltipText == "Select [V]", "Select button tooltip must be 'Select [V]'")
             assert(toolbar.pinButton?.tooltipText == "Always on Top", "Pin button tooltip must be 'Always on Top'")
 
             // 4. Sleek Move & Resizing Cursors
@@ -1125,13 +1206,37 @@ public enum EditorTests {
             // 1. Wide window (900pt): All tools visible, overflow 3-dots hidden
             toolbar.frame = NSRect(x: 0, y: 0, width: 900, height: 44)
             toolbar.layout()
-            assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must be visible when wide")
+            assert(toolbar.toolButtons[.select]?.isHidden == false, "Select must be visible when wide")
+            assert(toolbar.toolButtons[.arrow]?.isHidden == false, "Arrow must be visible when wide")
+            assert(toolbar.toolButtons[.line]?.isHidden == false, "Line must be visible when wide")
+            assert(toolbar.toolButtons[.rectangle]?.isHidden == false, "Rectangle must be visible when wide")
+            assert(toolbar.toolButtons[.ellipse]?.isHidden == false, "Oval must be visible when wide")
+            assert(toolbar.toolButtons[.spotlight]?.isHidden == false, "Spotlight must be visible when wide")
+            assert(toolbar.toolButtons[.counter]?.isHidden == false, "Counter must be visible when wide")
+            assert(toolbar.toolButtons[.pen]?.isHidden == false, "Pen must be visible when wide")
+            assert(toolbar.toolButtons[.highlighter]?.isHidden == false, "Highlighter must be visible when wide")
             assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur must be visible when wide")
+            assert(toolbar.toolButtons[.dimension]?.isHidden == false, "Ruler must be present and visible when wide")
             assert(toolbar.overflowButton?.isHidden == true, "3-dots overflow must be hidden when wide")
             assert(toolbar.openButton?.isHidden == false, "Open must be visible")
             assert(toolbar.copyButton?.isHidden == false, "Copy must be visible")
             assert(toolbar.saveButton?.isHidden == false, "Save must be visible")
             assert(toolbar.pinButton?.isHidden == false, "Pin must be visible")
+
+            // Progressive one-by-one collapse:
+            // Width 860pt: exactly 1 tool (Ruler, rightmost) moves to dropdown, 9 tools remain
+            toolbar.frame = NSRect(x: 0, y: 0, width: 860, height: 44)
+            toolbar.layout()
+            assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown first")
+            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur still on toolbar at 860pt")
+            assert(toolbar.overflowButton?.isHidden == false, "Overflow button appears when 1 tool moves to dropdown")
+
+            // Width 770pt: Ruler, Blur, Highlighter moved to dropdown, 7 tools remain
+            toolbar.frame = NSRect(x: 0, y: 0, width: 770, height: 44)
+            toolbar.layout()
+            assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown as space narrows")
+            assert(toolbar.toolButtons[.blur]?.isHidden == true, "Blur moves to dropdown as space narrows")
+            assert(toolbar.toolButtons[.pen]?.isHidden == false, "Pen still on toolbar at 770pt")
 
             // 2. Narrow window (450pt): Rightmost tools hide under 3-dots
             toolbar.frame = NSRect(x: 0, y: 0, width: 450, height: 44)
@@ -1166,7 +1271,7 @@ public enum EditorTests {
             assert(titles.contains("Ruler (1 or 2)"), "Dropdown must contain Ruler (1 or 2)")
             assert(titles.contains("Rectangle"), "Dropdown must contain Rectangle")
             assert(!titles.contains("Backdrop"), "Dropdown must NOT contain removed Backdrop")
-            assert(titles.contains("Freehand Drawing"), "Dropdown must contain Freehand Drawing")
+            assert(titles.contains("Pen"), "Dropdown must contain Pen")
             assert(!titles.contains("Magnifier"), "Dropdown must NOT contain removed Magnifier")
             assert(!titles.contains("Add Capture"), "Dropdown must NOT contain removed Add Capture")
             assert(!titles.contains("Text"), "Dropdown must NOT contain removed Text")
@@ -1251,12 +1356,93 @@ public enum EditorTests {
 
             // 6. Reset to 100% zoom button
             assert(panel.toolbarView.zoomResetButton != nil, "Toolbar must have zoomResetButton")
+            assert(panel.toolbarView.zoomFitButton != nil, "Toolbar must have zoomFitButton")
+            assert(panel.toolbarView.zoomPercentButton != nil, "Toolbar must have zoomPercentButton")
+            assert(panel.toolbarView.zoomInButton != nil, "Toolbar must have zoomInButton")
+            assert(panel.toolbarView.zoomOutButton != nil, "Toolbar must have zoomOutButton")
+            assert(panel.toolbarView.zoomContainerView != nil, "Toolbar must have compact zoomContainerView")
+
+            // Test Zoom In button
+            let magBeforeIn = sv.magnification
+            panel.toolbarView.zoomInButton?.onAction?()
+            assert(sv.magnification > magBeforeIn, "Clicking zoomInButton must increase magnification")
+
+            // Test Zoom Out button
+            let magBeforeOut = sv.magnification
+            panel.toolbarView.zoomOutButton?.onAction?()
+            assert(sv.magnification < magBeforeOut, "Clicking zoomOutButton must decrease magnification")
+
+            // Test Zoom Reset (100% / Actual Size) button
             sv.magnification = 3.25
             panel.canvasView.zoomScale = 3.25
             panel.toolbarView.zoomResetButton?.onAction?()
             assert(sv.magnification == 1.0, "Clicking zoomResetButton must reset magnification to 1.0 (100%)")
             assert(panel.canvasView.zoomScale == 1.0, "canvasView.zoomScale must be 1.0 after reset")
             assert(panel.toolbarView.metaLabel.stringValue.contains("(100%)"), "metaLabel must display (100%) after zoom reset")
+            assert(panel.toolbarView.zoomPercentButton?.titleLabel.stringValue == "100%", "zoomPercentButton must display 100%")
+
+            // Test Zoom Fit button
+            panel.toolbarView.zoomFitButton?.onAction?()
+            assert(sv.magnification == 1.0, "Clicking zoomFitButton on small image must show 100%")
+
+            // Test Zoom Presets Menu
+            let presetsMenu = panel.toolbarView.buildZoomPresetsMenu()
+            assert(presetsMenu.items.contains { $0.title == "Best Fit" }, "Presets menu must contain 'Best Fit'")
+            assert(presetsMenu.items.contains { $0.title == "Actual Size (100%)" }, "Presets menu must contain 'Actual Size (100%)'")
+            assert(presetsMenu.items.contains { $0.title == "200%" }, "Presets menu must contain 200%")
+            assert(presetsMenu.items.contains { $0.title == "50%" }, "Presets menu must contain 50%")
+
+            // Test onZoomSetRequested
+            panel.toolbarView.onZoomSetRequested?(0.5)
+            assert(abs(sv.magnification - 0.5) < 0.01, "onZoomSetRequested must set magnification to 0.5 (50%)")
+            assert(panel.toolbarView.zoomPercentButton?.titleLabel.stringValue == "50%", "zoomPercentButton must display 50%")
+
+            // 7. Cmd+1 Best Fit & Cmd+0 Actual Size
+            sv.magnification = 2.5
+            let cmd1Event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                characters: "1",
+                charactersIgnoringModifiers: "1",
+                isARepeat: false,
+                keyCode: 18
+            )!
+            panel.canvasView.keyDown(with: cmd1Event)
+            assert(sv.magnification == 1.0, "Cmd+1 on small image (200x150 in 800x600 window) must show 100% (1.0)")
+
+            let cmd0Event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.command],
+                timestamp: 0,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                characters: "0",
+                charactersIgnoringModifiers: "0",
+                isARepeat: false,
+                keyCode: 29
+            )!
+            sv.magnification = 4.0
+            panel.canvasView.keyDown(with: cmd0Event)
+            assert(sv.magnification == 1.0, "Cmd+0 must reset magnification to 100% (1.0)")
+
+            let largeContext = CGContext(
+                data: nil,
+                width: 2000,
+                height: 1500,
+                bitsPerComponent: 8,
+                bytesPerRow: 8000,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            panel.loadImage(image: largeContext.makeImage()!)
+            panel.setFrame(NSRect(x: 100, y: 100, width: 800, height: 600), display: true)
+            panel.canvasView.keyDown(with: cmd1Event)
+            assert(sv.magnification < 1.0, "Cmd+1 on large image (2000x1500 in 800x600 window) must scale down (< 1.0) to best fit available workspace")
 
             panel.close()
         }
@@ -1539,6 +1725,133 @@ public enum EditorTests {
             panel.showDropTargetOverlay(false)
 
             panel.close()
+        }
+
+        testRunner("Editor - Single Main Window Empty State (Drag or Click to Open) & Reuse") {
+            // 1. Initializing EditorPanel without image
+            let emptyPanel = EditorPanel()
+            assert(emptyPanel.hasImage == false, "EditorPanel without image must have hasImage == false")
+            assert(emptyPanel.welcomeDropView != nil, "welcomeDropView must exist in EditorPanel")
+            assert(emptyPanel.welcomeDropView?.isHidden == false, "welcomeDropView must be visible when hasImage == false")
+            assert(emptyPanel.welcomeDropView?.titleLabel.stringValue == "Drag or click to open", "Title must be 'Drag or click to open'")
+            assert(emptyPanel.scrollView?.isHidden == true, "Canvas scrollView must be hidden in empty state")
+            assert(emptyPanel.toolbarView.metaLabel.stringValue.isEmpty, "Meta label must be empty in empty state")
+
+            // 2. Loading image into the existing empty window
+            let context = CGContext(
+                data: nil,
+                width: 320,
+                height: 240,
+                bitsPerComponent: 8,
+                bytesPerRow: 1280,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let image = context.makeImage()!
+            emptyPanel.loadImage(image: image, title: "test_shot.png")
+
+            assert(emptyPanel.hasImage == true, "hasImage must be true after loadImage")
+            assert(emptyPanel.welcomeDropView == nil || emptyPanel.welcomeDropView?.isHidden == true, "welcomeDropView must be removed or hidden after loadImage")
+            assert(emptyPanel.scrollView?.isHidden == false, "scrollView must be visible after loadImage")
+            assert(emptyPanel.document.activeCanvasBounds.width == 320, "Canvas bounds width must match loaded image")
+            assert(emptyPanel.document.activeCanvasBounds.height == 240, "Canvas bounds height must match loaded image")
+            assert(emptyPanel.toolbarView.metaLabel.stringValue.contains("320 × 240 px"), "Meta label must show 320 x 240 px")
+
+            emptyPanel.close()
+        }
+
+        testRunner("Editor - Single Color Picker Popout & Conditional Tool Visibility") {
+            let doc = EditorDocument(image: CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithURL(resolveTestImageURL()! as CFURL, nil)!, 0, nil)!)
+            let canvas = EditorCanvasView(document: doc)
+            let toolbar = EditorToolbarView(canvasView: canvas)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 900, height: 44)
+            toolbar.layout()
+
+            // 1. In select mode with no annotation selected, color picker is HIDDEN
+            doc.activeTool = .select
+            doc.selectedLayerIDs.removeAll()
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.shouldShowColorPicker == false, "Color picker must not show up in select mode with no annotation selected")
+            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must be hidden in select mode")
+            assert(toolbar.toolsSeparatorView?.isHidden == true, "Tools separator must be hidden when color picker is hidden")
+
+            // 2. Only ONE color button in toolbar
+            assert(toolbar.singleColorButton != nil, "Single color button must exist")
+            assert(toolbar.colorStackView?.arrangedSubviews.count == 1, "Only one color button must be shown in the toolbar")
+
+            // 3. When a drawing tool is selected (e.g. Arrow), color picker SHOWS
+            doc.activeTool = .arrow
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.shouldShowColorPicker == true, "Color picker must show when drawing tool is selected")
+            assert(toolbar.colorStackView?.isHidden == false, "Color picker stack must be visible when arrow tool is selected")
+
+            // 4. When Spotlight tool is selected, colors are INVISIBLE
+            doc.activeTool = .spotlight
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.shouldShowColorPicker == false, "Colors must be invisible when using spotlight")
+            assert(toolbar.colorStackView?.isHidden == true, "Color picker must be hidden when spotlight is active")
+
+            // 5. In Select mode, selecting a colorable annotation makes color picker VISIBLE with that annotation's color
+            doc.activeTool = .select
+            let rectLayer = RectangleLayer(rect: CGRect(x: 10, y: 10, width: 50, height: 50), color: "#7048E8")
+            doc.addLayer(rectLayer)
+            doc.selectLayer(rectLayer)
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.shouldShowColorPicker == true, "Color picker must show when an annotation is selected in select mode")
+            assert(toolbar.colorStackView?.isHidden == false, "Color picker must be visible when an annotation is selected")
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#7048E8", "Single color button must reflect the selected annotation's color")
+
+            // 6. When a Spotlight annotation is selected, color picker remains INVISIBLE
+            doc.selectedLayerIDs.removeAll()
+            let spotLayer = FilterLayer(rects: [CGRect(x: 5, y: 5, width: 20, height: 20)], filterMode: .spotlight)
+            doc.addLayer(spotLayer)
+            doc.selectLayer(spotLayer)
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.shouldShowColorPicker == false, "Color picker must remain invisible when spotlight annotation is selected")
+            assert(toolbar.colorStackView?.isHidden == true, "Color picker must be hidden for spotlight annotation")
+
+            // 7. Popout grid contains exactly 8 predefined swatches and operates without custom color
+            let popoutVC = ColorPopoutViewController()
+            popoutVC.loadView()
+            assert(popoutVC.swatchButtons.count == 8, "Popout must contain exactly 8 predefined color swatches")
+            assert(EditorToolbarView.predefinedSwatches.count == 8, "Must only operate on 8 predefined swatches")
+
+            popoutVC.selectedColor = "#FFCC00"
+            let yellowBtn = popoutVC.swatchButtons.first(where: { $0.hex.uppercased() == "#FFCC00" })
+            assert(yellowBtn?.isActive == true, "Yellow swatch in popout must have active highlight")
+
+            // 8. Clicking the single color button presents popover
+            let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.contentView?.addSubview(toolbar)
+            doc.selectLayer(rectLayer)
+            toolbar.updateSelectedToolVisuals()
+            toolbar.singleColorButton?.onAction?()
+            assert(toolbar.colorPopover != nil, "Popover must be created when color button is clicked")
+
+            // 9. When Counter is selected and color changes, counter color and render badge update
+            let counter = CounterLayer(center: CGPoint(x: 50, y: 50), value: 1, color: "#FF3B30")
+            let dummyContext = CGContext(
+                data: nil,
+                width: 100,
+                height: 100,
+                bitsPerComponent: 8,
+                bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            counter.draw(in: dummyContext, scale: 1.0)
+            doc.addLayer(counter)
+            doc.selectLayer(counter)
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#FF3B30", "Color button must show Counter's color")
+
+            toolbar.singleColorButton?.onAction?()
+            if let popVC = toolbar.colorPopover?.contentViewController as? ColorPopoutViewController {
+                popVC.onColorSelected?("#34C759")
+            }
+            assert(counter.color.uppercased() == "#34C759", "CounterLayer color must update to new green hex")
+            counter.draw(in: dummyContext, scale: 1.0)
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#34C759", "Color button must reflect updated Counter color")
         }
     }
 }

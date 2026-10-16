@@ -4,36 +4,45 @@ import AppKit
 import UniformTypeIdentifiers
 
 public final class EditorPanel: NSPanel {
-    public let document: EditorDocument
+    public private(set) var document: EditorDocument
     public let canvasView: EditorCanvasView
     public let toolbarView: EditorToolbarView
     public private(set) var scrollView: NSScrollView?
+    public private(set) var welcomeDropView: WelcomeDropView?
+    public private(set) var hasImage: Bool
 
     private var metaLabel: NSTextField?
     private var isPinned: Bool = false
     public var onClose: (() -> Void)?
-    public let sourceFileURL: URL?
+    public private(set) var sourceFileURL: URL?
     private var hasSavedComposition: Bool = false
 
-    public init(document: EditorDocument, title: String = "Shots Editor", sourceFileURL: URL? = nil) {
-        self.document = document
+    public init(document: EditorDocument? = nil, title: String = "Impact", sourceFileURL: URL? = nil) {
+        let doc = document ?? EditorDocument.makePlaceholder()
+        self.document = doc
+        self.hasImage = (document != nil)
         self.sourceFileURL = sourceFileURL
-        self.canvasView = EditorCanvasView(document: document)
+        self.canvasView = EditorCanvasView(document: doc)
         self.toolbarView = EditorToolbarView(canvasView: canvasView)
 
-        // Calculate window size based on image dimensions and active screen
+        // Calculate window size based on image dimensions or default empty size
         let screen = NSScreen.main ?? NSScreen.screens.first!
         let maxW = screen.visibleFrame.width * 0.85
         let maxH = screen.visibleFrame.height * 0.85
 
-        let defaultWidth: CGFloat = 600.0
-        let defaultHeight: CGFloat = 400.0
-
-        let imgW = document.activeCanvasBounds.width
-        let imgH = document.activeCanvasBounds.height
-
-        let windowW = min(maxW, max(defaultWidth, imgW + 40.0))
-        let windowH = min(maxH, max(defaultHeight, imgH + 80.0))
+        let windowW: CGFloat
+        let windowH: CGFloat
+        if let doc = document {
+            let defaultWidth: CGFloat = 600.0
+            let defaultHeight: CGFloat = 400.0
+            let imgW = doc.activeCanvasBounds.width
+            let imgH = doc.activeCanvasBounds.height
+            windowW = min(maxW, max(defaultWidth, imgW + 40.0))
+            windowH = min(maxH, max(defaultHeight, imgH + 80.0))
+        } else {
+            windowW = 680.0
+            windowH = 460.0
+        }
 
         let initialX = screen.visibleFrame.midX - windowW / 2.0
         let initialY = screen.visibleFrame.midY - windowH / 2.0
@@ -93,6 +102,15 @@ public final class EditorPanel: NSPanel {
     override public var canBecomeKey: Bool { true }
     override public var canBecomeMain: Bool { true }
 
+    override public func becomeKey() {
+        super.becomeKey()
+        NSCursor.arrow.set()
+        if let cv = contentView {
+            invalidateCursorRects(for: cv)
+        }
+        invalidateCursorRects(for: canvasView)
+    }
+
     override public func cancelOperation(_ sender: Any?) {
         canvasView.handleEscapeKey()
     }
@@ -106,6 +124,22 @@ public final class EditorPanel: NSPanel {
             ImpactAppCoordinator.shared.openImageFileDialog()
             return
         }
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "1" {
+            scaleToFit()
+            return
+        }
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "0" {
+            resetZoom()
+            return
+        }
+        if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "=" || event.charactersIgnoringModifiers == "+") {
+            zoomIn()
+            return
+        }
+        if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "-" || event.charactersIgnoringModifiers == "_") {
+            zoomOut()
+            return
+        }
         super.keyDown(with: event)
     }
 
@@ -116,9 +150,11 @@ public final class EditorPanel: NSPanel {
             if let overrideVal = copyToClipboardOverride {
                 return overrideVal
             }
-            if let shotsDefaults = UserDefaults(suiteName: "com.local.Shots"),
-               let val = shotsDefaults.object(forKey: "copyToClipboard") as? Bool {
-                return val
+            if let shotsDefaults = UserDefaults(suiteName: "com.local.Shots") {
+                shotsDefaults.synchronize()
+                if let val = shotsDefaults.object(forKey: "copyToClipboard") as? Bool {
+                    return val
+                }
             }
             if let val = UserDefaults.standard.object(forKey: "copyToClipboard") as? Bool {
                 return val
@@ -130,9 +166,18 @@ public final class EditorPanel: NSPanel {
         }
     }
 
+    public var shouldCopyOnClose: Bool = true
+
     override public func close() {
+        // If no image was ever loaded in this window, do not copy or save empty compositions
+        guard hasImage else {
+            super.close()
+            onClose?()
+            return
+        }
+
         // If preference "copy to clipboard" is set, copy the image with annotations to clipboard
-        if EditorPanel.isCopyToClipboardEnabled {
+        if shouldCopyOnClose && EditorPanel.isCopyToClipboardEnabled {
             canvasView.copyCompositionToClipboard()
         }
 
@@ -243,26 +288,14 @@ public final class EditorPanel: NSPanel {
         container.addSubview(scrollView)
         self.scrollView = scrollView
 
-        // Resolve version and build number
-        let versionStr = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let buildStr: String = {
-            if let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String, !b.isEmpty {
-                return b
-            }
-            if let resURL = Bundle.main.url(forResource: "BUILD_NUMBER", withExtension: nil),
-               let content = try? String(contentsOf: resURL, encoding: .utf8) {
-                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { return trimmed }
-            }
-            if let projURL = URL(string: "file:///Users/citizen/dev/shots/BUILD_NUMBER"),
-               let content = try? String(contentsOf: projURL, encoding: .utf8) {
-                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { return trimmed }
-            }
-            return "1"
-        }()
+        // 3. Welcome / Empty state view with "Drag or click to open" (only attached when in empty state)
+        if !hasImage {
+            setupWelcomeDropView()
+        }
 
-        self.title = "Impact v\(versionStr) (Build \(buildStr))"
+        scrollView.isHidden = !hasImage
+
+        updateVersionTitle()
         self.metaLabel = toolbarView.metaLabel
 
         NSLayoutConstraint.activate([
@@ -287,12 +320,106 @@ public final class EditorPanel: NSPanel {
         }
     }
 
+    public func setupWelcomeDropView() {
+        guard welcomeDropView == nil, let container = contentView else { return }
+        let dropView = WelcomeDropView(frame: NSRect(origin: .zero, size: container.bounds.size))
+        dropView.translatesAutoresizingMaskIntoConstraints = false
+        dropView.openButton.onAction = {
+            ImpactAppCoordinator.shared.openImageFileDialog()
+        }
+        container.addSubview(dropView)
+        self.welcomeDropView = dropView
+
+        NSLayoutConstraint.activate([
+            dropView.topAnchor.constraint(equalTo: toolbarView.bottomAnchor),
+            dropView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            dropView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            dropView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+    }
+
+    public func updateVersionTitle() {
+        let versionStr = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let buildStr: String = {
+            if let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String, !b.isEmpty {
+                return b
+            }
+            if let resURL = Bundle.main.url(forResource: "BUILD_NUMBER", withExtension: nil),
+               let content = try? String(contentsOf: resURL, encoding: .utf8) {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+            if let projURL = URL(string: "file:///Users/citizen/dev/shots/BUILD_NUMBER"),
+               let content = try? String(contentsOf: projURL, encoding: .utf8) {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+            return "1"
+        }()
+
+        self.title = "Impact v\(versionStr) (Build \(buildStr))"
+    }
+
+    /// Loads an image directly into the main window, transitioning from empty state
+    public func loadImage(image: CGImage, title: String = "Impact", sourceFileURL: URL? = nil) {
+        self.sourceFileURL = sourceFileURL
+        let newDoc = EditorDocument(image: image)
+        self.document = newDoc
+        self.canvasView.setDocument(newDoc)
+        self.hasImage = true
+        self.hasSavedComposition = false
+
+        welcomeDropView?.removeFromSuperview()
+        welcomeDropView = nil
+        scrollView?.isHidden = false
+
+        newDoc.onBoundsChanged = { [weak self, weak scrollView] bounds in
+            guard let self = self, let sv = scrollView else { return }
+            self.canvasView.frame = NSRect(origin: .zero, size: bounds.size)
+            sv.documentView?.needsDisplay = true
+            self.updateMetaLabel()
+        }
+
+        // Adjust window size to fit image if smaller than viewport
+        let screen = self.screen ?? NSScreen.main ?? NSScreen.screens.first!
+        let maxW = screen.visibleFrame.width * 0.85
+        let maxH = screen.visibleFrame.height * 0.85
+        let imgW = CGFloat(image.width)
+        let imgH = CGFloat(image.height)
+        let windowW = min(maxW, max(frame.width, max(600.0, imgW + 40.0)))
+        let windowH = min(maxH, max(frame.height, max(400.0, imgH + 80.0)))
+
+        let currentMidX = frame.midX
+        let currentMidY = frame.midY
+        let newX = max(screen.visibleFrame.minX, min(currentMidX - windowW / 2.0, screen.visibleFrame.maxX - windowW))
+        let newY = max(screen.visibleFrame.minY, min(currentMidY - windowH / 2.0, screen.visibleFrame.maxY - windowH))
+        setFrame(NSRect(x: newX, y: newY, width: windowW, height: windowH), display: true, animate: true)
+
+        updateVersionTitle()
+        updateMetaLabel()
+        scaleToFit()
+
+        toolbarView.layoutSubtreeIfNeeded()
+        toolbarView.updateResponsiveOverflow()
+
+        NSCursor.arrow.set()
+        if let cv = contentView {
+            invalidateCursorRects(for: cv)
+        }
+        invalidateCursorRects(for: canvasView)
+
+        if EditorPanel.isCopyToClipboardEnabled {
+            canvasView.copyCompositionToClipboard()
+            showCopiedToClipboardToast()
+        }
+    }
+
     /// Scales the image: if smaller than viewport, center at 100% (1.0). If larger, scale to best fit centered.
     public func scaleToFit() {
-        guard let sv = scrollView else { return }
+        guard let sv = scrollView, hasImage else { return }
         sv.layoutSubtreeIfNeeded()
 
-        let viewport = sv.contentView.bounds.size
+        let viewport = sv.contentView.frame.size
         guard viewport.width > 0 && viewport.height > 0 else { return }
 
         let imgW = document.activeCanvasBounds.width
@@ -304,7 +431,7 @@ public final class EditorPanel: NSPanel {
         let availableH = max(50.0, viewport.height - padding)
 
         if imgW <= availableW && imgH <= availableH {
-            // If image is smaller than available viewport, center it at 100% scale
+            // If image is smaller than available viewport, show it at 100% scale
             sv.magnification = 1.0
         } else {
             // If image is larger than available viewport, scale it to best fit centered
@@ -312,12 +439,22 @@ public final class EditorPanel: NSPanel {
             sv.magnification = max(sv.minMagnification, fitScale)
         }
 
+        let docW = canvasView.frame.width
+        let docH = canvasView.frame.height
+        let visibleW = viewport.width / sv.magnification
+        let visibleH = viewport.height / sv.magnification
+        let centerX = (docW - visibleW) / 2.0
+        let centerY = (docH - visibleH) / 2.0
+        sv.contentView.scroll(to: NSPoint(x: centerX, y: centerY))
+        sv.reflectScrolledClipView(sv.contentView)
+
         canvasView.zoomScale = sv.magnification
         updateMetaLabel()
+        canvasView.needsDisplay = true
     }
 
     public func zoomIn() {
-        guard let sv = scrollView else { return }
+        guard let sv = scrollView, hasImage else { return }
         let newMag = min(sv.maxMagnification, sv.magnification * 1.25)
         sv.setMagnification(newMag, centeredAt: NSPoint(x: sv.contentView.bounds.midX, y: sv.contentView.bounds.midY))
         canvasView.zoomScale = sv.magnification
@@ -325,7 +462,7 @@ public final class EditorPanel: NSPanel {
     }
 
     public func zoomOut() {
-        guard let sv = scrollView else { return }
+        guard let sv = scrollView, hasImage else { return }
         let newMag = max(sv.minMagnification, sv.magnification / 1.25)
         sv.setMagnification(newMag, centeredAt: NSPoint(x: sv.contentView.bounds.midX, y: sv.contentView.bounds.midY))
         canvasView.zoomScale = sv.magnification
@@ -333,13 +470,25 @@ public final class EditorPanel: NSPanel {
     }
 
     public func resetZoom() {
-        guard let sv = scrollView else { return }
+        guard let sv = scrollView, hasImage else { return }
         sv.setMagnification(1.0, centeredAt: NSPoint(x: sv.contentView.bounds.midX, y: sv.contentView.bounds.midY))
         canvasView.zoomScale = sv.magnification
         updateMetaLabel()
     }
 
+    public func setZoom(scale: CGFloat) {
+        guard let sv = scrollView, hasImage else { return }
+        let clamped = max(sv.minMagnification, min(sv.maxMagnification, scale))
+        sv.setMagnification(clamped, centeredAt: NSPoint(x: sv.contentView.bounds.midX, y: sv.contentView.bounds.midY))
+        canvasView.zoomScale = sv.magnification
+        updateMetaLabel()
+    }
+
     public func updateMetaLabel() {
+        guard hasImage else {
+            toolbarView.metaLabel.stringValue = ""
+            return
+        }
         let zoomPercent = Int(round((scrollView?.magnification ?? 1.0) * 100))
         toolbarView.updateMeta(bounds: document.activeCanvasBounds, zoomPercent: zoomPercent)
     }
@@ -363,8 +512,16 @@ public final class EditorPanel: NSPanel {
             self?.resetZoom()
         }
 
+        toolbarView.onZoomFitRequested = { [weak self] in
+            self?.scaleToFit()
+        }
+
+        toolbarView.onZoomSetRequested = { [weak self] scale in
+            self?.setZoom(scale: scale)
+        }
+
         toolbarView.onSaveRequested = { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.hasImage else { return }
             if let savedURL = self.saveToNextNumberedFile() {
                 NSLog("Impact: Saved composition to %@", savedURL.path)
                 self.showImageSavedToast()
@@ -379,7 +536,9 @@ public final class EditorPanel: NSPanel {
         }
 
         toolbarView.onCopyRequested = { [weak self] in
-            self?.showCopiedToClipboardToast()
+            guard let self = self, self.hasImage else { return }
+            self.canvasView.copyCompositionToClipboard()
+            self.showCopiedToClipboardToast()
         }
     }
 
@@ -442,6 +601,7 @@ public final class EditorPanel: NSPanel {
     private var dropOverlay: DropOverlayView?
 
     public func showDropTargetOverlay(_ show: Bool) {
+        guard hasImage else { return }
         if show {
             if dropOverlay == nil {
                 guard let container = contentView else { return }
@@ -503,6 +663,11 @@ final class EditorScrollView: NSScrollView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         registerForDraggedTypes([.fileURL])
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .arrow)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

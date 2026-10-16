@@ -7,28 +7,29 @@ public final class ImpactAppCoordinator {
     public static let shared = ImpactAppCoordinator()
 
     public private(set) var activePanel: EditorPanel?
-    public private(set) var welcomePanel: WelcomePanel?
+    public var welcomePanel: WelcomePanel? { return nil }
 
     private init() {}
 
-    public func openWelcome() {
+    /// Opens the single main window in empty/welcome state with "Drag or click to open"
+    public func openEmptyEditor() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            if let existing = self.welcomePanel, existing.isVisible {
+            if let existing = self.activePanel, existing.isVisible {
                 existing.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 return
             }
 
-            let panel = WelcomePanel()
-            self.welcomePanel = panel
+            let panel = EditorPanel()
+            self.activePanel = panel
 
             panel.onClose = { [weak self] in
-                if self?.welcomePanel === panel {
-                    self?.welcomePanel = nil
+                if self?.activePanel === panel {
+                    self?.activePanel = nil
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    if ImpactAppCoordinator.shared.activePanel == nil && ImpactAppCoordinator.shared.welcomePanel == nil {
+                    if ImpactAppCoordinator.shared.activePanel == nil {
                         NSApp.terminate(nil)
                     }
                 }
@@ -39,19 +40,25 @@ public final class ImpactAppCoordinator {
         }
     }
 
+    /// Backwards-compatible alias for openEmptyEditor
+    public func openWelcome() {
+        openEmptyEditor()
+    }
+
     public func openEditor(with image: CGImage, title: String = "Impact", sourceFileURL: URL? = nil) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
+            // If the single main window already exists, load the image directly into it
+            if let existing = self.activePanel, existing.isVisible {
+                existing.loadImage(image: image, title: title, sourceFileURL: sourceFileURL)
+                existing.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+
             let document = EditorDocument(image: image)
             let panel = EditorPanel(document: document, title: title, sourceFileURL: sourceFileURL)
-
-            // Close welcome panel if open
-            let oldWelcome = self.welcomePanel
-            self.welcomePanel = nil
-            oldWelcome?.close()
-
-            self.activePanel?.close()
             self.activePanel = panel
 
             panel.onClose = { [weak self] in
@@ -59,8 +66,8 @@ public final class ImpactAppCoordinator {
                     self?.activePanel = nil
                 }
                 // If no replacement panel appears shortly after close, terminate the app.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    if ImpactAppCoordinator.shared.activePanel == nil && ImpactAppCoordinator.shared.welcomePanel == nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if ImpactAppCoordinator.shared.activePanel == nil {
                         NSApp.terminate(nil)
                     }
                 }
@@ -69,6 +76,11 @@ public final class ImpactAppCoordinator {
             panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             panel.scaleToFit()
+
+            if EditorPanel.isCopyToClipboardEnabled {
+                panel.canvasView.copyCompositionToClipboard()
+                panel.showCopiedToClipboardToast()
+            }
         }
     }
 
