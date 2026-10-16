@@ -1275,7 +1275,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .ellipse
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
-            } else if key == "1" || key == "2" || key == "m" {
+            } else if key == "m" {
                 document.activeTool = .dimension
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true

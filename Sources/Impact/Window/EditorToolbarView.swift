@@ -569,7 +569,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         ToolDefinition(type: .pen, title: "Pen", iconName: "pencil.tip", shortcut: "p"),
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b"),
-        ToolDefinition(type: .dimension, title: "Ruler (1 or 2)", iconName: "ruler", shortcut: "1", tooltip: "Ruler [1 or 2]")
+        ToolDefinition(type: .dimension, title: "Ruler", iconName: "ruler", shortcut: "m", tooltip: "Ruler [M]")
     ]
 
     public let collapsibleToolDefinitions: [ToolDefinition] = [
@@ -582,7 +582,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         ToolDefinition(type: .pen, title: "Pen", iconName: "pencil.tip", shortcut: "p"),
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b"),
-        ToolDefinition(type: .dimension, title: "Ruler (1 or 2)", iconName: "ruler", shortcut: "1", tooltip: "Ruler [1 or 2]")
+        ToolDefinition(type: .dimension, title: "Ruler", iconName: "ruler", shortcut: "m", tooltip: "Ruler [M]")
     ]
 
     public internal(set) var toolButtons: [LayerType: ModernToolbarButton] = [:]

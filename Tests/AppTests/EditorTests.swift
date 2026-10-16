@@ -1268,7 +1268,7 @@ public enum EditorTests {
             let titles = toolbar.dropdownToolDefinitions.map { $0.title }
             assert(titles.contains("Arrow"), "Dropdown must contain Arrow")
             assert(!titles.contains("Speech Bubble"), "Dropdown must NOT contain removed Speech Bubble")
-            assert(titles.contains("Ruler (1 or 2)"), "Dropdown must contain Ruler (1 or 2)")
+            assert(titles.contains("Ruler"), "Dropdown must contain Ruler")
             assert(titles.contains("Rectangle"), "Dropdown must contain Rectangle")
             assert(!titles.contains("Backdrop"), "Dropdown must NOT contain removed Backdrop")
             assert(titles.contains("Pen"), "Dropdown must contain Pen")
