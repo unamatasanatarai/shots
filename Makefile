@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help kill build-shots build-impact dmg run-shots run-impact test-shots test-impact release revoke reset-cache clean
+.PHONY: help kill build-shots build-impact dmg run run-shots run-impact test-shots test-impact release revoke reset-cache clean
 
 ## help: Display this help message
 help:
@@ -27,7 +27,7 @@ build-impact:
 dmg:
 	@./scripts/build_dmg.sh
 
-## Run shots
+## run: Kill running apps, rebuild impact & shots, and launch Shots.app
 run: kill build-impact run-shots
 
 ## run-shots: Kill running apps, rebuild shots, and launch Shots.app
@@ -58,15 +58,11 @@ ifeq ($(firstword $(MAKECMDGOALS)),release)
   ifneq ($(RELEASE_TARGET_VERSION),)
     $(eval $(RELEASE_TARGET_VERSION):;@:)
   endif
-  RELEASE_TARGET_SUMMARY := $(word 3,$(MAKECMDGOALS))
-  ifneq ($(RELEASE_TARGET_SUMMARY),)
-    $(eval $(RELEASE_TARGET_SUMMARY):;@:)
-  endif
 endif
 
 ## release: Release manually bumped version (make release <version>), build DMG, tag & publish
 release:
-	@./scripts/release.sh $(if $(VERSION),$(VERSION),$(RELEASE_TARGET_VERSION)) $(if $(SUMMARY),--summary "$(SUMMARY)",$(if $(RELEASE_TARGET_SUMMARY),--summary "$(RELEASE_TARGET_SUMMARY)",))
+	@./scripts/release.sh $(if $(VERSION),$(VERSION),$(RELEASE_TARGET_VERSION))
 
 ## revoke: Reset permissions (ScreenCapture, Accessibility) and clear macOS caches
 revoke:
