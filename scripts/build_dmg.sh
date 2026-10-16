@@ -92,9 +92,9 @@ tell application "Finder"
         if exists file ".background:background.tiff" then
             set background picture of theViewOptions to file ".background:background.tiff"
         end if
-        set position of item "Shots.app" of container window to {150, 205}
-        set position of item "Impact.app" of container window to {370, 205}
-        set position of item "Applications" of container window to {690, 205}
+        set position of item "Shots.app" of container window to {150, 217}
+        set position of item "Impact.app" of container window to {370, 217}
+        set position of item "Applications" of container window to {690, 217}
         update without registering applications
         delay 1
         close
