@@ -26,35 +26,32 @@ public final class CaptureManager {
     // MARK: - Capture Triggers
 
     public func startRegionCapture(delay: Int? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Area Screenshot") else { return }
         let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
-        if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
-                self?.executeRegionCapture()
-            }
-        } else {
-            executeRegionCapture()
-        }
+        executeRegionCapture(delaySeconds: delaySeconds)
     }
 
-    private func executeRegionCapture() {
-        RegionSelectionCoordinator.shared.startSelection(mode: .area) { [weak self] capturedImage in
+    private func executeRegionCapture(delaySeconds: Int = 0) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Area Screenshot") else { return }
+        RegionSelectionCoordinator.shared.startSelection(mode: .area, delaySeconds: delaySeconds) { [weak self] capturedImage in
             guard let image = capturedImage else { return }
             self?.processCapturedImage(image)
         }
     }
 
     public func startOCRRecognition(delay: Int? = nil, completion: ((RecognitionItem?) -> Void)? = nil) {
-        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
-        if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
-                self?.executeOCRRecognition(completion: completion)
-            }
-        } else {
-            executeOCRRecognition(completion: completion)
+        guard PermissionsManager.shared.ensurePermissions(for: "OCR Recognition") else {
+            completion?(nil)
+            return
         }
+        executeOCRRecognition(completion: completion)
     }
 
     private func executeOCRRecognition(completion: ((RecognitionItem?) -> Void)? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "OCR Recognition") else {
+            completion?(nil)
+            return
+        }
         RegionSelectionCoordinator.shared.startSelection(mode: .ocr) { capturedImage in
             guard let image = capturedImage else {
                 completion?(nil)
@@ -80,49 +77,52 @@ public final class CaptureManager {
     // MARK: - Screen Ruler & Color Picker
 
     public func startRuler(delay: Int? = nil, completion: ((String?) -> Void)? = nil) {
-        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
-        if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
-                self?.executeRuler(completion: completion)
-            }
-        } else {
-            executeRuler(completion: completion)
+        guard PermissionsManager.shared.ensurePermissions(for: "Screen Ruler") else {
+            completion?(nil)
+            return
         }
+        executeRuler(completion: completion)
     }
 
     private func executeRuler(completion: ((String?) -> Void)? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Screen Ruler") else {
+            completion?(nil)
+            return
+        }
         RegionSelectionCoordinator.shared.startRuler(completion: completion)
     }
 
     public func startColorPicker(delay: Int? = nil, completion: ((String?) -> Void)? = nil) {
-        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
-        if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
-                self?.executeColorPicker(completion: completion)
-            }
-        } else {
-            executeColorPicker(completion: completion)
+        guard PermissionsManager.shared.ensurePermissions(for: "Color Picker") else {
+            completion?(nil)
+            return
         }
+        executeColorPicker(completion: completion)
     }
 
     private func executeColorPicker(completion: ((String?) -> Void)? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Color Picker") else {
+            completion?(nil)
+            return
+        }
         RegionSelectionCoordinator.shared.startColorPicker(completion: completion)
     }
 
     // MARK: - Scrolling Capture
 
     public func startScrollingCapture(delay: Int? = nil, completion: ((CGImage?) -> Void)? = nil) {
-        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
-        if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
-                self?.executeScrollingCapture(completion: completion)
-            }
-        } else {
-            executeScrollingCapture(completion: completion)
+        guard PermissionsManager.shared.ensurePermissions(for: "Scrolling Capture") else {
+            completion?(nil)
+            return
         }
+        executeScrollingCapture(completion: completion)
     }
 
     private func executeScrollingCapture(completion: ((CGImage?) -> Void)? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Scrolling Capture") else {
+            completion?(nil)
+            return
+        }
         AutoscrollCaptureCoordinator.shared.startAutoscrollCapture(completion: completion)
     }
 
@@ -136,9 +136,11 @@ public final class CaptureManager {
     }
 
     public func captureFullscreen(screen: NSScreen? = nil, delay: Int? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Fullscreen Screenshot") else { return }
         let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
         if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+            let targetScreen = screen ?? CaptureService.shared.activeScreen() ?? NSScreen.main
+            CountdownHUDController.shared.startCountdown(seconds: delaySeconds, screen: targetScreen) { [weak self] in
                 self?.executeFullscreenCapture(screen: screen)
             }
         } else {
@@ -147,13 +149,22 @@ public final class CaptureManager {
     }
 
     public func repeatPreviousScreenshot() {
+        guard PermissionsManager.shared.ensurePermissions(for: "Repeat Screenshot") else { return }
         guard let last = lastCapture else {
             return
         }
 
         let delaySeconds = AppSettings.shared.captureDelaySeconds
         if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
+            let targetScreen: NSScreen? = {
+                switch last.mode {
+                case .fullscreen:
+                    return CaptureService.shared.activeScreen() ?? NSScreen.main
+                case .region(_, let screenFrame, _):
+                    return NSScreen.screens.first { $0.frame == screenFrame } ?? NSScreen.main
+                }
+            }()
+            CountdownHUDController.shared.startCountdown(seconds: delaySeconds, screen: targetScreen) { [weak self] in
                 self?.executeRepeatCapture(last)
             }
         } else {
@@ -162,6 +173,7 @@ public final class CaptureManager {
     }
 
     private func executeRepeatCapture(_ record: LastCaptureRecord) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Repeat Screenshot") else { return }
         switch record.mode {
         case .fullscreen:
             executeFullscreenCapture(screen: nil)
@@ -184,6 +196,7 @@ public final class CaptureManager {
     }
 
     private func executeFullscreenCapture(screen: NSScreen? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Fullscreen Screenshot") else { return }
         self.lastCapture = LastCaptureRecord(mode: .fullscreen)
         if let explicitScreen = screen {
             let displayID = CaptureService.shared.displayID(for: explicitScreen) ?? CGMainDisplayID()

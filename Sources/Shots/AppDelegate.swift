@@ -7,13 +7,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Enforce accessory / agent mode: no icon in macOS Dock or Cmd+Tab switcher
         NSApp.setActivationPolicy(.accessory)
 
-        // Preflight Screen Recording TCC permission
-        _ = CGPreflightScreenCaptureAccess()
-
-        // Preflight Accessibility permission (required for consuming CGEventTap
-        // that swallows mouse events during live region selection)
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        AXIsProcessTrustedWithOptions(options)
+        // Preflight and request Screen Recording and Accessibility permissions if not granted
+        PermissionsManager.shared.checkAndRequestOnLaunch()
 
         // Eagerly initialize persistent configuration
         _ = AppSettings.shared

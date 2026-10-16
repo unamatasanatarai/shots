@@ -31,8 +31,9 @@ public final class RegionSelectionCoordinator {
     public static let shared = RegionSelectionCoordinator()
 
     public private(set) var activeMode: CaptureOverlayMode = .area
+    public private(set) var activeDelaySeconds: Int = 0
     private var overlayPanels: [NSPanel] = []
-    private var isSelecting = false
+    public private(set) var isSelecting = false
     private var completionHandler: ((CGImage?) -> Void)?
     private var regionCompletionHandler: ((SelectedRegionInfo?) -> Void)?
     private var rulerCompletionHandler: ((String?) -> Void)?
@@ -67,18 +68,30 @@ public final class RegionSelectionCoordinator {
         mode: CaptureOverlayMode = .area,
         completion: @escaping (SelectedRegionInfo?) -> Void
     ) {
+        guard PermissionsManager.shared.ensurePermissions(for: "\(mode.rawValue) Selection") else {
+            completion(nil)
+            return
+        }
         guard !isSelecting else { return }
         regionCompletionHandler = completion
         startSelection(mode: mode) { _ in }
     }
 
     public func startRuler(completion: ((String?) -> Void)? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Screen Ruler") else {
+            completion?(nil)
+            return
+        }
         guard !isSelecting else { return }
         rulerCompletionHandler = completion
         startSelection(mode: .ruler) { _ in }
     }
 
     public func startColorPicker(completion: ((String?) -> Void)? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Color Picker") else {
+            completion?(nil)
+            return
+        }
         guard !isSelecting else { return }
         colorPickerCompletionHandler = completion
         startSelection(mode: .colorPicker) { _ in }
@@ -86,11 +99,17 @@ public final class RegionSelectionCoordinator {
 
     public func startSelection(
         mode: CaptureOverlayMode = .area,
+        delaySeconds: Int = 0,
         completion: @escaping (CGImage?) -> Void
     ) {
+        guard PermissionsManager.shared.ensurePermissions(for: "\(mode.rawValue) Selection") else {
+            completion(nil)
+            return
+        }
         guard !isSelecting else { return }
         isSelecting = true
         activeMode = mode
+        activeDelaySeconds = delaySeconds
         completionHandler = completion
 
         let screens = NSScreen.screens
@@ -186,6 +205,7 @@ public final class RegionSelectionCoordinator {
             return
         }
         isSelecting = false
+        activeDelaySeconds = 0
 
         showSystemCursor()
 
@@ -271,16 +291,18 @@ public final class RegionSelectionCoordinator {
     }
 
     private func showSystemCursor() {
+        guard isCursorHidden else {
+            NSCursor.arrow.set()
+            return
+        }
         isCursorHidden = false
 
-        for _ in 0..<2 {
-            for screen in NSScreen.screens {
-                let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
-                CGDisplayShowCursor(displayID)
-            }
-            CGDisplayShowCursor(kCGNullDirectDisplay)
-            NSCursor.unhide()
+        for screen in NSScreen.screens {
+            let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
+            CGDisplayShowCursor(displayID)
         }
+        CGDisplayShowCursor(kCGNullDirectDisplay)
+        NSCursor.unhide()
         NSCursor.pop()
         NSCursor.arrow.set()
     }
@@ -609,28 +631,56 @@ public final class RegionSelectionCoordinator {
             return
         }
 
-        if selRect.width >= 6 && selRect.height >= 6 {
-            CaptureManager.shared.lastCapture = LastCaptureRecord(
-                mode: .region(rect: selRect, screenFrame: screenFrame, displayID: displayID)
-            )
-            let fullImage = CGDisplayCreateImage(displayID)
-            var cropped = fullImage.flatMap { cropImage($0, to: selRect, in: viewSize) }
-            if AppSettings.shared.includeCursor, let validCrop = cropped {
-                cropped = CaptureService.shared.compositeCursor(
-                    on: validCrop,
-                    screen: targetScreen,
-                    cropRect: selRect
+        let delay = self.activeDelaySeconds
+        let isRegion = (selRect.width >= 6 && selRect.height >= 6)
+
+        let captureAction = { [weak self] in
+            guard let self = self else { return }
+            if isRegion {
+                CaptureManager.shared.lastCapture = LastCaptureRecord(
+                    mode: .region(rect: selRect, screenFrame: screenFrame, displayID: displayID)
                 )
+                let fullImage = CGDisplayCreateImage(displayID)
+                var cropped = fullImage.flatMap { self.cropImage($0, to: selRect, in: viewSize) }
+                if AppSettings.shared.includeCursor, let validCrop = cropped {
+                    cropped = CaptureService.shared.compositeCursor(
+                        on: validCrop,
+                        screen: targetScreen,
+                        cropRect: selRect
+                    )
+                }
+                self.finish(with: cropped ?? fullImage)
+            } else {
+                CaptureManager.shared.lastCapture = LastCaptureRecord(mode: .fullscreen)
+                // Click without drag captures full display
+                var fullImage = CGDisplayCreateImage(displayID)
+                if AppSettings.shared.includeCursor, let validFull = fullImage {
+                    fullImage = CaptureService.shared.compositeCursor(on: validFull, screen: targetScreen)
+                }
+                self.finish(with: fullImage)
             }
-            finish(with: cropped ?? fullImage)
+        }
+
+        if delay > 0 && activeMode == .area {
+            // Remove event tap, escape hotkey, and restore system mouse cursor so the user can interact freely during countdown
+            removeEscapeHotKey()
+            removeEventTap()
+            if let monitor = localKeyDownMonitor {
+                NSEvent.removeMonitor(monitor)
+                localKeyDownMonitor = nil
+            }
+            showSystemCursor()
+            NSCursor.unhide()
+            NSCursor.arrow.set()
+            CGDisplayShowCursor(kCGNullDirectDisplay)
+
+            CountdownHUDController.shared.startCountdown(seconds: delay, screen: targetScreen, onComplete: {
+                captureAction()
+            }, onCancel: { [weak self] in
+                self?.finish(with: nil)
+            })
         } else {
-            CaptureManager.shared.lastCapture = LastCaptureRecord(mode: .fullscreen)
-            // Click without drag captures full display
-            var fullImage = CGDisplayCreateImage(displayID)
-            if AppSettings.shared.includeCursor, let validFull = fullImage {
-                fullImage = CaptureService.shared.compositeCursor(on: validFull, screen: targetScreen)
-            }
-            finish(with: fullImage)
+            captureAction()
         }
     }
 
@@ -851,7 +901,8 @@ private final class RegionSelectionView: NSView {
                 }
                 context.restoreGState()
 
-                drawSelectionDimensionsBadge(start: start, current: current, in: context, tag: isOCR ? "OCR" : nil)
+                let tag: String? = isOCR ? "OCR" : nil
+                drawSelectionDimensionsBadge(start: start, current: current, in: context, tag: tag)
             }
         }
 
@@ -862,7 +913,8 @@ private final class RegionSelectionView: NSView {
             drawPrecisionCrosshair(at: pt, in: context, ringColorOverride: ringColor)
 
             if !isDragging {
-                drawCoordinateBadge(at: pt, in: context, tag: isOCR ? "OCR" : nil)
+                let tag: String? = isOCR ? "OCR" : nil
+                drawCoordinateBadge(at: pt, in: context, tag: tag)
             }
         }
     }
@@ -1204,8 +1256,7 @@ private final class RegionSelectionView: NSView {
         let topSize = (top as NSString).size(withAttributes: Self.numberAttributes)
         let bottomSize = (bottom as NSString).size(withAttributes: Self.numberAttributes)
         let width = max(topSize.width, bottomSize.width) + 1.0
-        let height = topSize.height + Self.numberFont.capHeight + 3.0 + 1.0
-        return NSSize(width: ceil(width), height: ceil(height))
+        return NSSize(width: ceil(width), height: 16.0)
     }
 
     private func drawNumberBadge(
@@ -1259,27 +1310,31 @@ private final class RegionSelectionView: NSView {
         let bottomText = "\(curY)"
         let textSize = measureNumberBadge(top: topText, bottom: bottomText)
 
-        let offset: CGFloat = 8.0
+        let xOffset: CGFloat = 8.0
+        let visualGap: CGFloat = 1.0
         let margin: CGFloat = 8.0
 
-        var originX = point.x + offset
-        var originY = point.y - textSize.height - offset
+        let inkHeight: CGFloat = 16.0
+        let inkBottomOffset: CGFloat = 2.0
+
+        var originX = point.x + xOffset
+        var originY = point.y - inkHeight - visualGap
 
         if originY < margin {
-            originY = point.y + offset
+            originY = point.y + visualGap - inkBottomOffset
         }
-        if originY + textSize.height > bounds.height - margin {
-            originY = point.y - textSize.height - offset
+        if originY + inkHeight > bounds.height - margin {
+            originY = point.y - inkHeight - visualGap
         }
         if originX + textSize.width > bounds.width - margin {
-            originX = point.x - textSize.width - offset
+            originX = point.x - textSize.width - xOffset
         }
         if originX < margin {
-            originX = point.x + offset
+            originX = point.x + xOffset
         }
 
         originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
-        originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
+        originY = round(max(margin, min(originY, bounds.height - inkHeight - margin)))
 
         let isRightOfCursor = originX >= point.x
         let alignment: NSTextAlignment = isRightOfCursor ? .left : .right
@@ -1300,7 +1355,8 @@ private final class RegionSelectionView: NSView {
         let bottomText = "\(pixelHeight)"
         let textSize = measureNumberBadge(top: topText, bottom: bottomText)
 
-        let offset: CGFloat = 8.0
+        let xOffset: CGFloat = 8.0
+        let visualGap: CGFloat = 1.0
         let margin: CGFloat = 8.0
 
         let curX = current.x
@@ -1311,24 +1367,27 @@ private final class RegionSelectionView: NSView {
         let draggingRight = curX >= startX
         let draggingTop = curY >= startY
 
-        var originX: CGFloat = draggingRight ? (curX + offset) : (curX - textSize.width - offset)
-        var originY: CGFloat = draggingTop ? (curY + offset) : (curY - textSize.height - offset)
+        let inkHeight: CGFloat = 16.0
+        let inkBottomOffset: CGFloat = 2.0
+
+        var originX: CGFloat = draggingRight ? (curX + xOffset) : (curX - textSize.width - xOffset)
+        var originY: CGFloat = draggingTop ? (curY + visualGap - inkBottomOffset) : (curY - inkHeight - visualGap)
 
         if originY < margin {
-            originY = curY + offset
+            originY = curY + visualGap - inkBottomOffset
         }
-        if originY + textSize.height > bounds.height - margin {
-            originY = curY - textSize.height - offset
+        if originY + inkHeight > bounds.height - margin {
+            originY = curY - inkHeight - visualGap
         }
         if originX + textSize.width > bounds.width - margin {
-            originX = curX - textSize.width - offset
+            originX = curX - textSize.width - xOffset
         }
         if originX < margin {
-            originX = curX + offset
+            originX = curX + xOffset
         }
 
         originX = round(max(margin, min(originX, bounds.width - textSize.width - margin)))
-        originY = round(max(margin, min(originY, bounds.height - textSize.height - margin)))
+        originY = round(max(margin, min(originY, bounds.height - inkHeight - margin)))
 
         let isRightOfCursor = originX >= curX
         let alignment: NSTextAlignment = isRightOfCursor ? .left : .right

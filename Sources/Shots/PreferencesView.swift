@@ -47,8 +47,8 @@ public struct PreferencesView: View {
     @State private var selectedTab: Tab = .general
     @State private var recordingTarget: ShortcutTarget? = nil
     @State private var eventMonitor: Any?
-    @State private var screenCaptureGranted: Bool = CGPreflightScreenCaptureAccess()
-    @State private var accessibilityGranted: Bool = AXIsProcessTrusted()
+    @State private var screenCaptureGranted: Bool = PermissionsManager.shared.isScreenRecordingGranted
+    @State private var accessibilityGranted: Bool = PermissionsManager.shared.isAccessibilityGranted
 
     public var isRecordingHotkey: Bool { recordingTarget != nil }
 
@@ -56,16 +56,39 @@ public struct PreferencesView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Minimalistic Tab Switcher
-            HStack {
+            // Header with App Logo & Minimalist Tab Switcher
+            HStack(spacing: 12) {
+                if let logo = Self.loadAppLogo() {
+                    Image(nsImage: logo)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 36, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                }
+
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Shots")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("v\(AppConfig.version)")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
                 Picker("", selection: $selectedTab) {
                     ForEach(Tab.allCases) { tab in
                         Label(tab.rawValue, systemImage: tab.icon).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 320)
+                .frame(width: 220)
+                .onChange(of: selectedTab) { _ in
+                    stopRecording()
+                }
             }
+            .padding(.horizontal, 18)
             .padding(.top, 14)
             .padding(.bottom, 12)
 
@@ -73,7 +96,7 @@ public struct PreferencesView: View {
 
             // Active Tab Content
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 14) {
+                VStack(spacing: 12) {
                     switch selectedTab {
                     case .general:
                         GeneralTab(
@@ -102,13 +125,45 @@ public struct PreferencesView: View {
                         )
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
             }
         }
-        .frame(width: 480, height: 500)
+        .frame(width: 480, height: 435)
+        .onAppear {
+            updatePermissions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            updatePermissions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            updatePermissions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PreferencesViewRefreshPermissions"))) { _ in
+            updatePermissions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PreferencesWindowDidResignKey"))) { _ in
+            stopRecording()
+        }
+        .onReceive(Timer.publish(every: 2.5, on: .main, in: .default).autoconnect()) { _ in
+            // Non-blocking background check in default mode only if permissions remain missing
+            if !screenCaptureGranted || !accessibilityGranted {
+                updatePermissions()
+            }
+        }
         .onDisappear {
             stopRecording()
+        }
+    }
+
+    private func updatePermissions() {
+        let newScreen = PermissionsManager.shared.isScreenRecordingGranted
+        let newAX = PermissionsManager.shared.isAccessibilityGranted
+        if screenCaptureGranted != newScreen {
+            screenCaptureGranted = newScreen
+        }
+        if accessibilityGranted != newAX {
+            accessibilityGranted = newAX
         }
     }
 
@@ -126,7 +181,12 @@ public struct PreferencesView: View {
         stopRecording()
         recordingTarget = target
 
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown]) { event in
+            if event.type == .leftMouseDown || event.type == .rightMouseDown {
+                self.stopRecording()
+                return event
+            }
+
             if event.type == .keyDown {
                 // Escape cancels
                 if event.keyCode == 53 {
@@ -251,6 +311,81 @@ public struct PreferencesView: View {
         if panel.runModal() == .OK, let selectedURL = panel.url {
             settings.saveDirectoryPath = selectedURL.path
         }
+        NSCursor.unhide()
+        NSCursor.arrow.set()
+    }
+
+    public static func loadAppLogo() -> NSImage? {
+        if let img = NSImage(named: "AppIcon"), img.isValid {
+            return img
+        }
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "png"),
+           let img = NSImage(contentsOf: url), img.isValid {
+            return img
+        }
+        if let appIcon = NSApp.applicationIconImage, appIcon.isValid {
+            return appIcon
+        }
+        let fallbackPath = "Resources/AppIcon.png"
+        if FileManager.default.fileExists(atPath: fallbackPath),
+           let img = NSImage(contentsOfFile: fallbackPath) {
+            return img
+        }
+        return nil
+    }
+}
+
+// MARK: - Reusable Minimalist Text Toggle Row
+
+private struct ToggleRow: View {
+    let title: String
+    let icon: String
+    @Binding var isOn: Bool
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: {
+            isOn.toggle()
+        }) {
+            HStack(spacing: 11) {
+                Image(systemName: icon)
+                    .foregroundColor(isOn ? .accentColor : .secondary.opacity(0.6))
+                    .font(.system(size: 13, weight: isOn ? .semibold : .regular))
+                    .frame(width: 20)
+
+                Text(title)
+                    .font(.system(size: 13, weight: isOn ? .medium : .regular))
+                    .foregroundColor(isOn ? .primary : .secondary)
+
+                Spacer()
+
+                // Pure text toggle badge with dynamic state styling — NO switch/checkbox controls
+                Text(isOn ? "ON" : "OFF")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(isOn ? .accentColor : .secondary.opacity(0.6))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(isOn ? Color.accentColor.opacity(0.14) : Color(NSColor.controlColor).opacity(0.6))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(isOn ? Color.accentColor.opacity(0.4) : Color(NSColor.separatorColor).opacity(0.35), lineWidth: 1)
+                    )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovered ? Color(NSColor.controlBackgroundColor).opacity(0.5) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }
 
@@ -264,94 +399,66 @@ private struct GeneralTab: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Startup Card
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Startup")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Launch at login")
-                            .font(.system(size: 13, weight: .regular))
-                        Text("Start Shots automatically when you log into your Mac")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: Binding(
+            // Main preferences card
+            VStack(spacing: 0) {
+                // Start at login
+                ToggleRow(
+                    title: "Start at login",
+                    icon: "sparkles",
+                    isOn: Binding(
                         get: { settings.launchAtLogin },
                         set: { newValue in
                             _ = LaunchAtLoginService.shared.setLaunchAtLogin(enabled: newValue)
                         }
-                    ))
-                    .labelsHidden()
-                }
-            }
-            .padding(12)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+                    )
+                )
 
-            // Storage Location Card
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Storage Location")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
+                Divider().padding(.horizontal, 12)
 
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Save screenshots to")
-                            .font(.system(size: 13, weight: .regular))
-                        Text(settings.saveDirectoryPath)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
+                // Save directory
+                HStack(spacing: 10) {
+                    Image(systemName: "folder")
+                        .foregroundColor(.secondary)
+                        .frame(width: 18)
+                    Text("Save to")
+                        .font(.system(size: 13))
                     Spacer()
+                    Text(settings.saveDirectoryPath)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 160, alignment: .trailing)
+                        .help(settings.saveDirectoryPath)
 
-                    Button("Change Location...") {
+                    Button("Change...") {
                         onChooseFolder()
                     }
-                    .font(.system(size: 12))
-
-                    Button(action: {
-                        NSWorkspace.shared.open(settings.resolvedSaveDirectoryURL)
-                    }) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 13))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open Screenshots Folder")
+                    .font(.system(size: 11))
+                    .controlSize(.small)
 
                     Button(action: {
                         NSWorkspace.shared.activateFileViewerSelecting([settings.resolvedSaveDirectoryURL])
                     }) {
-                        Image(systemName: "arrow.up.forward.app")
+                        Image(systemName: "arrow.up.forward.square")
                             .font(.system(size: 12))
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Reveal in Finder")
+                    .help("Open Screenshots Folder in Finder")
                 }
-            }
-            .padding(12)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
 
-            // Image Format Card
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Image Format & Quality")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
+                Divider().padding(.horizontal, 12)
 
-                HStack {
-                    Text("File format")
-                        .font(.system(size: 13, weight: .regular))
+                // File format
+                HStack(spacing: 10) {
+                    Image(systemName: "photo")
+                        .foregroundColor(.secondary)
+                        .frame(width: 18)
+                    Text("Format")
+                        .font(.system(size: 13))
                     Spacer()
                     Picker("", selection: $settings.imageFormat) {
                         ForEach(ImageFormat.allCases) { format in
@@ -359,20 +466,20 @@ private struct GeneralTab: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 150)
+                    .frame(width: 130)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
 
                 if settings.imageFormat == .jpg {
-                    Divider()
+                    Divider().padding(.horizontal, 12)
 
                     HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("JPG Quality")
-                                .font(.system(size: 13, weight: .regular))
-                            Text("Higher quality produces larger file sizes")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundColor(.secondary)
+                            .frame(width: 18)
+                        Text("Quality")
+                            .font(.system(size: 13))
                         Spacer()
                         Slider(
                             value: Binding(
@@ -385,67 +492,64 @@ private struct GeneralTab: View {
                         .frame(width: 120)
 
                         Text("\(settings.jpgQuality)%")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
                             .frame(width: 38, alignment: .trailing)
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
                 }
             }
-            .padding(12)
             .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 0.5))
 
-            // Permissions Card
-            VStack(alignment: .leading, spacing: 8) {
-                Text("System Permissions")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-
-                HStack {
-                    Label("Screen Recording", systemImage: "display")
-                        .font(.system(size: 12))
-                    Spacer()
-                    if screenCaptureGranted {
-                        Text("Granted")
-                            .font(.system(size: 11, weight: .medium))
+            // System Permissions
+            VStack(spacing: 0) {
+                if screenCaptureGranted && accessibilityGranted {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(.green)
-                    } else {
-                        Button("Grant Access") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                        .font(.system(size: 11))
+                            .font(.system(size: 13))
+                        Text("Permissions granted")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("Screen Recording • Accessibility")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
                     }
-                }
-
-                Divider()
-
-                HStack {
-                    Label("Accessibility", systemImage: "hand.tap")
-                        .font(.system(size: 12))
-                    Spacer()
-                    if accessibilityGranted {
-                        Text("Granted")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.green)
-                    } else {
-                        Button("Grant Access") {
-                            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-                            _ = AXIsProcessTrustedWithOptions(options)
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                                NSWorkspace.shared.open(url)
-                            }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.system(size: 13))
+                        Text("Permissions not granted")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.orange)
+                        Spacer()
+                        Button("Grant permissions") {
+                            PermissionsManager.shared.openSystemSettingsForMissingPermissions()
                         }
-                        .font(.system(size: 11))
+                        .font(.system(size: 11, weight: .medium))
+                        .controlSize(.small)
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                 }
             }
-            .padding(12)
             .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(
+                        (screenCaptureGranted && accessibilityGranted)
+                            ? Color(NSColor.separatorColor).opacity(0.4)
+                            : Color.orange.opacity(0.5),
+                        lineWidth: (screenCaptureGranted && accessibilityGranted) ? 0.5 : 1.0
+                    )
+            )
         }
     }
 }
@@ -457,87 +561,50 @@ private struct CaptureTab: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // Clipboard Action Card
-            VStack(alignment: .leading, spacing: 8) {
-                Text("After Capture")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
+            VStack(spacing: 0) {
+                ToggleRow(
+                    title: "Copy to clipboard",
+                    icon: "doc.on.clipboard",
+                    isOn: $settings.copyToClipboard
+                )
 
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Copy to clipboard")
-                            .font(.system(size: 13, weight: .regular))
-                        Text("Automatically copy screenshot image to clipboard after capture")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $settings.copyToClipboard)
-                        .labelsHidden()
-                }
-            }
-            .padding(12)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+                Divider().padding(.horizontal, 12)
 
-            // Capture Behavior Card
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Capture Options")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
+                ToggleRow(
+                    title: "Include mouse cursor",
+                    icon: "cursorarrow.rays",
+                    isOn: $settings.includeCursor
+                )
 
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Include mouse cursor")
-                            .font(.system(size: 13, weight: .regular))
-                        Text("Show mouse cursor arrow in captured screenshots")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $settings.includeCursor)
-                        .labelsHidden()
-                }
+                Divider().padding(.horizontal, 12)
 
-                Divider()
-
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Timer delay")
-                            .font(.system(size: 13, weight: .regular))
-                        Text("Countdown delay before taking a screenshot")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
+                HStack(spacing: 10) {
+                    Image(systemName: "timer")
+                        .foregroundColor(.secondary)
+                        .frame(width: 18)
+                    Text("Capture delay")
+                        .font(.system(size: 13))
                     Spacer()
                     Picker("", selection: $settings.captureDelaySeconds) {
-                        Text("None").tag(0)
+                        Text("Off").tag(0)
                         Text("3s").tag(3)
                         Text("5s").tag(5)
                         Text("10s").tag(10)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 180)
+                    .frame(width: 170)
                 }
-            }
-            .padding(12)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
 
-            // Scrolling Capture Card
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Scrolling Capture")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
+                Divider().padding(.horizontal, 12)
 
-                HStack {
-                    Text("Capture speed")
-                        .font(.system(size: 13, weight: .regular))
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.up.and.down.circle")
+                        .foregroundColor(.secondary)
+                        .frame(width: 18)
+                    Text("Scrolling speed")
+                        .font(.system(size: 13))
                     Spacer()
                     Picker("", selection: $settings.scrollingCaptureSpeed) {
                         ForEach(ScrollingCaptureSpeed.allCases) { speed in
@@ -545,28 +612,14 @@ private struct CaptureTab: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 180)
+                    .frame(width: 170)
                 }
-
-                HStack {
-                    Spacer()
-                    Text(scrollingSpeedNote)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
             }
-            .padding(12)
             .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
-        }
-    }
-
-    private var scrollingSpeedNote: String {
-        switch settings.scrollingCaptureSpeed {
-        case .slow: return "Step: 45 px • 500 ms pause (Smooth, heavy pages)"
-        case .normal: return "Step: 60 px • 350 ms pause (Recommended)"
-        case .fast: return "Step: 90 px • 200 ms pause (Fast native windows)"
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 0.5))
         }
     }
 }
@@ -583,33 +636,17 @@ private struct ShortcutsTab: View {
     let onResetAll: () -> Void
 
     var body: some View {
-        VStack(spacing: 10) {
-            // Master Global Shortcuts Toggle
-            VStack(spacing: 8) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Enable global shortcuts")
-                            .font(.system(size: 13, weight: .regular))
-                        Text("Trigger capture tools with global keyboard shortcuts")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $settings.globalHotkeysEnabled)
-                        .labelsHidden()
-                }
-            }
-            .padding(12)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
-
+        VStack(spacing: 12) {
             // Shortcuts List Card
-            VStack(spacing: 8) {
-                ForEach(PreferencesView.ShortcutTarget.allCases) { target in
-                    HStack {
-                        Label(target.rawValue, systemImage: target.icon)
-                            .font(.system(size: 13, weight: .regular))
+            VStack(spacing: 0) {
+                ForEach(Array(PreferencesView.ShortcutTarget.allCases.enumerated()), id: \.element.id) { index, target in
+                    HStack(spacing: 10) {
+                        Image(systemName: target.icon)
+                            .foregroundColor(.secondary)
+                            .frame(width: 18)
+
+                        Text(target.rawValue)
+                            .font(.system(size: 13))
 
                         Spacer()
 
@@ -621,7 +658,7 @@ private struct ShortcutsTab: View {
                                 if recordingTarget == target {
                                     Circle()
                                         .fill(Color.red)
-                                        .frame(width: 7, height: 7)
+                                        .frame(width: 6, height: 6)
                                     Text("Press keys...")
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundColor(.primary)
@@ -632,17 +669,16 @@ private struct ShortcutsTab: View {
                                         .foregroundColor(str == "None" ? .secondary : .primary)
                                 }
                             }
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 4)
-                            .background(recordingTarget == target ? Color.accentColor.opacity(0.12) : Color(NSColor.controlColor))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(recordingTarget == target ? Color.accentColor.opacity(0.15) : Color(NSColor.controlColor))
                             .cornerRadius(5)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 5)
-                                    .stroke(recordingTarget == target ? Color.accentColor : Color(NSColor.separatorColor).opacity(0.7), lineWidth: 1)
+                                    .stroke(recordingTarget == target ? Color.accentColor : Color(NSColor.separatorColor).opacity(0.6), lineWidth: 0.8)
                             )
                         }
                         .buttonStyle(.plain)
-                        .disabled(!settings.globalHotkeysEnabled)
 
                         // Clear/Remove Shortcut
                         Button(action: {
@@ -653,9 +689,9 @@ private struct ShortcutsTab: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!settings.globalHotkeysEnabled || !isAssigned(for: target))
-                        .opacity((settings.globalHotkeysEnabled && isAssigned(for: target)) ? 0.75 : 0.2)
-                        .help("Remove shortcut")
+                        .disabled(!isAssigned(for: target))
+                        .opacity(isAssigned(for: target) ? 0.75 : 0.15)
+                        .help("Clear shortcut")
 
                         // Reset to default
                         Button(action: {
@@ -666,24 +702,24 @@ private struct ShortcutsTab: View {
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .disabled(!settings.globalHotkeysEnabled || isDefault(for: target))
-                        .opacity((settings.globalHotkeysEnabled && !isDefault(for: target)) ? 0.75 : 0.2)
+                        .disabled(isDefault(for: target))
+                        .opacity(!isDefault(for: target) ? 0.75 : 0.15)
                         .help("Reset to default")
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
 
-                    if target != PreferencesView.ShortcutTarget.allCases.last {
-                        Divider()
+                    if index < PreferencesView.ShortcutTarget.allCases.count - 1 {
+                        Divider().padding(.horizontal, 12)
                     }
                 }
             }
-            .padding(12)
             .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor).opacity(0.5), lineWidth: 0.5))
-            .opacity(settings.globalHotkeysEnabled ? 1.0 : 0.55)
+            .cornerRadius(10)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(NSColor.separatorColor).opacity(0.4), lineWidth: 0.5))
 
             // Conflict Warning Banner
-            if settings.globalHotkeysEnabled && settings.isHotkeyConflict, let msg = settings.hotkeyErrorMessage {
+            if settings.isHotkeyConflict, let msg = settings.hotkeyErrorMessage {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
@@ -698,23 +734,13 @@ private struct ShortcutsTab: View {
                 .cornerRadius(6)
             }
 
+            // Footer
             HStack {
-                Text("Click to rebind • Delete to remove • Esc to cancel")
+                Text("Click shortcut to rebind • Esc cancels")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
 
                 Spacer()
-
-                Button("Remove All") {
-                    onClearAll()
-                }
-                .font(.system(size: 11))
-                .buttonStyle(.link)
-                .disabled(!settings.globalHotkeysEnabled)
-
-                Text("•")
-                    .foregroundColor(.secondary)
-                    .font(.system(size: 10))
 
                 Button("Reset All") {
                     onResetAll()
@@ -722,6 +748,7 @@ private struct ShortcutsTab: View {
                 .font(.system(size: 11))
                 .buttonStyle(.link)
             }
+            .padding(.horizontal, 4)
             .padding(.top, 2)
         }
     }

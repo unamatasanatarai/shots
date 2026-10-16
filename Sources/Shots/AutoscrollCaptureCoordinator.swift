@@ -6,8 +6,10 @@ public final class AutoscrollCaptureCoordinator: NSObject {
     public static let shared = AutoscrollCaptureCoordinator()
 
     private var hudWindow: NSPanel?
-    private var isCancelled = false
-    private var keyMonitor: Any?
+    private var isAborted = false
+    private var isFinishedEarly = false
+    private var localKeyMonitor: Any?
+    private var globalKeyMonitor: Any?
 
     private override init() {
         super.init()
@@ -16,14 +18,11 @@ public final class AutoscrollCaptureCoordinator: NSObject {
     // MARK: - Public Entry Point
 
     public func startAutoscrollCapture(delay: Int? = nil, completion: ((CGImage?) -> Void)? = nil) {
-        let delaySeconds = delay ?? AppSettings.shared.captureDelaySeconds
-        if delaySeconds > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(delaySeconds)) { [weak self] in
-                self?.beginAutoscrollFlow(completion: completion)
-            }
-        } else {
-            beginAutoscrollFlow(completion: completion)
+        guard PermissionsManager.shared.ensurePermissions(for: "Scrolling Capture") else {
+            completion?(nil)
+            return
         }
+        beginAutoscrollFlow(completion: completion)
     }
 
     private func beginAutoscrollFlow(completion: ((CGImage?) -> Void)?) {
@@ -39,7 +38,8 @@ public final class AutoscrollCaptureCoordinator: NSObject {
     // MARK: - Auto-scroll Execution Session
 
     private func executeAutoscrollSession(region: SelectedRegionInfo, completion: ((CGImage?) -> Void)?) {
-        isCancelled = false
+        isAborted = false
+        isFinishedEarly = false
 
         // Compute screen coordinates for the center of the region
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -56,6 +56,14 @@ public final class AutoscrollCaptureCoordinator: NSObject {
 
             // Allow window server time to cleanly dismiss selection overlay
             usleep(250_000)
+
+            guard !self.isAborted else {
+                DispatchQueue.main.async {
+                    self.dismissHUD()
+                    completion?(nil)
+                }
+                return
+            }
 
             // 1. Initial Frame Capture
             guard let initialDisplay = CGDisplayCreateImage(region.displayID),
@@ -78,7 +86,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             let stepDelay = speedConfig.stepDelayMicroseconds
 
             for _ in 0..<maxSteps {
-                guard !self.isCancelled else { break }
+                guard !self.isAborted && !self.isFinishedEarly else { break }
 
                 // Post synthetic scroll event down targeted at the window center
                 self.postScrollEvent(deltaY: scrollPixels, at: targetCenterCG)
@@ -86,7 +94,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
                 // Wait configured settling pause for content animation, inertial scrolling, and GPU redraw
                 usleep(stepDelay)
 
-                guard !self.isCancelled else { break }
+                guard !self.isAborted && !self.isFinishedEarly else { break }
 
                 // Capture next display frame
                 guard let currentDisplay = CGDisplayCreateImage(region.displayID),
@@ -117,6 +125,15 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             // Dismiss floating HUD
             DispatchQueue.main.async {
                 self.dismissHUD()
+            }
+
+            // If user aborted via Escape: do NOT stitch, do NOT store to disk, do NOT copy to clipboard
+            if self.isAborted {
+                NSLog("Scrolling capture aborted via Escape. Discarding all frames without saving.")
+                DispatchQueue.main.async {
+                    completion?(nil)
+                }
+                return
             }
 
             // Stitch frames or fallback to single frame
@@ -185,31 +202,60 @@ public final class AutoscrollCaptureCoordinator: NSObject {
         panel.hidesOnDeactivate = false
 
         let hudView = AutoscrollHUDView(frame: NSRect(x: 0, y: 0, width: hudW, height: hudH)) { [weak self] in
-            self?.stopAutoscroll()
+            self?.finishAutoscroll()
         }
         panel.contentView = hudView
         panel.orderFrontRegardless()
         self.hudWindow = panel
 
-        // Escape / Return / Space abort listener
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 || event.keyCode == 36 || event.keyCode == 49 { // Esc, Enter, Space
-                self?.stopAutoscroll()
+        // Local monitor when Shots receives events
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 { // Esc: Abort immediately without saving
+                self?.abortAutoscroll()
+                return nil
+            } else if event.keyCode == 36 || event.keyCode == 49 { // Return, Space: Finish and save
+                self?.finishAutoscroll()
                 return nil
             }
             return event
         }
+
+        // Global monitor while user is in target window/app
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 { // Esc: Abort immediately without saving
+                DispatchQueue.main.async {
+                    self?.abortAutoscroll()
+                }
+            } else if event.keyCode == 36 || event.keyCode == 49 { // Return, Space: Finish and save
+                DispatchQueue.main.async {
+                    self?.finishAutoscroll()
+                }
+            }
+        }
     }
 
-    public func stopAutoscroll() {
-        isCancelled = true
+    public func abortAutoscroll() {
+        isAborted = true
         dismissHUD()
     }
 
+    public func finishAutoscroll() {
+        isFinishedEarly = true
+        dismissHUD()
+    }
+
+    public func stopAutoscroll() {
+        finishAutoscroll()
+    }
+
     private func dismissHUD() {
-        if let monitor = keyMonitor {
+        if let monitor = localKeyMonitor {
             NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
+            localKeyMonitor = nil
+        }
+        if let monitor = globalKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalKeyMonitor = nil
         }
         if let window = hudWindow {
             window.orderOut(nil)
@@ -221,10 +267,10 @@ public final class AutoscrollCaptureCoordinator: NSObject {
 // MARK: - Autoscroll HUD View
 
 private final class AutoscrollHUDView: NSView {
-    private let onStop: () -> Void
+    private let onFinish: () -> Void
 
-    init(frame frameRect: NSRect, onStop: @escaping () -> Void) {
-        self.onStop = onStop
+    init(frame frameRect: NSRect, onFinish: @escaping () -> Void) {
+        self.onFinish = onFinish
         super.init(frame: frameRect)
         wantsLayer = true
         setupUI()
@@ -242,22 +288,22 @@ private final class AutoscrollHUDView: NSView {
         layer?.borderWidth = 1.0
 
         // Status Label
-        let label = NSTextField(labelWithString: "⏬ Scrolling... (Esc to finish)")
+        let label = NSTextField(labelWithString: "⏬ Scrolling... (Esc to cancel)")
         label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         label.textColor = .white
-        label.frame = NSRect(x: 12, y: 8, width: 175, height: 20)
+        label.frame = NSRect(x: 12, y: 8, width: 180, height: 20)
         addSubview(label)
 
-        // Stop Button
-        let stopButton = NSButton(title: "Finish", target: self, action: #selector(stopClicked))
-        stopButton.bezelStyle = .rounded
-        stopButton.controlSize = .small
-        stopButton.font = NSFont.systemFont(ofSize: 11, weight: .bold)
-        stopButton.frame = NSRect(x: bounds.width - 66, y: 7, width: 56, height: 22)
-        addSubview(stopButton)
+        // Finish Button
+        let finishButton = NSButton(title: "Finish", target: self, action: #selector(finishClicked))
+        finishButton.bezelStyle = .rounded
+        finishButton.controlSize = .small
+        finishButton.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        finishButton.frame = NSRect(x: bounds.width - 66, y: 7, width: 56, height: 22)
+        addSubview(finishButton)
     }
 
-    @objc private func stopClicked() {
-        onStop()
+    @objc private func finishClicked() {
+        onFinish()
     }
 }

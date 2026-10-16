@@ -1,13 +1,13 @@
 import Cocoa
 import SwiftUI
 
-public final class PreferencesWindowController: NSWindowController {
+public final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     public static let shared = PreferencesWindowController()
 
     private init() {
         let hostingController = NSHostingController(rootView: PreferencesView())
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 410),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 435),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -16,9 +16,12 @@ public final class PreferencesWindowController: NSWindowController {
         window.title = "Shots Preferences"
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
-        window.level = .floating
+        window.level = .normal
+        window.collectionBehavior = [.moveToActiveSpace]
+        window.acceptsMouseMovedEvents = true
 
         super.init(window: window)
+        window.delegate = self
     }
 
     required init?(coder: NSCoder) {
@@ -28,11 +31,25 @@ public final class PreferencesWindowController: NSWindowController {
     public func showWindow() {
         guard let window = self.window else { return }
 
-        // Refresh root view to re-evaluate screen capture permissions
-        (window.contentViewController as? NSHostingController<PreferencesView>)?.rootView = PreferencesView()
+        // Restore cursor visibility and system arrow cursor
+        NSCursor.unhide()
+        NSCursor.arrow.set()
+        CGDisplayShowCursor(kCGNullDirectDisplay)
+
+        // Signal PreferencesView to re-evaluate permissions without discarding view state
+        NotificationCenter.default.post(name: NSNotification.Name("PreferencesViewRefreshPermissions"), object: nil)
 
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    public func windowDidBecomeKey(_ notification: Notification) {
+        NSCursor.unhide()
+        NSCursor.arrow.set()
+    }
+
+    public func windowDidResignKey(_ notification: Notification) {
+        NotificationCenter.default.post(name: NSNotification.Name("PreferencesWindowDidResignKey"), object: nil)
     }
 }

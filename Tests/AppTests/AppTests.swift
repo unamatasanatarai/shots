@@ -334,6 +334,51 @@ public struct AppTests {
             assert(freshSettings.captureDelaySeconds == 10, "Setting delay to 10 seconds")
 
             defaults.removePersistentDomain(forName: testSuite)
+
+            // Test CountdownHUDController lifecycle
+            var zeroCompleted = false
+            CountdownHUDController.shared.startCountdown(seconds: 0) {
+                zeroCompleted = true
+            }
+            assert(zeroCompleted, "Countdown with 0 seconds must complete synchronously")
+
+            var cancelled = false
+            CountdownHUDController.shared.startCountdown(seconds: 5, onComplete: {}, onCancel: {
+                cancelled = true
+            })
+            assert(CountdownHUDController.shared.isCountingDown, "HUD must report isCountingDown == true while active")
+            CountdownHUDController.shared.cancel()
+            assert(!CountdownHUDController.shared.isCountingDown, "HUD must not be counting down after cancel()")
+            assert(cancelled, "Cancellation handler must be called when cancel() is invoked")
+
+            // Test RegionSelectionCoordinator activeDelaySeconds
+            PermissionsManager.shared.screenRecordingOverride = true
+            PermissionsManager.shared.accessibilityOverride = true
+            defer {
+                PermissionsManager.shared.resetTestingState()
+            }
+
+            RegionSelectionCoordinator.shared.startSelection(mode: .area, delaySeconds: 3) { _ in }
+            assert(RegionSelectionCoordinator.shared.activeDelaySeconds == 3, "Coordinator must store activeDelaySeconds")
+            assert(RegionSelectionCoordinator.shared.isSelecting, "Coordinator must enter isSelecting")
+
+            // Simulate finish
+            let escapeEvent = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: "\u{1b}",
+                charactersIgnoringModifiers: "\u{1b}",
+                isARepeat: false,
+                keyCode: 53
+            )
+            if let evt = escapeEvent {
+                _ = NSApp.sendEvent(evt)
+            }
+            assert(RegionSelectionCoordinator.shared.activeDelaySeconds == 0, "activeDelaySeconds must reset to 0 on exit")
         }
 
         // MARK: - JPG Support Suite
@@ -520,20 +565,25 @@ public struct AppTests {
             assert(button.toolTip?.contains("Shots") == true, "Status button tooltip must contain app name")
 
             let menu = controller.currentMenu
-            let titles = menu.items.map { $0.title }
+            controller.menuWillOpen(menu)
+            let visibleItems = menu.items.filter { !$0.isSeparatorItem && !$0.isHidden }
+            let titles = visibleItems.map { $0.title }
 
-            assert(titles.contains(where: { $0.contains("Capture Region") }), "Menu must contain Capture Region item")
-            assert(titles.contains(where: { $0.contains("Capture Fullscreen") }), "Menu must contain Capture Fullscreen item")
-            assert(titles.contains(where: { $0.contains("Repeat Previous Screenshot") }), "Menu must contain Repeat Previous Screenshot item")
-            assert(titles.contains(where: { $0.contains("Screen Ruler") }), "Menu must contain Screen Ruler item")
-            assert(titles.contains(where: { $0.contains("Color Picker") }), "Menu must contain Color Picker item")
-            assert(titles.contains("Include Cursor"), "Menu must contain Include Cursor item")
-            assert(titles.contains("Launch at Login"), "Menu must contain Launch at Login item")
+            assert(titles.contains("Capture Region"), "Menu must contain Capture Region item")
+            assert(titles.contains("Repeat Previous Screenshot"), "Menu must contain Repeat Previous Screenshot item")
+            assert(titles.contains("Capture Fullscreen"), "Menu must contain Capture Fullscreen item")
+            assert(titles.contains("OCR Recognition"), "Menu must contain OCR Recognition item")
+            assert(titles.contains("Scrolling Capture"), "Menu must contain Scrolling Capture item")
+            assert(titles.contains(where: { $0.contains("Recent Screenshots") }), "Menu must contain Recent Screenshots item")
+            assert(titles.contains("Screen Ruler"), "Menu must contain Screen Ruler item")
+            assert(titles.contains("Color Picker"), "Menu must contain Color Picker item")
             assert(titles.contains("Preferences & Hotkeys..."), "Menu must contain Preferences item")
-            assert(titles.contains("Open Screenshots Folder"), "Menu must contain Open Screenshots Folder item")
             assert(titles.contains("Quit Shots"), "Menu must contain Quit item")
 
-            // Struck items removed from dropdown and moved to preferences
+            // Verified items moved to preferences or removed from dropdown
+            assert(!titles.contains("Include Cursor"), "Include Cursor must be removed from dropdown and moved to preferences")
+            assert(!titles.contains("Launch at Login"), "Launch at Login must be removed from dropdown and moved to preferences")
+            assert(!titles.contains("Open Screenshots Folder"), "Open Screenshots Folder must be removed from dropdown")
             assert(!titles.contains("Reveal Latest Screenshot"), "Reveal Latest Screenshot must be removed from dropdown")
             assert(!titles.contains(where: { $0.contains("Impact") }), "Impact items must be removed from dropdown")
             assert(!titles.contains("Copy to Clipboard"), "Copy to Clipboard must be removed from dropdown")
@@ -541,6 +591,38 @@ public struct AppTests {
             assert(!titles.contains("Image Format"), "Image Format must be removed from dropdown")
             assert(!titles.contains("JPG Quality"), "JPG Quality must be removed from dropdown")
             assert(!titles.contains("Change Save Location..."), "Change Save Location must be removed from dropdown")
+
+            // Strict relative ordering verification
+            let captureRegionIdx = visibleItems.firstIndex(where: { $0.title == "Capture Region" })!
+            let repeatIdx = visibleItems.firstIndex(where: { $0.title == "Repeat Previous Screenshot" })!
+            let fsIdx = visibleItems.firstIndex(where: { $0.title == "Capture Fullscreen" })!
+            let ocrIdx = visibleItems.firstIndex(where: { $0.title == "OCR Recognition" })!
+            let scrollIdx = visibleItems.firstIndex(where: { $0.title == "Scrolling Capture" })!
+            let recentsIdx = visibleItems.firstIndex(where: { $0.title.contains("Recent Screenshots") })!
+            let rulerIdx = visibleItems.firstIndex(where: { $0.title == "Screen Ruler" })!
+            let pickerIdx = visibleItems.firstIndex(where: { $0.title == "Color Picker" })!
+            let prefsIdx = visibleItems.firstIndex(where: { $0.title == "Preferences & Hotkeys..." })!
+            let quitIdx = visibleItems.firstIndex(where: { $0.title == "Quit Shots" })!
+
+            assert(captureRegionIdx < repeatIdx, "Capture Region must precede Repeat Previous Screenshot")
+            assert(repeatIdx < fsIdx, "Repeat Previous Screenshot must precede Capture Fullscreen")
+            assert(fsIdx < ocrIdx, "Capture Fullscreen must precede OCR Recognition")
+            assert(ocrIdx < scrollIdx, "OCR Recognition must precede Scrolling Capture")
+            assert(scrollIdx < recentsIdx, "Scrolling Capture must precede Recent Screenshots")
+            assert(recentsIdx < rulerIdx, "Recent Screenshots must precede Screen Ruler")
+            assert(rulerIdx < pickerIdx, "Screen Ruler must precede Color Picker")
+            assert(pickerIdx < prefsIdx, "Color Picker must precede Preferences")
+            assert(prefsIdx < quitIdx, "Preferences must precede Quit Shots")
+
+            // Verify Recent Screenshots click action targets openFolderAction
+            let recentsItem = visibleItems[recentsIdx]
+            assert(recentsItem.action == #selector(controller.openFolderAction), "Recent Screenshots action must be openFolderAction")
+
+            // Verify clean titles and right-aligned key equivalents
+            let regionItem = visibleItems[captureRegionIdx]
+            assert(regionItem.title == "Capture Region", "Title must not contain parenthesized shortcut")
+            assert(!regionItem.keyEquivalent.isEmpty, "keyEquivalent must be set for native right-aligned shortcut")
+            assert(regionItem.keyEquivalentModifierMask.contains([.command, .shift]), "keyEquivalentModifierMask must contain shift and command")
         }
 
         // MARK: - Global Keyboard Shortcuts Suite
@@ -1401,6 +1483,89 @@ public struct AppTests {
             assert(pickerItem != nil, "Color Picker menu item must exist")
             assert(pickerItem?.action == #selector(controller.colorPickerAction), "Color Picker action must match colorPickerAction")
             assert(pickerItem?.image != nil, "Color Picker item must have an icon")
+        }
+
+        // MARK: - System Permissions Enforcement Suite
+        testRunner("System Permissions - Screen Recording & Accessibility Enforcement") {
+            let perm = PermissionsManager.shared
+            perm.showAlerts = false
+            defer {
+                perm.resetTestingState()
+            }
+
+            // 1. Both permissions missing: tools must be blocked
+            perm.screenRecordingOverride = false
+            perm.accessibilityOverride = false
+            assert(!perm.isScreenRecordingGranted, "Screen Recording must report not granted")
+            assert(!perm.isAccessibilityGranted, "Accessibility must report not granted")
+            assert(!perm.hasRequiredPermissions, "hasRequiredPermissions must be false when both are missing")
+            assert(perm.missingPermissions.count == 2, "Both permissions must be reported missing")
+            assert(perm.missingPermissionsDescription == "Screen Recording and Accessibility", "Description must list both")
+
+            assert(!perm.ensurePermissions(for: "Area Screenshot"), "ensurePermissions must return false")
+            assert(perm.lastPromptedTool == "Area Screenshot", "lastPromptedTool must record tool name")
+            assert(perm.promptCallCount >= 1, "promptCallCount must increment")
+
+            // Verify tools are blocked from executing
+            let prevCapture = CaptureManager.shared.lastCapture
+            CaptureManager.shared.startRegionCapture()
+            assert(!RegionSelectionCoordinator.shared.isSelecting, "startRegionCapture must not start selection when permissions missing")
+
+            var rulerFinished = false
+            CaptureManager.shared.startRuler { result in
+                assert(result == nil, "Blocked ruler must complete with nil")
+                rulerFinished = true
+            }
+            assert(rulerFinished, "startRuler callback must fire with nil immediately")
+
+            var pickerFinished = false
+            CaptureManager.shared.startColorPicker { result in
+                assert(result == nil, "Blocked color picker must complete with nil")
+                pickerFinished = true
+            }
+            assert(pickerFinished, "startColorPicker callback must fire with nil immediately")
+
+            CaptureManager.shared.captureFullscreen()
+            assert(CaptureManager.shared.lastCapture == prevCapture, "captureFullscreen must not record new capture when permissions missing")
+
+            var scrollFinished = false
+            CaptureManager.shared.startScrollingCapture { result in
+                assert(result == nil, "Blocked scrolling capture must complete with nil")
+                scrollFinished = true
+            }
+            assert(scrollFinished, "startScrollingCapture callback must fire with nil immediately")
+
+            // 2. Only Screen Recording missing: tools must still be blocked
+            perm.screenRecordingOverride = false
+            perm.accessibilityOverride = true
+            assert(!perm.hasRequiredPermissions, "hasRequiredPermissions must be false when Screen Recording is missing")
+            assert(perm.missingPermissionsDescription == "Screen Recording", "Description must state Screen Recording")
+            assert(!perm.ensurePermissions(for: "Screen Ruler"), "ensurePermissions must return false when Screen Recording is missing")
+
+            // 3. Only Accessibility missing: tools must still be blocked
+            perm.screenRecordingOverride = true
+            perm.accessibilityOverride = false
+            assert(!perm.hasRequiredPermissions, "hasRequiredPermissions must be false when Accessibility is missing")
+            assert(perm.missingPermissionsDescription == "Accessibility", "Description must state Accessibility")
+            assert(!perm.ensurePermissions(for: "Color Picker"), "ensurePermissions must return false when Accessibility is missing")
+
+            // 4. Menu bar item reflects missing permission state
+            let controller = StatusBarController()
+            let menu = controller.currentMenu
+            controller.menuWillOpen(menu)
+            let warningItem = menu.items.first(where: { $0.title.contains("Permissions Required") })
+            assert(warningItem != nil, "Permissions warning menu item must exist in menu")
+            assert(warningItem?.isHidden == false, "Warning item must be visible when permissions are missing")
+
+            // 5. Both permissions granted: tools are allowed
+            perm.screenRecordingOverride = true
+            perm.accessibilityOverride = true
+            assert(perm.hasRequiredPermissions, "hasRequiredPermissions must be true when both are granted")
+            assert(perm.missingPermissions.isEmpty, "missingPermissions must be empty when both granted")
+            assert(perm.ensurePermissions(for: "Area Screenshot"), "ensurePermissions must return true when both are granted")
+
+            controller.menuWillOpen(menu)
+            assert(warningItem?.isHidden == true, "Warning item must be hidden when both permissions are granted")
         }
     }
 }

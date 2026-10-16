@@ -174,4 +174,88 @@ public enum KeyCodes {
             return "Key(\(keyCode))"
         }
     }
+
+    // MARK: - Menu Key Equivalents
+
+    public static func keyEquivalent(for keyCode: UInt16) -> String {
+        switch Int(keyCode) {
+        // ANSI Letters (lowercase for NSMenuItem keyEquivalent)
+        case kVK_ANSI_A: return "a"
+        case kVK_ANSI_B: return "b"
+        case kVK_ANSI_C: return "c"
+        case kVK_ANSI_D: return "d"
+        case kVK_ANSI_E: return "e"
+        case kVK_ANSI_F: return "f"
+        case kVK_ANSI_G: return "g"
+        case kVK_ANSI_H: return "h"
+        case kVK_ANSI_I: return "i"
+        case kVK_ANSI_J: return "j"
+        case kVK_ANSI_K: return "k"
+        case kVK_ANSI_L: return "l"
+        case kVK_ANSI_M: return "m"
+        case kVK_ANSI_N: return "n"
+        case kVK_ANSI_O: return "o"
+        case kVK_ANSI_P: return "p"
+        case kVK_ANSI_Q: return "q"
+        case kVK_ANSI_R: return "r"
+        case kVK_ANSI_S: return "s"
+        case kVK_ANSI_T: return "t"
+        case kVK_ANSI_U: return "u"
+        case kVK_ANSI_V: return "v"
+        case kVK_ANSI_W: return "w"
+        case kVK_ANSI_X: return "x"
+        case kVK_ANSI_Y: return "y"
+        case kVK_ANSI_Z: return "z"
+
+        // ANSI Numbers
+        case kVK_ANSI_0: return "0"
+        case kVK_ANSI_1: return "1"
+        case kVK_ANSI_2: return "2"
+        case kVK_ANSI_3: return "3"
+        case kVK_ANSI_4: return "4"
+        case kVK_ANSI_5: return "5"
+        case kVK_ANSI_6: return "6"
+        case kVK_ANSI_7: return "7"
+        case kVK_ANSI_8: return "8"
+        case kVK_ANSI_9: return "9"
+
+        // Symbols
+        case kVK_ANSI_Equal: return "="
+        case kVK_ANSI_Minus: return "-"
+        case kVK_ANSI_RightBracket: return "]"
+        case kVK_ANSI_LeftBracket: return "["
+        case kVK_ANSI_Quote: return "'"
+        case kVK_ANSI_Semicolon: return ";"
+        case kVK_ANSI_Backslash: return "\\"
+        case kVK_ANSI_Comma: return ","
+        case kVK_ANSI_Slash: return "/"
+        case kVK_ANSI_Period: return "."
+        case kVK_ANSI_Grave: return "`"
+
+        // Control / Navigation
+        case kVK_Return: return "\r"
+        case kVK_Tab: return "\t"
+        case kVK_Space: return " "
+        case kVK_Delete: return String(utf16CodeUnits: [UInt16(NSBackspaceCharacter)], count: 1)
+        case kVK_ForwardDelete: return String(utf16CodeUnits: [UInt16(NSDeleteCharacter)], count: 1)
+        case kVK_Escape: return String(utf16CodeUnits: [0x1b], count: 1)
+
+        // Function keys F1...F12
+        case kVK_F1: return String(utf16CodeUnits: [UInt16(NSF1FunctionKey)], count: 1)
+        case kVK_F2: return String(utf16CodeUnits: [UInt16(NSF2FunctionKey)], count: 1)
+        case kVK_F3: return String(utf16CodeUnits: [UInt16(NSF3FunctionKey)], count: 1)
+        case kVK_F4: return String(utf16CodeUnits: [UInt16(NSF4FunctionKey)], count: 1)
+        case kVK_F5: return String(utf16CodeUnits: [UInt16(NSF5FunctionKey)], count: 1)
+        case kVK_F6: return String(utf16CodeUnits: [UInt16(NSF6FunctionKey)], count: 1)
+        case kVK_F7: return String(utf16CodeUnits: [UInt16(NSF7FunctionKey)], count: 1)
+        case kVK_F8: return String(utf16CodeUnits: [UInt16(NSF8FunctionKey)], count: 1)
+        case kVK_F9: return String(utf16CodeUnits: [UInt16(NSF9FunctionKey)], count: 1)
+        case kVK_F10: return String(utf16CodeUnits: [UInt16(NSF10FunctionKey)], count: 1)
+        case kVK_F11: return String(utf16CodeUnits: [UInt16(NSF11FunctionKey)], count: 1)
+        case kVK_F12: return String(utf16CodeUnits: [UInt16(NSF12FunctionKey)], count: 1)
+
+        default:
+            return ""
+        }
+    }
 }

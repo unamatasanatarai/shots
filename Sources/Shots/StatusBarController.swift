@@ -4,16 +4,18 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var menu: NSMenu!
 
+    private var permissionWarningMenuItem: NSMenuItem!
     private var captureRegionMenuItem: NSMenuItem!
-    private var captureFullscreenMenuItem: NSMenuItem!
-    private var scrollingCaptureMenuItem: NSMenuItem!
     private var repeatScreenshotMenuItem: NSMenuItem!
+    private var captureFullscreenMenuItem: NSMenuItem!
     private var ocrRecognitionMenuItem: NSMenuItem!
+    private var scrollingCaptureMenuItem: NSMenuItem!
+    private var recentScreenshotsMenuItem: NSMenuItem!
     private var screenRulerMenuItem: NSMenuItem!
     private var colorPickerMenuItem: NSMenuItem!
-    private var recentScreenshotsMenuItem: NSMenuItem!
-    private var includeCursorMenuItem: NSMenuItem!
-    private var launchAtLoginMenuItem: NSMenuItem!
+
+    private var isRecentScreenshotsHighlighted = false
+    private var menuEventMonitor: Any?
 
     public override init() {
         super.init()
@@ -26,6 +28,10 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             name: AppSettings.hotkeyDidChangeNotification,
             object: nil
         )
+    }
+
+    deinit {
+        removeMenuEventMonitor()
     }
 
     public var currentMenu: NSMenu {
@@ -74,10 +80,23 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         menu = NSMenu()
         menu.delegate = self
 
+        // 0. Permission Warning Banner (hidden when both permissions are granted)
+        permissionWarningMenuItem = NSMenuItem(
+            title: "⚠️ Permissions Required",
+            action: #selector(openPermissionsAction),
+            keyEquivalent: ""
+        )
+        permissionWarningMenuItem.target = self
+        permissionWarningMenuItem.isHidden = true
+        if let icon = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil) {
+            icon.isTemplate = true
+            permissionWarningMenuItem.image = icon
+        }
+        menu.addItem(permissionWarningMenuItem)
+
         // 1. Capture Region
-        let shortcut = AppSettings.shared.hotkeyDisplayString
         captureRegionMenuItem = NSMenuItem(
-            title: "Capture Region (\(shortcut))",
+            title: "Capture Region",
             action: #selector(captureRegionAction),
             keyEquivalent: ""
         )
@@ -88,7 +107,20 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(captureRegionMenuItem)
 
-        // 2. Capture Fullscreen
+        // 2. Repeat Previous Screenshot
+        repeatScreenshotMenuItem = NSMenuItem(
+            title: "Repeat Previous Screenshot",
+            action: #selector(repeatScreenshotAction),
+            keyEquivalent: ""
+        )
+        repeatScreenshotMenuItem.target = self
+        if let repeatIcon = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: nil) {
+            repeatIcon.isTemplate = true
+            repeatScreenshotMenuItem.image = repeatIcon
+        }
+        menu.addItem(repeatScreenshotMenuItem)
+
+        // 3. Capture Fullscreen
         captureFullscreenMenuItem = NSMenuItem(
             title: "Capture Fullscreen",
             action: #selector(captureFullscreenAction),
@@ -101,7 +133,20 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(captureFullscreenMenuItem)
 
-        // 3. Scrolling Capture
+        // 4. OCR Recognition
+        ocrRecognitionMenuItem = NSMenuItem(
+            title: "OCR Recognition",
+            action: #selector(ocrRecognitionAction),
+            keyEquivalent: ""
+        )
+        ocrRecognitionMenuItem.target = self
+        if let textIcon = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil) {
+            textIcon.isTemplate = true
+            ocrRecognitionMenuItem.image = textIcon
+        }
+        menu.addItem(ocrRecognitionMenuItem)
+
+        // 5. Scrolling Capture
         scrollingCaptureMenuItem = NSMenuItem(
             title: "Scrolling Capture",
             action: #selector(scrollingCaptureAction),
@@ -114,35 +159,24 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(scrollingCaptureMenuItem)
 
-        // 4. Repeat Previous Screenshot
-        let repeatShortcut = AppSettings.shared.repeatShortcutDisplayString
-        repeatScreenshotMenuItem = NSMenuItem(
-            title: "Repeat Previous Screenshot (\(repeatShortcut))",
-            action: #selector(repeatScreenshotAction),
+        // 6. Recent Screenshots (Clicking opens folder; hovering reveals recent items submenu)
+        recentScreenshotsMenuItem = NSMenuItem(
+            title: "Recent Screenshots",
+            action: #selector(openFolderAction),
             keyEquivalent: ""
         )
-        repeatScreenshotMenuItem.target = self
-        if let repeatIcon = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: nil) {
-            repeatIcon.isTemplate = true
-            repeatScreenshotMenuItem.image = repeatIcon
+        recentScreenshotsMenuItem.target = self
+        if let clockIcon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil) {
+            clockIcon.isTemplate = true
+            recentScreenshotsMenuItem.image = clockIcon
         }
-        menu.addItem(repeatScreenshotMenuItem)
+        let recentMenu = NSMenu()
+        recentScreenshotsMenuItem.submenu = recentMenu
+        menu.addItem(recentScreenshotsMenuItem)
 
-        // 4. OCR Recognition
-        let ocrShortcut = AppSettings.shared.ocrShortcutDisplayString
-        ocrRecognitionMenuItem = NSMenuItem(
-            title: "OCR Recognition (\(ocrShortcut))",
-            action: #selector(ocrRecognitionAction),
-            keyEquivalent: ""
-        )
-        ocrRecognitionMenuItem.target = self
-        if let textIcon = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil) {
-            textIcon.isTemplate = true
-            ocrRecognitionMenuItem.image = textIcon
-        }
-        menu.addItem(ocrRecognitionMenuItem)
+        menu.addItem(NSMenuItem.separator())
 
-        // Screen Ruler
+        // 7. Screen Ruler
         screenRulerMenuItem = NSMenuItem(
             title: "Screen Ruler",
             action: #selector(screenRulerAction),
@@ -155,7 +189,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(screenRulerMenuItem)
 
-        // Color Picker
+        // 8. Color Picker
         colorPickerMenuItem = NSMenuItem(
             title: "Color Picker",
             action: #selector(colorPickerAction),
@@ -167,126 +201,128 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
             colorPickerMenuItem.image = pickerIcon
         }
         menu.addItem(colorPickerMenuItem)
-        // 5. Recent Screenshots
-        recentScreenshotsMenuItem = NSMenuItem(
-            title: "Recent Screenshots",
-            action: nil,
-            keyEquivalent: ""
-        )
-        if let clockIcon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil) {
-            clockIcon.isTemplate = true
-            recentScreenshotsMenuItem.image = clockIcon
-        }
-        let recentMenu = NSMenu()
-        recentScreenshotsMenuItem.submenu = recentMenu
-        menu.addItem(recentScreenshotsMenuItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        // Quick Toggles: Include Cursor & Launch at Login
-        includeCursorMenuItem = NSMenuItem(
-            title: "Include Cursor",
-            action: #selector(toggleIncludeCursor),
-            keyEquivalent: ""
-        )
-        includeCursorMenuItem.target = self
-        if let cursorIcon = NSImage(systemSymbolName: "cursorarrow", accessibilityDescription: nil) {
-            cursorIcon.isTemplate = true
-            includeCursorMenuItem.image = cursorIcon
-        }
-        menu.addItem(includeCursorMenuItem)
-
-        launchAtLoginMenuItem = NSMenuItem(
-            title: "Launch at Login",
-            action: #selector(toggleLaunchAtLogin),
-            keyEquivalent: ""
-        )
-        launchAtLoginMenuItem.target = self
-        if let loopIcon = NSImage(systemSymbolName: "arrow.triangle.2.circlepath.circle", accessibilityDescription: nil) {
-            loopIcon.isTemplate = true
-            launchAtLoginMenuItem.image = loopIcon
-        }
-        menu.addItem(launchAtLoginMenuItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Preferences & Screenshots Folder
+        // 9. Preferences
         let prefsItem = NSMenuItem(
             title: "Preferences & Hotkeys...",
             action: #selector(openPreferencesAction),
             keyEquivalent: ","
         )
+        prefsItem.keyEquivalentModifierMask = [.command]
         prefsItem.target = self
         if let gearIcon = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil) {
             gearIcon.isTemplate = true
             prefsItem.image = gearIcon
         }
         menu.addItem(prefsItem)
-
-        let folderItem = NSMenuItem(
-            title: "Open Screenshots Folder",
-            action: #selector(openFolderAction),
-            keyEquivalent: "o"
-        )
-        folderItem.target = self
-        if let folderIcon = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
-            folderIcon.isTemplate = true
-            folderItem.image = folderIcon
-        }
-        menu.addItem(folderItem)
-
         menu.addItem(NSMenuItem.separator())
 
-        // Quit Shots
+        // 10. Quit Shots
         let quitItem = NSMenuItem(
             title: "Quit Shots",
             action: #selector(quitAction),
             keyEquivalent: "q"
         )
+        quitItem.keyEquivalentModifierMask = [.command]
         quitItem.target = self
         menu.addItem(quitItem)
 
         statusItem.menu = menu
         updateMenuItemsState()
+        updateRecentScreenshotsMenu()
+    }
+
+    // MARK: - Menu Delegate & Hover Tracking
+
+    public func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        if menu === self.menu {
+            isRecentScreenshotsHighlighted = (item === recentScreenshotsMenuItem)
+        }
     }
 
     public func menuWillOpen(_ menu: NSMenu) {
-        updateMenuItemsState()
+        if menu === self.menu {
+            isRecentScreenshotsHighlighted = false
+            installMenuEventMonitor()
+            updateMenuItemsState()
+            updateRecentScreenshotsMenu()
+        }
+    }
+
+    public func menuDidClose(_ menu: NSMenu) {
+        if menu === self.menu {
+            removeMenuEventMonitor()
+            isRecentScreenshotsHighlighted = false
+        }
+    }
+
+    private func installMenuEventMonitor() {
+        removeMenuEventMonitor()
+        menuEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+            guard let self = self else { return event }
+            if self.isRecentScreenshotsHighlighted {
+                self.isRecentScreenshotsHighlighted = false
+                self.menu.cancelTracking()
+                DispatchQueue.main.async {
+                    self.openFolderAction()
+                }
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeMenuEventMonitor() {
+        if let monitor = menuEventMonitor {
+            NSEvent.removeMonitor(monitor)
+            menuEventMonitor = nil
+        }
     }
 
     private func updateMenuItemsState() {
         let settings = AppSettings.shared
-        let areaShortcut = settings.areaShortcutDisplayString
-        let fsShortcut = settings.fullscreenShortcutDisplayString
-        let repShortcut = settings.repeatShortcutDisplayString
-        let ocrShortcut = settings.ocrShortcutDisplayString
-        let scrollShortcut = settings.scrollingShortcutDisplayString
-        let rulerShortcut = settings.rulerShortcutDisplayString
-        let colorPickerShortcut = settings.colorPickerShortcutDisplayString
-
         let showShortcuts = settings.globalHotkeysEnabled
-        let formatTitle: (String, String) -> String = { base, shortcut in
-            (showShortcuts && shortcut != "None") ? "\(base) (\(shortcut))" : base
+
+        func applyShortcut(to item: NSMenuItem, title: String, keyCode: UInt16, carbonMods: UInt32) {
+            item.title = title
+            if showShortcuts && KeyCodes.isShortcutAssigned(keyCode: keyCode, carbonMods: carbonMods) {
+                item.keyEquivalent = KeyCodes.keyEquivalent(for: keyCode)
+                item.keyEquivalentModifierMask = KeyCodes.cocoaModifiers(from: carbonMods)
+            } else {
+                item.keyEquivalent = ""
+                item.keyEquivalentModifierMask = []
+            }
         }
 
-        captureRegionMenuItem.title = formatTitle("Capture Region", areaShortcut)
-        captureFullscreenMenuItem.title = formatTitle("Capture Fullscreen", fsShortcut)
-        scrollingCaptureMenuItem.title = formatTitle("Scrolling Capture", scrollShortcut)
-        repeatScreenshotMenuItem.title = formatTitle("Repeat Previous Screenshot", repShortcut)
-        ocrRecognitionMenuItem.title = formatTitle("OCR Recognition", ocrShortcut)
-        screenRulerMenuItem.title = formatTitle("Screen Ruler", rulerShortcut)
-        colorPickerMenuItem.title = formatTitle("Color Picker", colorPickerShortcut)
+        applyShortcut(to: captureRegionMenuItem, title: "Capture Region", keyCode: settings.areaShortcutKeyCode, carbonMods: settings.areaShortcutModifiers)
+        applyShortcut(to: repeatScreenshotMenuItem, title: "Repeat Previous Screenshot", keyCode: settings.repeatShortcutKeyCode, carbonMods: settings.repeatShortcutModifiers)
         repeatScreenshotMenuItem.isEnabled = (CaptureManager.shared.lastCapture != nil)
-        if let button = statusItem.button {
-            button.toolTip = (showShortcuts && areaShortcut != "None")
-                ? "Shots — Click for options or press \(areaShortcut)"
-                : "Shots — Click for options"
+
+        applyShortcut(to: captureFullscreenMenuItem, title: "Capture Fullscreen", keyCode: settings.fullscreenShortcutKeyCode, carbonMods: settings.fullscreenShortcutModifiers)
+        applyShortcut(to: ocrRecognitionMenuItem, title: "OCR Recognition", keyCode: settings.ocrShortcutKeyCode, carbonMods: settings.ocrShortcutModifiers)
+        applyShortcut(to: scrollingCaptureMenuItem, title: "Scrolling Capture", keyCode: settings.scrollingShortcutKeyCode, carbonMods: settings.scrollingShortcutModifiers)
+        applyShortcut(to: screenRulerMenuItem, title: "Screen Ruler", keyCode: settings.rulerShortcutKeyCode, carbonMods: settings.rulerShortcutModifiers)
+        applyShortcut(to: colorPickerMenuItem, title: "Color Picker", keyCode: settings.colorPickerShortcutKeyCode, carbonMods: settings.colorPickerShortcutModifiers)
+
+        let hasPermissions = PermissionsManager.shared.hasRequiredPermissions
+        permissionWarningMenuItem.isHidden = hasPermissions
+        if !hasPermissions {
+            let missing = PermissionsManager.shared.missingPermissionsDescription
+            permissionWarningMenuItem.title = "⚠️ Permissions Required (\(missing))"
         }
 
-        includeCursorMenuItem.state = settings.includeCursor ? .on : .off
-        launchAtLoginMenuItem.state = settings.launchAtLogin ? .on : .off
-
-        updateRecentScreenshotsMenu()
+        if let button = statusItem.button {
+            if !hasPermissions {
+                button.toolTip = "Shots — Permissions Required (Screen Recording & Accessibility)"
+            } else {
+                let areaShortcut = settings.areaShortcutDisplayString
+                button.toolTip = (showShortcuts && areaShortcut != "None")
+                    ? "Shots — Click for options or press \(areaShortcut)"
+                    : "Shots — Click for options"
+            }
+        }
     }
 
     private func updateRecentScreenshotsMenu() {
@@ -403,111 +439,69 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         ImpactLauncher.shared.openImageFile(url: fileURL)
     }
 
+    @objc private func openPermissionsAction() {
+        removeMenuEventMonitor()
+        PermissionsManager.shared.openSystemSettingsForMissingPermissions()
+        PreferencesWindowController.shared.showWindow()
+    }
+
     @objc private func captureRegionAction() {
-        // Slight delay to allow menu window to completely dismiss from screen
+        guard PermissionsManager.shared.ensurePermissions(for: "Capture Region") else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.startRegionCapture()
         }
     }
 
-    @objc private func captureFullscreenAction() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            CaptureManager.shared.captureFullscreen()
-        }
-    }
-
-    @objc public func scrollingCaptureAction() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            CaptureManager.shared.startScrollingCapture()
-        }
-    }
-
     @objc private func repeatScreenshotAction() {
+        guard PermissionsManager.shared.ensurePermissions(for: "Repeat Screenshot") else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.repeatPreviousScreenshot()
         }
     }
 
+    @objc private func captureFullscreenAction() {
+        guard PermissionsManager.shared.ensurePermissions(for: "Capture Fullscreen") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            CaptureManager.shared.captureFullscreen()
+        }
+    }
+
     @objc public func ocrRecognitionAction() {
+        guard PermissionsManager.shared.ensurePermissions(for: "OCR Recognition") else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.startOCRRecognition()
         }
     }
 
+    @objc public func scrollingCaptureAction() {
+        guard PermissionsManager.shared.ensurePermissions(for: "Scrolling Capture") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            CaptureManager.shared.startScrollingCapture()
+        }
+    }
+
     @objc public func screenRulerAction() {
+        guard PermissionsManager.shared.ensurePermissions(for: "Screen Ruler") else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.startRuler()
         }
     }
 
     @objc public func colorPickerAction() {
+        guard PermissionsManager.shared.ensurePermissions(for: "Color Picker") else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             CaptureManager.shared.startColorPicker()
         }
     }
 
-    @objc private func revealLatestScreenshotAction() {
-        _ = SaveService.shared.revealLatestScreenshot()
-    }
-
-
-
-    @objc private func toggleCopyToClipboard() {
-        AppSettings.shared.copyToClipboard.toggle()
-        updateMenuItemsState()
-    }
-
-    @objc private func toggleIncludeCursor() {
-        AppSettings.shared.includeCursor.toggle()
-        updateMenuItemsState()
-    }
-
-    @objc private func setDelayAction(_ sender: NSMenuItem) {
-        AppSettings.shared.captureDelaySeconds = sender.tag
-        updateMenuItemsState()
-    }
-
-    @objc private func setFormatAction(_ sender: NSMenuItem) {
-        if let format = sender.representedObject as? ImageFormat {
-            AppSettings.shared.imageFormat = format
-            updateMenuItemsState()
-        }
-    }
-
-    @objc private func setQualityAction(_ sender: NSMenuItem) {
-        AppSettings.shared.jpgQuality = sender.tag
-        updateMenuItemsState()
-    }
-
-
-
-    @objc private func toggleLaunchAtLogin() {
-        let current = AppSettings.shared.launchAtLogin
-        _ = LaunchAtLoginService.shared.setLaunchAtLogin(enabled: !current)
-        updateMenuItemsState()
-    }
-
     @objc private func openPreferencesAction() {
+        removeMenuEventMonitor()
         PreferencesWindowController.shared.showWindow()
     }
 
-    @objc private func openFolderAction() {
+    @objc public func openFolderAction() {
         let url = AppSettings.shared.resolvedSaveDirectoryURL
         NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    @objc private func changeFolderAction() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Choose"
-        panel.directoryURL = AppSettings.shared.resolvedSaveDirectoryURL
-
-        if panel.runModal() == .OK, let selectedURL = panel.url {
-            AppSettings.shared.saveDirectoryPath = selectedURL.path
-        }
     }
 
     @objc private func quitAction() {
