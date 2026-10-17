@@ -29,6 +29,7 @@ public struct SelectedRegionInfo: Equatable {
 
 public final class RegionSelectionCoordinator {
     public static let shared = RegionSelectionCoordinator()
+    private static let sRGBColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
     public private(set) var activeMode: CaptureOverlayMode = .area
     public private(set) var activeDelaySeconds: Int = 0
@@ -526,7 +527,9 @@ public final class RegionSelectionCoordinator {
     }
 
     public func extractColor(from image: CGImage, x: Int, y: Int) -> (hex: String, rgb: (r: Int, g: Int, b: Int))? {
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard x >= 0 && x < image.width && y >= 0 && y < image.height else { return nil }
+        guard let cropped = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)) else { return nil }
+
         var pixel: [UInt8] = [0, 0, 0, 0]
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
 
@@ -536,11 +539,11 @@ public final class RegionSelectionCoordinator {
             height: 1,
             bitsPerComponent: 8,
             bytesPerRow: 4,
-            space: colorSpace,
+            space: Self.sRGBColorSpace,
             bitmapInfo: bitmapInfo
         ) else { return nil }
 
-        context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: 1, height: 1))
 
         let r = Int(pixel[0])
         let g = Int(pixel[1])

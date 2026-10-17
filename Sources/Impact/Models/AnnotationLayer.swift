@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import os
 
 // MARK: - Layer Types
 
@@ -79,7 +80,7 @@ public final class FastColor {
 
     private var cgColorCache: [String: CGColor] = [:]
     private var nsColorCache: [String: NSColor] = [:]
-    private let lock = NSLock()
+    private var lock = os_unfair_lock()
 
     @inline(__always)
     private static func hexNibble(_ byte: UInt8) -> UInt32? {
@@ -117,39 +118,39 @@ public final class FastColor {
 
     public func cgColor(hex: String, alpha: CGFloat = 1.0) -> CGColor {
         let key = alpha == 1.0 ? hex : "\(hex)_\(alpha)"
-        lock.lock()
+        os_unfair_lock_lock(&lock)
         if let cached = cgColorCache[key] {
-            lock.unlock()
+            os_unfair_lock_unlock(&lock)
             return cached
         }
-        lock.unlock()
+        os_unfair_lock_unlock(&lock)
 
         let (r, g, b) = Self.parseRGB(from: hex)
         let color = CGColor(srgbRed: r, green: g, blue: b, alpha: alpha)
 
-        lock.lock()
+        os_unfair_lock_lock(&lock)
         if cgColorCache.count > 256 { cgColorCache.removeAll(keepingCapacity: true) }
         cgColorCache[key] = color
-        lock.unlock()
+        os_unfair_lock_unlock(&lock)
         return color
     }
 
     public func nsColor(hex: String, alpha: CGFloat = 1.0) -> NSColor {
         let key = alpha == 1.0 ? hex : "\(hex)_\(alpha)"
-        lock.lock()
+        os_unfair_lock_lock(&lock)
         if let cached = nsColorCache[key] {
-            lock.unlock()
+            os_unfair_lock_unlock(&lock)
             return cached
         }
-        lock.unlock()
+        os_unfair_lock_unlock(&lock)
 
         let (r, g, b) = Self.parseRGB(from: hex)
         let color = NSColor(srgbRed: r, green: g, blue: b, alpha: alpha)
 
-        lock.lock()
+        os_unfair_lock_lock(&lock)
         if nsColorCache.count > 256 { nsColorCache.removeAll(keepingCapacity: true) }
         nsColorCache[key] = color
-        lock.unlock()
+        os_unfair_lock_unlock(&lock)
         return color
     }
 }

@@ -236,26 +236,42 @@ public enum KeyCodes {
         case kVK_Return: return "\r"
         case kVK_Tab: return "\t"
         case kVK_Space: return " "
-        case kVK_Delete: return String(utf16CodeUnits: [UInt16(NSBackspaceCharacter)], count: 1)
-        case kVK_ForwardDelete: return String(utf16CodeUnits: [UInt16(NSDeleteCharacter)], count: 1)
-        case kVK_Escape: return String(utf16CodeUnits: [0x1b], count: 1)
+        case kVK_Delete: return deleteEquivalent
+        case kVK_ForwardDelete: return forwardDeleteEquivalent
+        case kVK_Escape: return escapeEquivalent
 
         // Function keys F1...F12
-        case kVK_F1: return String(utf16CodeUnits: [UInt16(NSF1FunctionKey)], count: 1)
-        case kVK_F2: return String(utf16CodeUnits: [UInt16(NSF2FunctionKey)], count: 1)
-        case kVK_F3: return String(utf16CodeUnits: [UInt16(NSF3FunctionKey)], count: 1)
-        case kVK_F4: return String(utf16CodeUnits: [UInt16(NSF4FunctionKey)], count: 1)
-        case kVK_F5: return String(utf16CodeUnits: [UInt16(NSF5FunctionKey)], count: 1)
-        case kVK_F6: return String(utf16CodeUnits: [UInt16(NSF6FunctionKey)], count: 1)
-        case kVK_F7: return String(utf16CodeUnits: [UInt16(NSF7FunctionKey)], count: 1)
-        case kVK_F8: return String(utf16CodeUnits: [UInt16(NSF8FunctionKey)], count: 1)
-        case kVK_F9: return String(utf16CodeUnits: [UInt16(NSF9FunctionKey)], count: 1)
-        case kVK_F10: return String(utf16CodeUnits: [UInt16(NSF10FunctionKey)], count: 1)
-        case kVK_F11: return String(utf16CodeUnits: [UInt16(NSF11FunctionKey)], count: 1)
-        case kVK_F12: return String(utf16CodeUnits: [UInt16(NSF12FunctionKey)], count: 1)
+        case kVK_F1: return f1Equivalent
+        case kVK_F2: return f2Equivalent
+        case kVK_F3: return f3Equivalent
+        case kVK_F4: return f4Equivalent
+        case kVK_F5: return f5Equivalent
+        case kVK_F6: return f6Equivalent
+        case kVK_F7: return f7Equivalent
+        case kVK_F8: return f8Equivalent
+        case kVK_F9: return f9Equivalent
+        case kVK_F10: return f10Equivalent
+        case kVK_F11: return f11Equivalent
+        case kVK_F12: return f12Equivalent
 
         default:
             return ""
         }
     }
+
+    private static let deleteEquivalent = String(utf16CodeUnits: [UInt16(NSBackspaceCharacter)], count: 1)
+    private static let forwardDeleteEquivalent = String(utf16CodeUnits: [UInt16(NSDeleteCharacter)], count: 1)
+    private static let escapeEquivalent = "\u{1b}"
+    private static let f1Equivalent = String(utf16CodeUnits: [UInt16(NSF1FunctionKey)], count: 1)
+    private static let f2Equivalent = String(utf16CodeUnits: [UInt16(NSF2FunctionKey)], count: 1)
+    private static let f3Equivalent = String(utf16CodeUnits: [UInt16(NSF3FunctionKey)], count: 1)
+    private static let f4Equivalent = String(utf16CodeUnits: [UInt16(NSF4FunctionKey)], count: 1)
+    private static let f5Equivalent = String(utf16CodeUnits: [UInt16(NSF5FunctionKey)], count: 1)
+    private static let f6Equivalent = String(utf16CodeUnits: [UInt16(NSF6FunctionKey)], count: 1)
+    private static let f7Equivalent = String(utf16CodeUnits: [UInt16(NSF7FunctionKey)], count: 1)
+    private static let f8Equivalent = String(utf16CodeUnits: [UInt16(NSF8FunctionKey)], count: 1)
+    private static let f9Equivalent = String(utf16CodeUnits: [UInt16(NSF9FunctionKey)], count: 1)
+    private static let f10Equivalent = String(utf16CodeUnits: [UInt16(NSF10FunctionKey)], count: 1)
+    private static let f11Equivalent = String(utf16CodeUnits: [UInt16(NSF11FunctionKey)], count: 1)
+    private static let f12Equivalent = String(utf16CodeUnits: [UInt16(NSF12FunctionKey)], count: 1)
 }

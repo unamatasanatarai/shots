@@ -24,6 +24,7 @@ public final class ScreenshotHistoryService {
     public static let shared = ScreenshotHistoryService()
 
     public static let defaultMaxRecentCount = 10
+    private static let validExtensions: Set<String> = ["png", "jpg", "jpeg"]
 
     private let lock = NSLock()
     private var _recentItems: [ScreenshotHistoryItem] = []
@@ -64,12 +65,11 @@ public final class ScreenshotHistoryService {
             return []
         }
 
-        let validExtensions = Set(["png", "jpg", "jpeg"])
         let fileMetadata: [(url: URL, modDate: Date)] = fileURLs.compactMap { url in
+            let filename = url.lastPathComponent
+            guard filename.hasPrefix("shot_") else { return nil }
             let ext = url.pathExtension.lowercased()
-            guard validExtensions.contains(ext) && url.lastPathComponent.hasPrefix("shot_") else {
-                return nil
-            }
+            guard Self.validExtensions.contains(ext) else { return nil }
             let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date.distantPast
             return (url, modDate)
         }

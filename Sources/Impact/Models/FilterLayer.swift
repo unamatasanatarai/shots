@@ -268,6 +268,7 @@ public final class FilterLayer: AnnotationLayer {
     private static var scratchSpotlightContext: CGContext?
     private static var scratchContextWidth: Int = 0
     private static var scratchContextHeight: Int = 0
+    private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
     private static let spotlightDarkMaskColor = CGColor(gray: 0.0, alpha: 0.50)
     private static let blurOutlineColor = CGColor(gray: 0.75, alpha: 0.35)
 
@@ -287,14 +288,13 @@ public final class FilterLayer: AnnotationLayer {
                 maskContext.setFillColor(Self.spotlightDarkMaskColor)
                 maskContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
             } else {
-                let colorSpace = CGColorSpaceCreateDeviceRGB()
                 guard let newCtx = CGContext(
                     data: nil,
                     width: width,
                     height: height,
                     bitsPerComponent: 8,
                     bytesPerRow: width * 4,
-                    space: colorSpace,
+                    space: Self.colorSpaceRGB,
                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
                 ) else { return }
                 Self.scratchSpotlightContext = newCtx
@@ -376,10 +376,9 @@ public final class FilterLayer: AnnotationLayer {
                 let factor = max(4.0, intensity)
                 let lowW = max(1, Int(intersect.width / factor))
                 let lowH = max(1, Int(intersect.height / factor))
-                let colorSpace = CGColorSpaceCreateDeviceRGB()
 
                 if let crop = originalImage.cropping(to: imageCropRect),
-                   let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                   let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: Self.colorSpaceRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
                     lowCtx.interpolationQuality = .none
                     lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
                     if let pixelatedImage = lowCtx.makeImage() {
@@ -417,11 +416,10 @@ public final class FilterLayer: AnnotationLayer {
 
                     if !rendered {
                         // High-speed downscale/upscale blur fallback
-                        let colorSpace = CGColorSpaceCreateDeviceRGB()
                         let factor: CGFloat = 8.0
                         let lowW = max(1, Int(intersect.width / factor))
                         let lowH = max(1, Int(intersect.height / factor))
-                        if let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                        if let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: Self.colorSpaceRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
                             lowCtx.interpolationQuality = .low
                             lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
                             if let lowImage = lowCtx.makeImage() {

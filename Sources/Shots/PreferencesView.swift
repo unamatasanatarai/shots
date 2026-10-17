@@ -315,7 +315,7 @@ public struct PreferencesView: View {
         NSCursor.arrow.set()
     }
 
-    public static func loadAppLogo() -> NSImage? {
+    private static let cachedAppLogo: NSImage? = {
         if let img = NSImage(named: "AppIcon"), img.isValid {
             return img
         }
@@ -332,6 +332,10 @@ public struct PreferencesView: View {
             return img
         }
         return nil
+    }()
+
+    public static func loadAppLogo() -> NSImage? {
+        return cachedAppLogo
     }
 }
 

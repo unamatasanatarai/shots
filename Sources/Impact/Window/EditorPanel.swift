@@ -145,13 +145,15 @@ public final class EditorPanel: NSPanel {
 
     public static var copyToClipboardOverride: Bool? = nil
 
+    private static let shotsDefaults = UserDefaults(suiteName: "com.local.Shots")
+    private static let numberedSuffixRegex = try? NSRegularExpression(pattern: #"^(.*?)-(\d+)$"#)
+
     public static var isCopyToClipboardEnabled: Bool {
         get {
             if let overrideVal = copyToClipboardOverride {
                 return overrideVal
             }
-            if let shotsDefaults = UserDefaults(suiteName: "com.local.Shots") {
-                shotsDefaults.synchronize()
+            if let shotsDefaults = shotsDefaults {
                 if let val = shotsDefaults.object(forKey: "copyToClipboard") as? Bool {
                     return val
                 }
@@ -203,8 +205,7 @@ public final class EditorPanel: NSPanel {
             ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
 
             // Check if fullFilename already ends with "-<digits>"
-            let pattern = #"^(.*?)-(\d+)$"#
-            if let regex = try? NSRegularExpression(pattern: pattern),
+            if let regex = EditorPanel.numberedSuffixRegex,
                let match = regex.firstMatch(in: fullFilename, range: NSRange(fullFilename.startIndex..., in: fullFilename)) {
                 let nameRange = Range(match.range(at: 1), in: fullFilename)!
                 baseName = String(fullFilename[nameRange])
@@ -217,8 +218,7 @@ public final class EditorPanel: NSPanel {
             let fullFilename = titleURL.deletingPathExtension().lastPathComponent
             ext = titleURL.pathExtension.isEmpty ? "png" : titleURL.pathExtension
             if !fullFilename.isEmpty && fullFilename != "Impact" && fullFilename != "Shots Editor" {
-                let pattern = #"^(.*?)-(\d+)$"#
-                if let regex = try? NSRegularExpression(pattern: pattern),
+                if let regex = EditorPanel.numberedSuffixRegex,
                    let match = regex.firstMatch(in: fullFilename, range: NSRange(fullFilename.startIndex..., in: fullFilename)) {
                     let nameRange = Range(match.range(at: 1), in: fullFilename)!
                     baseName = String(fullFilename[nameRange])
@@ -338,7 +338,7 @@ public final class EditorPanel: NSPanel {
         ])
     }
 
-    public func updateVersionTitle() {
+    public static let defaultVersionTitle: String = {
         let versionStr = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         let buildStr: String = {
             if let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String, !b.isEmpty {
@@ -356,8 +356,11 @@ public final class EditorPanel: NSPanel {
             }
             return "1"
         }()
+        return "Impact v\(versionStr) (Build \(buildStr))"
+    }()
 
-        self.title = "Impact v\(versionStr) (Build \(buildStr))"
+    public func updateVersionTitle() {
+        self.title = EditorPanel.defaultVersionTitle
     }
 
     /// Loads an image directly into the main window, transitioning from empty state

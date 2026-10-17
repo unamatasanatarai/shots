@@ -3,6 +3,7 @@ import CoreGraphics
 
 public final class CaptureService {
     public static let shared = CaptureService()
+    private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
 
     public init() {}
 
@@ -133,7 +134,6 @@ public final class CaptureService {
 
         let width = baseImage.width
         let height = baseImage.height
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
 
         guard let context = CGContext(
@@ -142,7 +142,7 @@ public final class CaptureService {
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: width * 4,
-            space: colorSpace,
+            space: CaptureService.colorSpaceRGB,
             bitmapInfo: bitmapInfo.rawValue
         ) else {
             return baseImage

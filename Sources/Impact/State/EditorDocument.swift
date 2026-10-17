@@ -83,6 +83,8 @@ public final class EditorDocument {
         self.activeCanvasBounds = self.originalImageBounds
     }
 
+    private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
+
     /// Creates a minimal 1x1 placeholder document when EditorPanel opens without an image
     public static func makePlaceholder() -> EditorDocument {
         let context = CGContext(
@@ -91,7 +93,7 @@ public final class EditorDocument {
             height: 1,
             bitsPerComponent: 8,
             bytesPerRow: 4,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: colorSpaceRGB,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
         return EditorDocument(image: context.makeImage()!)
@@ -249,14 +251,13 @@ public final class EditorDocument {
         let height = Int(ceil(activeCanvasBounds.height))
         guard width > 0 && height > 0 else { return nil }
 
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil,
             width: width,
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: width * 4,
-            space: colorSpace,
+            space: Self.colorSpaceRGB,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { return nil }
 

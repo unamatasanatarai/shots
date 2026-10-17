@@ -3,6 +3,7 @@ import CoreGraphics
 
 public final class ScrollingCaptureService {
     public static let shared = ScrollingCaptureService()
+    private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
 
     /// The maximum allowed output height for scrolling captures (enforced at 20,000 px).
     public static let maxAllowedHeight: Int = 20_000
@@ -53,28 +54,26 @@ public final class ScrollingCaptureService {
 
         func calcDiff(forShift s: Int) -> Double {
             let overlapHeight = height - s
-            var totalDiff = 0.0
+            var totalDiff: Int64 = 0
             var sampleCount = 0
             let rowStep = max(1, overlapHeight / 30)
 
             for y in stride(from: 0, to: overlapHeight, by: rowStep) {
-                let row1 = y + s
-                let row2 = y
-                let rowIdx1 = row1 * bpr1
-                let rowIdx2 = row2 * bpr2
+                let rowIdx1 = (y + s) * bpr1
+                let rowIdx2 = y * bpr2
 
                 for x in stride(from: colStart, to: colEnd, by: colStep) {
                     let idx1 = rowIdx1 + x * 4
                     let idx2 = rowIdx2 + x * 4
                     guard idx1 + 2 < len1 && idx2 + 2 < len2 else { continue }
-                    let diff = abs(Double(ptr1[idx1]) - Double(ptr2[idx2])) +
-                               abs(Double(ptr1[idx1 + 1]) - Double(ptr2[idx2 + 1])) +
-                               abs(Double(ptr1[idx1 + 2]) - Double(ptr2[idx2 + 2]))
-                    totalDiff += diff
+                    let d0 = abs(Int32(ptr1[idx1]) - Int32(ptr2[idx2]))
+                    let d1 = abs(Int32(ptr1[idx1 + 1]) - Int32(ptr2[idx2 + 1]))
+                    let d2 = abs(Int32(ptr1[idx1 + 2]) - Int32(ptr2[idx2 + 2]))
+                    totalDiff += Int64(d0 + d1 + d2)
                     sampleCount += 1
                 }
             }
-            return sampleCount > 0 ? (totalDiff / Double(sampleCount)) : Double.greatestFiniteMagnitude
+            return sampleCount > 0 ? (Double(totalDiff) / Double(sampleCount)) : Double.greatestFiniteMagnitude
         }
 
         var bestShift = height
@@ -147,9 +146,11 @@ public final class ScrollingCaptureService {
         let sampleCols = stride(from: 0, to: width, by: max(1, width / 10))
         var samplesChecked = 0
         for y in sampleRows {
+            let r1 = y * bpr1
+            let r2 = y * bpr2
             for x in sampleCols {
-                let i1 = y * bpr1 + x * 4
-                let i2 = y * bpr2 + x * 4
+                let i1 = r1 + x * 4
+                let i2 = r2 + x * 4
                 guard i1 + 2 < len1 && i2 + 2 < len2 else { return false }
                 if ptr1[i1] != ptr2[i2] || ptr1[i1 + 1] != ptr2[i2 + 1] || ptr1[i1 + 2] != ptr2[i2 + 2] {
                     return false
@@ -212,7 +213,6 @@ public final class ScrollingCaptureService {
         guard finalHeight > 0 else { return firstFrame }
 
         // Create unified CGContext
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
         guard let ctx = CGContext(
             data: nil,
@@ -220,7 +220,7 @@ public final class ScrollingCaptureService {
             height: finalHeight,
             bitsPerComponent: 8,
             bytesPerRow: width * 4,
-            space: colorSpace,
+            space: Self.colorSpaceRGB,
             bitmapInfo: bitmapInfo
         ) else {
             return clampImageHeight(firstFrame, maxHeight: maxHeight)

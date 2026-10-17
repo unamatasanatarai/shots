@@ -83,12 +83,23 @@ public final class SaveService {
 
     // MARK: - Filename Generation & Collision Handling
 
+    private static let formatterLock = NSLock()
+    private static let timestampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd_HHmmss"
+        return f
+    }()
+
+    public static func formattedTimestamp(date: Date = Date()) -> String {
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
+        return timestampFormatter.string(from: date)
+    }
+
     /// Generates timestamp filename: shot_YYYYMMDD_HHMMSS.{png|jpg}
     public static func generateFilename(date: Date = Date(), format: ImageFormat = .png) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd_HHmmss"
-        let dateString = formatter.string(from: date)
+        let dateString = formattedTimestamp(date: date)
         return "shot_\(dateString).\(format.fileExtension)"
     }
 
@@ -97,10 +108,7 @@ public final class SaveService {
         lock.lock()
         defer { lock.unlock() }
 
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd_HHmmss"
-        let dateString = formatter.string(from: date)
+        let dateString = Self.formattedTimestamp(date: date)
         let base = "shot_\(dateString)"
         let ext = format.fileExtension
 

@@ -92,7 +92,6 @@ public final class AppSettings: ObservableObject {
         public static let jpgQuality = "jpgQuality"
         public static let launchAtLogin = "launchAtLogin"
         public static let scrollingCaptureSpeed = "scrollingCaptureSpeed"
-        public static let freezeScreenOnCapture = "freezeScreenOnCapture"
     }
 
     private let defaults: UserDefaults
@@ -260,8 +259,11 @@ public final class AppSettings: ObservableObject {
         }
     }
 
+    private var _cachedSaveDirectoryURL: URL?
+
     @Published public var saveDirectoryPath: String {
         didSet {
+            _cachedSaveDirectoryURL = nil
             defaults.set(saveDirectoryPath, forKey: Keys.saveDirectoryPath)
         }
     }
@@ -269,7 +271,6 @@ public final class AppSettings: ObservableObject {
     @Published public var copyToClipboard: Bool {
         didSet {
             defaults.set(copyToClipboard, forKey: Keys.copyToClipboard)
-            defaults.synchronize()
             syncPostCaptureActionFromFlags()
         }
     }
@@ -281,7 +282,6 @@ public final class AppSettings: ObservableObject {
             isSyncingActionFlags = true
             postCaptureAction = newAction
             defaults.set(newAction.rawValue, forKey: Keys.postCaptureAction)
-            defaults.synchronize()
             isSyncingActionFlags = false
         }
     }
@@ -472,8 +472,6 @@ public final class AppSettings: ObservableObject {
             self.scrollingCaptureSpeed = .normal
         }
 
-        defaults.removeObject(forKey: Keys.freezeScreenOnCapture)
-
         // Ensure default directory is created immediately if missing
         _ = self.resolvedSaveDirectoryURL
     }
@@ -535,11 +533,15 @@ public final class AppSettings: ObservableObject {
     }
 
     public var resolvedSaveDirectoryURL: URL {
+        if let cached = _cachedSaveDirectoryURL {
+            return cached
+        }
         let path = (saveDirectoryPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path, isDirectory: true)
         if !FileManager.default.fileExists(atPath: url.path) {
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
         }
+        _cachedSaveDirectoryURL = url
         return url
     }
 

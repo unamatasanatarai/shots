@@ -127,7 +127,7 @@ public final class OCRNotificationController {
         return NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
     }
 
-    private func resolveAppLogo() -> NSImage? {
+    private static let cachedAppLogo: NSImage? = {
         if let appIcon = NSApp.applicationIconImage, appIcon.isValid {
             return appIcon
         }
@@ -139,6 +139,10 @@ public final class OCRNotificationController {
             return NSImage(contentsOf: url)
         }
         return nil
+    }()
+
+    private func resolveAppLogo() -> NSImage? {
+        return Self.cachedAppLogo
     }
 }
 

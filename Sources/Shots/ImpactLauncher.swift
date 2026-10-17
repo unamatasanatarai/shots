@@ -11,42 +11,43 @@ public final class ImpactLauncher {
 
     // MARK: - Open In Impact (Launches separate Impact.app)
 
+    private var cachedImpactAppURL: URL?
+
     private func findImpactAppURL() -> URL? {
+        if let cached = cachedImpactAppURL, FileManager.default.fileExists(atPath: cached.path) {
+            return cached
+        }
         let candidateName = "Impact.app"
         // 1. Check side-by-side in same directory as Shots.app (e.g. /Applications or build/)
         if let bundleURL = Bundle.main.bundleURL as URL? {
             let sibling = bundleURL.deletingLastPathComponent().appendingPathComponent(candidateName)
             if FileManager.default.fileExists(atPath: sibling.path) {
+                cachedImpactAppURL = sibling
                 return sibling
             }
         }
         // 2. Check build directory
         let buildPath = URL(fileURLWithPath: "build/\(candidateName)")
         if FileManager.default.fileExists(atPath: buildPath.path) {
+            cachedImpactAppURL = buildPath
             return buildPath
         }
         // 3. Check system Applications directory
         let appPath = URL(fileURLWithPath: "/Applications/\(candidateName)")
         if FileManager.default.fileExists(atPath: appPath.path) {
+            cachedImpactAppURL = appPath
             return appPath
         }
         return nil
     }
 
     public func openImpact(with image: CGImage, title: String = "Impact") {
-        // Save to temporary PNG file and launch Impact.app
+        // Save to temporary PNG file via fast hardware ImageIO and launch Impact.app
         let tempURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("capture_\(Int(Date().timeIntervalSince1970 * 1000)).png")
-        let rep = NSBitmapImageRep(cgImage: image)
-        if let data = rep.representation(using: .png, properties: [:]) {
-            try? data.write(to: tempURL)
-            if let impactURL = findImpactAppURL() {
-                let config = NSWorkspace.OpenConfiguration()
-                NSWorkspace.shared.open([tempURL], withApplicationAt: impactURL, configuration: config, completionHandler: nil)
-                return
-            }
+        if let data = SaveService.shared.encodePNG(image: image) {
+            try? data.write(to: tempURL, options: .atomic)
         }
 
-        // If Impact.app not found via standard locations, try opening with system
         if let impactURL = findImpactAppURL() {
             let config = NSWorkspace.OpenConfiguration()
             NSWorkspace.shared.open([tempURL], withApplicationAt: impactURL, configuration: config, completionHandler: nil)
@@ -68,28 +69,5 @@ public final class ImpactLauncher {
             return
         }
         openImpact(with: cgImage, title: url.lastPathComponent)
-    }
-
-    public func openImageFileDialog() {
-        if let impactURL = findImpactAppURL() {
-            let config = NSWorkspace.OpenConfiguration()
-            NSWorkspace.shared.openApplication(at: impactURL, configuration: config, completionHandler: nil)
-            return
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-
-            let openPanel = NSOpenPanel()
-            openPanel.canChooseFiles = true
-            openPanel.canChooseDirectories = false
-            openPanel.allowsMultipleSelection = false
-            openPanel.allowedContentTypes = [.png, .jpeg, .tiff, .heic]
-            openPanel.prompt = "Open in Impact"
-
-            if openPanel.runModal() == .OK, let selectedURL = openPanel.url {
-                self.openImageFile(url: selectedURL)
-            }
-        }
     }
 }

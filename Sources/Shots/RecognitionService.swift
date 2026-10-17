@@ -100,26 +100,6 @@ public final class RecognitionService {
         return items
     }
 
-    /// Asynchronously detects and decodes QR codes on a background queue.
-    public func recognizeQRCodesAsync(
-        in image: CGImage,
-        completion: @escaping (Result<[RecognitionItem], Error>) -> Void
-    ) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            do {
-                let items = try self.recognizeQRCodes(in: image)
-                DispatchQueue.main.async {
-                    completion(.success(items))
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    completion(.failure(error))
-                }
-            }
-        }
-    }
-
     // MARK: - 1D Barcode Recognition
 
     public static let oneDimensionalBarcodeSymbologies: [VNBarcodeSymbology] = [
@@ -191,26 +171,6 @@ public final class RecognitionService {
         }
     }
 
-    /// Asynchronously detects and decodes 1D barcodes on a background queue.
-    public func recognizeBarcodesAsync(
-        in image: CGImage,
-        completion: @escaping (Result<[RecognitionItem], Error>) -> Void
-    ) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            do {
-                let items = try self.recognizeBarcodes(in: image)
-                DispatchQueue.main.async {
-                    completion(.success(items))
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    completion(.failure(error))
-                }
-            }
-        }
-    }
-
     // MARK: - OCR Text Recognition
 
     public static let defaultOCRLanguages: [String] = ["en-US", "pl-PL"]
@@ -248,45 +208,51 @@ public final class RecognitionService {
         return items
     }
 
-    /// Asynchronously extracts recognized text from a CGImage on a background queue.
-    public func recognizeTextAsync(
-        in image: CGImage,
-        languages: [String] = RecognitionService.defaultOCRLanguages,
-        completion: @escaping (Result<[RecognitionItem], Error>) -> Void
-    ) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            do {
-                let items = try self.recognizeText(in: image, languages: languages)
-                DispatchQueue.main.async {
-                    completion(.success(items))
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    completion(.failure(error))
-                }
-            }
-        }
-    }
+
+    private static let allBarcodeSymbologies: [VNBarcodeSymbology] = [.qr] + oneDimensionalBarcodeSymbologies
 
     // MARK: - Unified Recognition Action
 
     /// Inspects the image and automatically picks the appropriate recognition mode:
     /// Prioritizes QR Codes, then 1D Barcodes, and falls back to OCR Text extraction.
     public func recognizeUnified(in image: CGImage) throws -> RecognitionItem? {
-        // 1. Try QR Code Recognition
-        let qrCodes = try recognizeQRCodes(in: image)
-        if let topQR = qrCodes.first {
-            return topQR
+        guard image.width > 0 && image.height > 0 else { return nil }
+
+        // 1. Single-pass detection for QR Codes and 1D Barcodes
+        let barcodeRequest = VNDetectBarcodesRequest()
+        barcodeRequest.symbologies = Self.allBarcodeSymbologies
+
+        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
+        try handler.perform([barcodeRequest])
+
+        if let results = barcodeRequest.results, !results.isEmpty {
+            // Check for QR first
+            for obs in results {
+                if obs.symbology == .qr, let payload = obs.payloadStringValue, !payload.isEmpty {
+                    return RecognitionItem(
+                        type: .qrCode,
+                        payload: payload,
+                        confidence: obs.confidence,
+                        symbology: "QR"
+                    )
+                }
+            }
+            // Check for 1D barcode next
+            for obs in results {
+                if obs.symbology != .qr && obs.symbology != .microQR,
+                   let payload = obs.payloadStringValue, !payload.isEmpty {
+                    let symbologyName = friendlySymbologyName(for: obs.symbology)
+                    return RecognitionItem(
+                        type: .barcode,
+                        payload: payload,
+                        confidence: obs.confidence,
+                        symbology: symbologyName
+                    )
+                }
+            }
         }
 
-        // 2. Try 1D Barcode Recognition
-        let barcodes = try recognizeBarcodes(in: image)
-        if let topBarcode = barcodes.first {
-            return topBarcode
-        }
-
-        // 3. Fallback to OCR Text Extraction
+        // 2. Fallback to OCR Text Extraction
         let textItems = try recognizeText(in: image)
         if !textItems.isEmpty {
             let combinedText = textItems.map { $0.payload }.joined(separator: "\n")

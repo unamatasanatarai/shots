@@ -87,7 +87,7 @@ public final class ModernToolbarButton: NSView {
         self.init(systemName: systemName, text: nil, tooltip: tooltip, size: NSSize(width: 30, height: 30), pointSize: pointSize, weight: weight, isSegment: false)
     }
 
-    public static var ufoPointerIcon: NSImage {
+    public static let ufoPointerIcon: NSImage = {
         let size = NSSize(width: 18, height: 18)
         let img = NSImage(size: size, flipped: true) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
@@ -111,7 +111,7 @@ public final class ModernToolbarButton: NSView {
         }
         img.isTemplate = true
         return img
-    }
+    }()
 
     public convenience init(image: NSImage, tooltip: String) {
         self.init(systemName: "circle", text: nil, tooltip: tooltip, size: NSSize(width: 30, height: 30), pointSize: 13.0, weight: .semibold, isSegment: false)

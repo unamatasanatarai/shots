@@ -348,8 +348,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 menuItem.toolTip = "Reveal \(item.filename) in Finder or choose action"
                 if let thumb = item.thumbnail {
                     menuItem.image = thumb
-                } else if let fallback = NSImage(systemSymbolName: "photo", accessibilityDescription: nil) {
-                    fallback.isTemplate = true
+                } else if let fallback = Self.photoIcon {
                     menuItem.image = fallback
                 }
 
@@ -363,8 +362,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 )
                 openInImpactSubItem.target = self
                 openInImpactSubItem.representedObject = item.fileURL
-                if let editIcon = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil) {
-                    editIcon.isTemplate = true
+                if let editIcon = Self.editIcon {
                     openInImpactSubItem.image = editIcon
                 }
                 actionSubmenu.addItem(openInImpactSubItem)
@@ -376,8 +374,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 )
                 revealSubItem.target = self
                 revealSubItem.representedObject = item.fileURL
-                if let revealIcon = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: nil) {
-                    revealIcon.isTemplate = true
+                if let revealIcon = Self.revealIcon {
                     revealSubItem.image = revealIcon
                 }
                 actionSubmenu.addItem(revealSubItem)
@@ -389,8 +386,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 )
                 copySubItem.target = self
                 copySubItem.representedObject = item.fileURL
-                if let copyIcon = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil) {
-                    copyIcon.isTemplate = true
+                if let copyIcon = Self.copyIcon {
                     copySubItem.image = copyIcon
                 }
                 actionSubmenu.addItem(copySubItem)
@@ -428,11 +424,28 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    // MARK: - Actions
+    private static let photoIcon: NSImage? = {
+        let img = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
+        img?.isTemplate = true
+        return img
+    }()
+    private static let editIcon: NSImage? = {
+        let img = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: nil)
+        img?.isTemplate = true
+        return img
+    }()
+    private static let revealIcon: NSImage? = {
+        let img = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: nil)
+        img?.isTemplate = true
+        return img
+    }()
+    private static let copyIcon: NSImage? = {
+        let img = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil)
+        img?.isTemplate = true
+        return img
+    }()
 
-    @objc private func openImageInImpactAction() {
-        ImpactLauncher.shared.openImageFileDialog()
-    }
+    // MARK: - Actions
 
     @objc public func openRecentInImpactAction(_ sender: NSMenuItem) {
         guard let fileURL = sender.representedObject as? URL else { return }
