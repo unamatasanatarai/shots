@@ -283,7 +283,7 @@ public final class CounterLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         CounterLayer(
-            id: UUID(),
+            id: id,
             center: center,
             radius: radius,
             value: value,

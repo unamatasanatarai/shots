@@ -327,7 +327,7 @@ public final class ArrowLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         let cloned = ArrowLayer(
-            id: UUID(),
+            id: id,
             start: start,
             control: control,
             end: end,

@@ -497,7 +497,7 @@ public final class FilterLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         let copy = FilterLayer(
-            id: UUID(),
+            id: id,
             rects: rects,
             filterMode: filterMode,
             intensity: intensity,

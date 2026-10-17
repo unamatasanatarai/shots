@@ -273,6 +273,32 @@ public struct AppTests {
             assert(resolvedFromCG != nil, "Resolved screen from CG point must not be nil")
         }
 
+        testRunner("Multi-Display Support - Secondary Display Non-Zero Origin Cropping") {
+            // Secondary display positioned at x=1920, y=0, size=(1920, 1080)
+            let secondaryFrame = NSRect(x: 1920, y: 0, width: 1920, height: 1080)
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(
+                data: nil,
+                width: 3840,
+                height: 2160,
+                bitsPerComponent: 8,
+                bytesPerRow: 3840 * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let displayImage = ctx.makeImage()!
+
+            // 1. If screenFrame is wrongly passed as crop rect (BUG-003):
+            let buggyCrop = CaptureService.shared.cropImage(displayImage, to: secondaryFrame, in: secondaryFrame.size)
+            assert(buggyCrop == nil, "cropImage with global screenFrame fails due to out-of-bounds offset")
+
+            // 2. Local bounds NSRect(origin: .zero, size: secondaryFrame.size) works cleanly:
+            let localRect = NSRect(origin: .zero, size: secondaryFrame.size)
+            let correctCrop = CaptureService.shared.cropImage(displayImage, to: localRect, in: secondaryFrame.size)
+            assert(correctCrop != nil, "cropImage with local bounds must succeed")
+            assert(correctCrop!.width == 3840 && correctCrop!.height == 2160, "Full display crop should match display image dimensions")
+        }
+
         // MARK: - Cursor Capture Suite
         testRunner("Cursor Capture - Compositing Engine & Settings") {
             let settings = AppSettings.shared
@@ -354,6 +380,23 @@ public struct AppTests {
             CountdownHUDController.shared.cancel()
             assert(!CountdownHUDController.shared.isCountingDown, "HUD must not be counting down after cancel()")
             assert(cancelled, "Cancellation handler must be called when cancel() is invoked")
+
+            // Test BUG-011: Cancellation during completion delay
+            var completedDuringDelay = false
+            var cancelledDuringDelay = false
+            CountdownHUDController.shared.startCountdown(seconds: 1, onComplete: {
+                completedDuringDelay = true
+            }, onCancel: {
+                cancelledDuringDelay = true
+            })
+            // Run loop for 1.02s until timer ticks to 0 and enters complete()
+            RunLoop.current.run(until: Date().addingTimeInterval(1.02))
+            // Cancel within the 60ms window
+            CountdownHUDController.shared.cancel()
+            // Wait another 100ms to verify completion was aborted
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            assert(!completedDuringDelay, "Capture completion must NOT fire after cancellation during delay")
+            assert(cancelledDuringDelay, "Cancellation handler must fire when cancelled during delay")
 
             // Test RegionSelectionCoordinator activeDelaySeconds
             PermissionsManager.shared.screenRecordingOverride = true
@@ -1082,6 +1125,17 @@ public struct AppTests {
             if let copyItem = copyActionItem {
                 controller.copyRecentScreenshotAction(copyItem)
             }
+
+            // Verify BUG-006: Explicit "Open Screenshots Folder" menu item in submenu
+            let openFolderSubItem = recentSubmenu?.items.first(where: { $0.title == "Open Screenshots Folder" })
+            assert(openFolderSubItem != nil, "Submenu must contain Open Screenshots Folder item")
+            assert(openFolderSubItem?.action == #selector(controller.openFolderAction), "Open Screenshots Folder action selector must match openFolderAction")
+
+            // Verify BUG-005: menuWillOpen returns immediately using in-memory cache
+            let start = DispatchTime.now()
+            controller.menuWillOpen(menu)
+            let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000.0
+            assert(elapsedMs < 20.0, "menuWillOpen must be non-blocking and return immediately (took \(elapsedMs)ms)")
         }
 
         // MARK: - Native Recognition Framework Suite

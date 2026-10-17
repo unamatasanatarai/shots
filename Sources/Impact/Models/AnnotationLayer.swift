@@ -80,7 +80,7 @@ public final class FastColor {
 
     private var cgColorCache: [String: CGColor] = [:]
     private var nsColorCache: [String: NSColor] = [:]
-    private var lock = os_unfair_lock()
+    private let lock = NSLock()
 
     @inline(__always)
     private static func hexNibble(_ byte: UInt8) -> UInt32? {
@@ -118,39 +118,39 @@ public final class FastColor {
 
     public func cgColor(hex: String, alpha: CGFloat = 1.0) -> CGColor {
         let key = alpha == 1.0 ? hex : "\(hex)_\(alpha)"
-        os_unfair_lock_lock(&lock)
+        lock.lock()
         if let cached = cgColorCache[key] {
-            os_unfair_lock_unlock(&lock)
+            lock.unlock()
             return cached
         }
-        os_unfair_lock_unlock(&lock)
+        lock.unlock()
 
         let (r, g, b) = Self.parseRGB(from: hex)
         let color = CGColor(srgbRed: r, green: g, blue: b, alpha: alpha)
 
-        os_unfair_lock_lock(&lock)
+        lock.lock()
         if cgColorCache.count > 256 { cgColorCache.removeAll(keepingCapacity: true) }
         cgColorCache[key] = color
-        os_unfair_lock_unlock(&lock)
+        lock.unlock()
         return color
     }
 
     public func nsColor(hex: String, alpha: CGFloat = 1.0) -> NSColor {
         let key = alpha == 1.0 ? hex : "\(hex)_\(alpha)"
-        os_unfair_lock_lock(&lock)
+        lock.lock()
         if let cached = nsColorCache[key] {
-            os_unfair_lock_unlock(&lock)
+            lock.unlock()
             return cached
         }
-        os_unfair_lock_unlock(&lock)
+        lock.unlock()
 
         let (r, g, b) = Self.parseRGB(from: hex)
         let color = NSColor(srgbRed: r, green: g, blue: b, alpha: alpha)
 
-        os_unfair_lock_lock(&lock)
+        lock.lock()
         if nsColorCache.count > 256 { nsColorCache.removeAll(keepingCapacity: true) }
         nsColorCache[key] = color
-        os_unfair_lock_unlock(&lock)
+        lock.unlock()
         return color
     }
 }

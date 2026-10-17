@@ -8,6 +8,7 @@ public final class EditorDocument {
     public private(set) var activeCanvasBounds: CGRect
 
     public var layers: [AnnotationLayer] = []
+    public var isModified: Bool = false
     public var onSelectionChanged: (() -> Void)?
 
     public var selectedLayerIDs: Set<UUID> = [] {
@@ -105,6 +106,7 @@ public final class EditorDocument {
         saveSnapshot()
         layers.append(layer)
         selectedLayerIDs = [layer.id]
+        isModified = true
         computeElasticBounds()
         onNeedsDisplay?()
     }
@@ -113,6 +115,7 @@ public final class EditorDocument {
         saveSnapshot()
         layers.removeAll { $0.id == id }
         selectedLayerIDs.remove(id)
+        isModified = true
         computeElasticBounds()
         onNeedsDisplay?()
     }
@@ -120,6 +123,7 @@ public final class EditorDocument {
     public func removeSelectedLayers() {
         guard !selectedLayerIDs.isEmpty else { return }
         saveSnapshot()
+        isModified = true
         for id in selectedLayerIDs {
             if let spotlight = layers.first(where: { $0.id == id }) as? FilterLayer, spotlight.filterMode == .spotlight {
                 if spotlight.rects.count > 1, let idx = spotlight.selectedRectIndex, idx < spotlight.rects.count {
@@ -144,7 +148,7 @@ public final class EditorDocument {
 
     public func selectLayer(_ layer: AnnotationLayer) {
         selectedLayerIDs = [layer.id]
-        if layer.type != .spotlight {
+        if layer.type != .spotlight && layer.type != .blur {
             activeColor = layer.color
         }
         onNeedsDisplay?()
@@ -155,7 +159,7 @@ public final class EditorDocument {
         for layer in layers.reversed() {
             if layer.isVisible && layer.contains(point: point) {
                 selectedLayerIDs = [layer.id]
-                if layer.type != .spotlight {
+                if layer.type != .spotlight && layer.type != .blur {
                     activeColor = layer.color
                 }
                 onNeedsDisplay?()
@@ -184,6 +188,8 @@ public final class EditorDocument {
         guard let previous = undoStack.popLast() else { return }
         redoStack.append(layers.map { $0.clone() })
         layers = previous
+        selectedLayerIDs = selectedLayerIDs.intersection(Set(layers.map { $0.id }))
+        isModified = true
         computeElasticBounds()
         onNeedsDisplay?()
     }
@@ -192,6 +198,8 @@ public final class EditorDocument {
         guard let next = redoStack.popLast() else { return }
         undoStack.append(layers.map { $0.clone() })
         layers = next
+        selectedLayerIDs = selectedLayerIDs.intersection(Set(layers.map { $0.id }))
+        isModified = true
         computeElasticBounds()
         onNeedsDisplay?()
     }

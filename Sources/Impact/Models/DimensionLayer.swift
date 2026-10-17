@@ -163,7 +163,7 @@ public final class DimensionLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         DimensionLayer(
-            id: UUID(),
+            id: id,
             start: start,
             end: end,
             color: color,

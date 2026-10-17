@@ -1151,7 +1151,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         let popoutVC = ColorPopoutViewController()
         let currentHex: String
         let selected = canvasView?.document.getSelectedLayers() ?? []
-        if let first = selected.first, first.type != .spotlight {
+        if let first = selected.first, first.type != .spotlight && first.type != .blur {
             currentHex = first.color
         } else {
             currentHex = canvasView?.document.activeColor ?? "#FF3B30"
@@ -1166,7 +1166,7 @@ public final class EditorToolbarView: NSVisualEffectView {
                 if !selected.isEmpty {
                     doc.saveSnapshot()
                     for layer in selected {
-                        if layer.type != .spotlight {
+                        if layer.type != .spotlight && layer.type != .blur {
                             layer.color = hex
                         }
                     }
@@ -1202,7 +1202,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         let doc = canvasView?.document
         let selectedLayers = doc?.getSelectedLayers() ?? []
         let currentHex: String
-        if let first = selectedLayers.first, first.type != .spotlight {
+        if let first = selectedLayers.first, first.type != .spotlight && first.type != .blur {
             currentHex = first.color.uppercased()
         } else {
             currentHex = doc?.activeColor.uppercased() ?? "#FF3B30"

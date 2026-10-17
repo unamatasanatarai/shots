@@ -12,6 +12,10 @@ let package = Package(
         .executable(
             name: "Shots",
             targets: ["Shots"]
+        ),
+        .executable(
+            name: "Impact",
+            targets: ["Impact"]
         )
     ],
     dependencies: [],
@@ -19,12 +23,13 @@ let package = Package(
         .executableTarget(
             name: "Shots",
             dependencies: [],
-            path: "Sources/App"
+            path: "Sources/Shots"
         ),
-        .testTarget(
-            name: "ShotsTests",
-            dependencies: ["Shots"],
-            path: "Tests/AppTests"
+        .executableTarget(
+            name: "Impact",
+            dependencies: [],
+            path: "Sources/Impact",
+            exclude: ["audit.md"]
         )
     ]
 )

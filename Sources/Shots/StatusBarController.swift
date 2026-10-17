@@ -14,9 +14,6 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     private var screenRulerMenuItem: NSMenuItem!
     private var colorPickerMenuItem: NSMenuItem!
 
-    private var isRecentScreenshotsHighlighted = false
-    private var menuEventMonitor: Any?
-
     public override init() {
         super.init()
         setupStatusItem()
@@ -30,9 +27,7 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         )
     }
 
-    deinit {
-        removeMenuEventMonitor()
-    }
+    deinit {}
 
     public var currentMenu: NSMenu {
         return menu
@@ -234,50 +229,26 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         updateRecentScreenshotsMenu()
     }
 
-    // MARK: - Menu Delegate & Hover Tracking
+    // MARK: - Menu Delegate
 
-    public func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
-        if menu === self.menu {
-            isRecentScreenshotsHighlighted = (item === recentScreenshotsMenuItem)
-        }
-    }
+    public func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {}
 
     public func menuWillOpen(_ menu: NSMenu) {
         if menu === self.menu {
-            isRecentScreenshotsHighlighted = false
-            installMenuEventMonitor()
             updateMenuItemsState()
-            updateRecentScreenshotsMenu()
+            updateRecentScreenshotsMenu(using: ScreenshotHistoryService.shared.recentItems)
+            refreshRecentScreenshotsInBackground()
         }
     }
 
-    public func menuDidClose(_ menu: NSMenu) {
-        if menu === self.menu {
-            removeMenuEventMonitor()
-            isRecentScreenshotsHighlighted = false
-        }
-    }
+    public func menuDidClose(_ menu: NSMenu) {}
 
-    private func installMenuEventMonitor() {
-        removeMenuEventMonitor()
-        menuEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
-            guard let self = self else { return event }
-            if self.isRecentScreenshotsHighlighted {
-                self.isRecentScreenshotsHighlighted = false
-                self.menu.cancelTracking()
-                DispatchQueue.main.async {
-                    self.openFolderAction()
-                }
-                return nil
+    private func refreshRecentScreenshotsInBackground() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fresh = ScreenshotHistoryService.shared.fetchRecentScreenshots()
+            DispatchQueue.main.async {
+                self?.updateRecentScreenshotsMenu(using: fresh)
             }
-            return event
-        }
-    }
-
-    private func removeMenuEventMonitor() {
-        if let monitor = menuEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            menuEventMonitor = nil
         }
     }
 
@@ -325,11 +296,11 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func updateRecentScreenshotsMenu() {
+    private func updateRecentScreenshotsMenu(using items: [ScreenshotHistoryItem]? = nil) {
         guard let recentMenu = recentScreenshotsMenuItem?.submenu else { return }
         recentMenu.removeAllItems()
 
-        let recents = ScreenshotHistoryService.shared.fetchRecentScreenshots()
+        let recents = items ?? ScreenshotHistoryService.shared.recentItems
         if recents.isEmpty {
             let emptyItem = NSMenuItem(title: "No Recent Screenshots", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
@@ -395,6 +366,20 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
                 recentMenu.addItem(menuItem)
             }
         }
+
+        // Explicit "Open Screenshots Folder" menu item
+        recentMenu.addItem(NSMenuItem.separator())
+        let openFolderItem = NSMenuItem(
+            title: "Open Screenshots Folder",
+            action: #selector(openFolderAction),
+            keyEquivalent: ""
+        )
+        openFolderItem.target = self
+        if let folderIcon = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
+            folderIcon.isTemplate = true
+            openFolderItem.image = folderIcon
+        }
+        recentMenu.addItem(openFolderItem)
     }
 
     @objc public func recentScreenshotSelected(_ sender: NSMenuItem) {
@@ -453,7 +438,6 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openPermissionsAction() {
-        removeMenuEventMonitor()
         PermissionsManager.shared.openSystemSettingsForMissingPermissions()
         PreferencesWindowController.shared.showWindow()
     }
@@ -508,7 +492,6 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openPreferencesAction() {
-        removeMenuEventMonitor()
         PreferencesWindowController.shared.showWindow()
     }
 

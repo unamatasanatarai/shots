@@ -12,9 +12,10 @@ public final class WelcomePanel: NSPanel {
     public init() {
         let width: CGFloat = 520
         let height: CGFloat = 360
-        let screen = NSScreen.main ?? NSScreen.screens.first!
-        let x = screen.visibleFrame.midX - width / 2.0
-        let y = screen.visibleFrame.midY - height / 2.0
+        let visibleFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let x = visibleFrame.midX - width / 2.0
+        let y = visibleFrame.midY - height / 2.0
         let contentRect = NSRect(x: x, y: y, width: width, height: height)
 
         self.dropView = WelcomeDropView(frame: NSRect(origin: .zero, size: contentRect.size))

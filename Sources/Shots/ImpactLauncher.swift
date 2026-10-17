@@ -18,6 +18,7 @@ public final class ImpactLauncher {
             return cached
         }
         let candidateName = "Impact.app"
+
         // 1. Check side-by-side in same directory as Shots.app (e.g. /Applications or build/)
         if let bundleURL = Bundle.main.bundleURL as URL? {
             let sibling = bundleURL.deletingLastPathComponent().appendingPathComponent(candidateName)
@@ -26,18 +27,35 @@ public final class ImpactLauncher {
                 return sibling
             }
         }
-        // 2. Check build directory
-        let buildPath = URL(fileURLWithPath: "build/\(candidateName)")
-        if FileManager.default.fileExists(atPath: buildPath.path) {
-            cachedImpactAppURL = buildPath
-            return buildPath
+
+        // 2. Check LaunchServices for registered app by bundle ID
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.local.Impact") {
+            cachedImpactAppURL = appURL
+            return appURL
         }
-        // 3. Check system Applications directory
-        let appPath = URL(fileURLWithPath: "/Applications/\(candidateName)")
-        if FileManager.default.fileExists(atPath: appPath.path) {
-            cachedImpactAppURL = appPath
-            return appPath
+
+        // 3. Check /Applications and ~/Applications
+        let systemApp = URL(fileURLWithPath: "/Applications/\(candidateName)")
+        if FileManager.default.fileExists(atPath: systemApp.path) {
+            cachedImpactAppURL = systemApp
+            return systemApp
         }
+        let userApp = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/\(candidateName)")
+        if FileManager.default.fileExists(atPath: userApp.path) {
+            cachedImpactAppURL = userApp
+            return userApp
+        }
+
+        // 4. Check relative to executable parent structure
+        if let execURL = Bundle.main.executableURL {
+            let projectOrContainingDir = execURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            let buildImpact = projectOrContainingDir.appendingPathComponent("build/\(candidateName)")
+            if FileManager.default.fileExists(atPath: buildImpact.path) {
+                cachedImpactAppURL = buildImpact
+                return buildImpact
+            }
+        }
+
         return nil
     }
 
@@ -63,11 +81,7 @@ public final class ImpactLauncher {
             return
         }
 
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            NSLog("ImpactLauncher: Failed to load image from %@", url.path)
-            return
-        }
-        openImpact(with: cgImage, title: url.lastPathComponent)
+        // If Impact.app is not installed, open the existing file directly with default handler
+        NSWorkspace.shared.open(url)
     }
 }

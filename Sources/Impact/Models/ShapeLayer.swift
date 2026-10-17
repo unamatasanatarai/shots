@@ -199,7 +199,7 @@ public final class RectangleLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         RectangleLayer(
-            id: UUID(),
+            id: id,
             rect: rect,
             cornerRadius: cornerRadius,
             color: color,
@@ -402,7 +402,7 @@ public final class EllipseLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         EllipseLayer(
-            id: UUID(),
+            id: id,
             rect: rect,
             isPerfectCircle: isPerfectCircle,
             color: color,
@@ -540,7 +540,7 @@ public final class LineLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         LineLayer(
-            id: UUID(),
+            id: id,
             start: start,
             end: end,
             color: color,

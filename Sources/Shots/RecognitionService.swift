@@ -192,8 +192,18 @@ public final class RecognitionService {
             return []
         }
 
+        // Sort observations into natural reading order: top-to-bottom, then left-to-right
+        let sortedResults = results.sorted { obs1, obs2 in
+            let y1 = obs1.boundingBox.origin.y
+            let y2 = obs2.boundingBox.origin.y
+            if abs(y1 - y2) > 0.03 {
+                return y1 > y2
+            }
+            return obs1.boundingBox.origin.x < obs2.boundingBox.origin.x
+        }
+
         var items: [RecognitionItem] = []
-        for observation in results {
+        for observation in sortedResults {
             guard let topCandidate = observation.topCandidates(1).first,
                   !topCandidate.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 continue

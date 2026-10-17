@@ -209,7 +209,7 @@ public final class PenLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         PenLayer(
-            id: UUID(),
+            id: id,
             points: points,
             color: color,
             strokeWidth: strokeWidth,
@@ -444,7 +444,7 @@ public final class HighlighterLayer: AnnotationLayer {
 
     public func clone() -> AnnotationLayer {
         HighlighterLayer(
-            id: UUID(),
+            id: id,
             points: points,
             color: color,
             strokeWidth: strokeWidth,

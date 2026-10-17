@@ -19,6 +19,7 @@ public final class CountdownHUDController {
     private var globalKeyMonitor: Any?
 
     public private(set) var isCountingDown: Bool = false
+    private var pendingCompletionWorkItem: DispatchWorkItem?
 
     private init() {}
 
@@ -69,7 +70,11 @@ public final class CountdownHUDController {
 
     /// Aborts any active countdown immediately and dismisses the HUD.
     public func cancel() {
-        guard isCountingDown else { return }
+        let wasPending = (pendingCompletionWorkItem != nil)
+        pendingCompletionWorkItem?.cancel()
+        pendingCompletionWorkItem = nil
+
+        guard isCountingDown || wasPending else { return }
         cleanup()
         let cancelHandler = onCancelHandler
         onCancelHandler = nil
@@ -93,15 +98,19 @@ public final class CountdownHUDController {
     }
 
     private func complete() {
-        cleanup()
         let completeHandler = onCompleteHandler
         onCompleteHandler = nil
-        onCancelHandler = nil
+        cleanup()
 
         // Allow Window Server to flush away the HUD before capturing screen pixels
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.pendingCompletionWorkItem = nil
+            self.onCancelHandler = nil
             completeHandler?()
         }
+        pendingCompletionWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: workItem)
     }
 
     private func cleanup() {

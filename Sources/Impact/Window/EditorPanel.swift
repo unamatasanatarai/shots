@@ -26,9 +26,10 @@ public final class EditorPanel: NSPanel {
         self.toolbarView = EditorToolbarView(canvasView: canvasView)
 
         // Calculate window size based on image dimensions or default empty size
-        let screen = NSScreen.main ?? NSScreen.screens.first!
-        let maxW = screen.visibleFrame.width * 0.85
-        let maxH = screen.visibleFrame.height * 0.85
+        let visibleFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let maxW = visibleFrame.width * 0.85
+        let maxH = visibleFrame.height * 0.85
 
         let windowW: CGFloat
         let windowH: CGFloat
@@ -44,8 +45,8 @@ public final class EditorPanel: NSPanel {
             windowH = 460.0
         }
 
-        let initialX = screen.visibleFrame.midX - windowW / 2.0
-        let initialY = screen.visibleFrame.midY - windowH / 2.0
+        let initialX = visibleFrame.midX - windowW / 2.0
+        let initialY = visibleFrame.midY - windowH / 2.0
 
         let contentRect = NSRect(x: initialX, y: initialY, width: windowW, height: windowH)
 
@@ -183,8 +184,8 @@ public final class EditorPanel: NSPanel {
             canvasView.copyCompositionToClipboard()
         }
 
-        // Upon closing Impact, always save to file without overwriting original (e.g. original-2.ext)
-        if !hasSavedComposition {
+        // Upon closing Impact, save to numbered file without overwriting original only if modified
+        if !hasSavedComposition && (!document.layers.isEmpty || document.isModified) {
             saveToNextNumberedFile()
         }
 
@@ -384,9 +385,10 @@ public final class EditorPanel: NSPanel {
         }
 
         // Adjust window size to fit image if smaller than viewport
-        let screen = self.screen ?? NSScreen.main ?? NSScreen.screens.first!
-        let maxW = screen.visibleFrame.width * 0.85
-        let maxH = screen.visibleFrame.height * 0.85
+        let visibleFrame = (self.screen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let maxW = visibleFrame.width * 0.85
+        let maxH = visibleFrame.height * 0.85
         let imgW = CGFloat(image.width)
         let imgH = CGFloat(image.height)
         let windowW = min(maxW, max(frame.width, max(600.0, imgW + 40.0)))
@@ -394,8 +396,8 @@ public final class EditorPanel: NSPanel {
 
         let currentMidX = frame.midX
         let currentMidY = frame.midY
-        let newX = max(screen.visibleFrame.minX, min(currentMidX - windowW / 2.0, screen.visibleFrame.maxX - windowW))
-        let newY = max(screen.visibleFrame.minY, min(currentMidY - windowH / 2.0, screen.visibleFrame.maxY - windowH))
+        let newX = max(visibleFrame.minX, min(currentMidX - windowW / 2.0, visibleFrame.maxX - windowW))
+        let newY = max(visibleFrame.minY, min(currentMidY - windowH / 2.0, visibleFrame.maxY - windowH))
         setFrame(NSRect(x: newX, y: newY, width: windowW, height: windowH), display: true, animate: true)
 
         updateVersionTitle()

@@ -629,7 +629,7 @@ public final class RegionSelectionCoordinator {
         if let regHandler = regionCompletionHandler {
             regionCompletionHandler = nil
             finish(with: nil)
-            let chosenRect = (selRect.width >= 6 && selRect.height >= 6) ? selRect : screenFrame
+            let chosenRect = (selRect.width >= 6 && selRect.height >= 6) ? selRect : NSRect(origin: .zero, size: screenFrame.size)
             regHandler(SelectedRegionInfo(rect: chosenRect, screen: targetScreen, displayID: displayID))
             return
         }

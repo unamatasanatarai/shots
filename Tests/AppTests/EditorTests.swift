@@ -109,6 +109,65 @@ public enum EditorTests {
             assert(doc.layers.count == 1, "Redo must restore 1 layer")
         }
 
+        testRunner("Editor - Undo / Redo Preserves Layer Selection & Identifiers") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let rect = RectangleLayer(rect: CGRect(x: 10, y: 10, width: 50, height: 50), color: "#FF0000")
+            let originalID = rect.id
+            doc.addLayer(rect)
+            doc.selectLayer(rect)
+
+            assert(doc.getSelectedLayers().count == 1, "Layer must be selected")
+            assert(doc.getSelectedLayers().first?.id == originalID, "Selected layer ID must match original")
+
+            // Simulate mutating the layer and saving snapshot
+            doc.saveSnapshot()
+            rect.color = "#00FF00"
+
+            // Undo the mutation
+            doc.undo()
+            assert(doc.layers.count == 1, "Doc must still have 1 layer after undo")
+            assert(doc.layers[0].id == originalID, "Restored layer must retain the exact same ID")
+            assert(doc.getSelectedLayers().count == 1, "Undo must preserve layer selection")
+            assert(doc.getSelectedLayers().first?.id == originalID, "Selected layer must be the restored layer")
+
+            // Redo the mutation
+            doc.redo()
+            assert(doc.layers.count == 1, "Doc must still have 1 layer after redo")
+            assert(doc.layers[0].id == originalID, "Redone layer must retain the exact same ID")
+            assert(doc.getSelectedLayers().count == 1, "Redo must preserve layer selection")
+
+            // Verify all layer types preserve IDs across clone()
+            let arrow = ArrowLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 10, y: 10))
+            assert(arrow.clone().id == arrow.id, "ArrowLayer.clone() must preserve ID")
+
+            let ellipse = EllipseLayer(rect: CGRect(x: 0, y: 0, width: 20, height: 20))
+            assert(ellipse.clone().id == ellipse.id, "EllipseLayer.clone() must preserve ID")
+
+            let line = LineLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 20, y: 20))
+            assert(line.clone().id == line.id, "LineLayer.clone() must preserve ID")
+
+            let counter = CounterLayer(center: CGPoint(x: 5, y: 5), value: 3)
+            assert(counter.clone().id == counter.id, "CounterLayer.clone() must preserve ID")
+
+            let dim = DimensionLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 30, y: 40))
+            assert(dim.clone().id == dim.id, "DimensionLayer.clone() must preserve ID")
+
+            let filter = FilterLayer(rects: [CGRect(x: 0, y: 0, width: 10, height: 10)], filterMode: .gaussian)
+            assert(filter.clone().id == filter.id, "FilterLayer.clone() must preserve ID")
+
+            let pen = PenLayer(points: [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)])
+            assert(pen.clone().id == pen.id, "PenLayer.clone() must preserve ID")
+
+            let highlighter = HighlighterLayer(points: [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)])
+            assert(highlighter.clone().id == highlighter.id, "HighlighterLayer.clone() must preserve ID")
+        }
+
         testRunner("Editor - Composition Rendering Output") {
             guard let imageURL = resolveTestImageURL(),
                   let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
@@ -889,6 +948,7 @@ public enum EditorTests {
             )!
             let img = context.makeImage()!
             let doc = EditorDocument(image: img)
+            doc.isModified = true
 
             let tempDir = FileManager.default.temporaryDirectory
             let sourceFile = tempDir.appendingPathComponent("arero.jpg")
@@ -904,24 +964,52 @@ public enum EditorTests {
             let nextURL = panel.nextAvailableFileURL()
             assert(nextURL.lastPathComponent == "arero-2.jpg", "Next file must be arero-2.jpg, got: \(nextURL.lastPathComponent)")
 
-            // Test close: upon closing Impact, always save to file as originalfilename-2.extension-original without overwriting original
+            // Test close: upon closing Impact, modified documents save to file as originalfilename-2.extension without overwriting original
             panel.close()
 
             let savedFile2 = tempDir.appendingPathComponent("arero-2.jpg")
-            assert(FileManager.default.fileExists(atPath: savedFile2.path), "Closing panel must automatically save to arero-2.jpg")
+            assert(FileManager.default.fileExists(atPath: savedFile2.path), "Closing modified panel must automatically save to arero-2.jpg")
 
             // Verify original file was not overwritten
             let readOriginal = try? Data(contentsOf: sourceFile)
             assert(readOriginal == originalBytes, "Original file arero.jpg must NEVER be overwritten")
 
-            // Next session: closing a new panel increments to arero-3.jpg without overwriting arero-2.jpg or arero.jpg
+            // Next session: closing a new modified panel increments to arero-3.jpg without overwriting arero-2.jpg or arero.jpg
             let doc2 = EditorDocument(image: img)
+            doc2.isModified = true
             let panel2 = EditorPanel(document: doc2, title: "arero.jpg", sourceFileURL: sourceFile)
             panel2.close()
 
             let savedFile3 = tempDir.appendingPathComponent("arero-3.jpg")
             assert(FileManager.default.fileExists(atPath: savedFile3.path), "Subsequent close must save to next numbered file arero-3.jpg")
             assert(FileManager.default.fileExists(atPath: savedFile2.path), "arero-2.jpg must remain intact")
+        }
+
+        testRunner("Editor - Closing Unmodified Document Does Not Duplicate File on Disk") {
+            let context = CGContext(
+                data: nil,
+                width: 50,
+                height: 50,
+                bitsPerComponent: 8,
+                bytesPerRow: 200,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            let img = context.makeImage()!
+            let doc = EditorDocument(image: img)
+
+            let tempDir = FileManager.default.temporaryDirectory
+            let sourceFile = tempDir.appendingPathComponent("unmodified_test_\(UUID().uuidString).jpg")
+            try? Data([0x01, 0x02]).write(to: sourceFile)
+            defer {
+                try? FileManager.default.removeItem(at: sourceFile)
+            }
+
+            let panel = EditorPanel(document: doc, title: sourceFile.lastPathComponent, sourceFileURL: sourceFile)
+            panel.close()
+
+            let candidateURL = panel.nextAvailableFileURL()
+            assert(!FileManager.default.fileExists(atPath: candidateURL.path), "Closing unmodified panel must not save duplicate file")
         }
 
         testRunner("Editor - Freehand Pen Tool (Shortcut P, Brush Preview, Smooth Curves, Non-Scalable Whole Move)") {
@@ -1852,6 +1940,78 @@ public enum EditorTests {
             assert(counter.color.uppercased() == "#34C759", "CounterLayer color must update to new green hex")
             counter.draw(in: dummyContext, scale: 1.0)
             assert(toolbar.singleColorButton?.currentColor.uppercased() == "#34C759", "Color button must reflect updated Counter color")
+        }
+
+        testRunner("Editor - FastColor High-Concurrency Thread Safety") {
+            let fastColor = FastColor.shared
+            let hexes = ["#FF3B30", "#007AFF", "#34C759", "#FFCC00", "#AF52DE", "#5856D6", "#FF9500", "#000000"]
+            let group = DispatchGroup()
+            let queue = DispatchQueue(label: "impact.fastcolor.stress", attributes: .concurrent)
+
+            for i in 0..<200 {
+                group.enter()
+                queue.async {
+                    let hex = hexes[i % hexes.count]
+                    let alpha = CGFloat((i % 10) + 1) / 10.0
+                    let cg = fastColor.cgColor(hex: hex, alpha: alpha)
+                    let ns = fastColor.nsColor(hex: hex, alpha: alpha)
+                    assert(abs(cg.alpha - alpha) < 0.001, "CGColor alpha must match")
+                    assert(abs(ns.alphaComponent - alpha) < 0.001, "NSColor alpha must match")
+                    group.leave()
+                }
+            }
+            group.wait()
+        }
+
+        testRunner("Editor - Blur Tool and Layer Selection Preserves Active Color") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let canvas = EditorCanvasView(document: doc)
+            let toolbar = EditorToolbarView(canvasView: canvas)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 600, height: 44)
+
+            // 1. User selects a custom active color (e.g. Blue #007AFF)
+            doc.activeColor = "#007AFF"
+            toolbar.updateSelectedColorVisuals()
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar button must show active color")
+
+            // 2. Switching to blur tool must not mutate activeColor
+            doc.activeTool = .blur
+            toolbar.updateSelectedToolVisuals()
+            assert(doc.activeColor.uppercased() == "#007AFF", "Switching to blur tool must preserve activeColor")
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar must preserve color display when blur tool is active")
+
+            // 3. Adding and selecting a blur layer must not mutate activeColor
+            let blurLayer = FilterLayer(
+                rects: [CGRect(x: 50, y: 50, width: 100, height: 100)],
+                filterMode: .gaussian,
+                intensity: 6.0,
+                color: doc.activeColor
+            )
+            doc.addLayer(blurLayer)
+            doc.selectLayer(blurLayer)
+            toolbar.updateSelectedToolVisuals()
+
+            assert(doc.activeColor.uppercased() == "#007AFF", "Selecting blur layer must not overwrite activeColor")
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar color must remain unchanged when blur layer is selected")
+
+            // 4. Hit-testing selection on blur layer must also not mutate activeColor
+            _ = doc.selectLayer(at: CGPoint(x: 60, y: 60))
+            assert(doc.activeColor.uppercased() == "#007AFF", "Selecting blur layer at point must not overwrite activeColor")
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar color must remain unchanged after point selection of blur layer")
+
+            // 5. Subsequent vector annotations created must retain user's chosen activeColor
+            let arrow = ArrowLayer(
+                start: CGPoint(x: 10, y: 10),
+                end: CGPoint(x: 100, y: 100),
+                color: doc.activeColor
+            )
+            assert(arrow.color.uppercased() == "#007AFF", "Subsequent layer must use user-chosen activeColor, not white")
         }
     }
 }

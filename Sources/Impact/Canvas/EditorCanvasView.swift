@@ -540,7 +540,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             let blur = FilterLayer(
                 rects: [CGRect(origin: point, size: .zero)],
                 filterMode: .gaussian,
-                intensity: 6.0
+                intensity: 6.0,
+                color: document.activeColor
             )
             activeCreatingLayer = blur
         }
@@ -1380,7 +1381,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         let rep = NSBitmapImageRep(cgImage: rendered)
         let properties: [NSBitmapImageRep.PropertyKey: Any] = (format == .jpeg) ? [.compressionFactor: 0.95] : [:]
         guard let data = rep.representation(using: format, properties: properties) else { return }
-        try? data.write(to: url)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("EditorCanvasView: Failed to save composition to %@: %@", url.path, error.localizedDescription)
+        }
     }
 
     // NSDraggingSource

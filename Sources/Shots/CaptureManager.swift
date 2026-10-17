@@ -19,7 +19,21 @@ public struct LastCaptureRecord: Equatable {
 public final class CaptureManager {
     public static let shared = CaptureManager()
 
-    public var lastCapture: LastCaptureRecord?
+    private let lock = NSLock()
+    private var _lastCapture: LastCaptureRecord?
+
+    public var lastCapture: LastCaptureRecord? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _lastCapture
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _lastCapture = newValue
+        }
+    }
 
     private init() {}
 

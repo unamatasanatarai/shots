@@ -77,6 +77,10 @@ public struct StressTests {
         testRunner("Stress: AppSettings - High-Concurrency Configuration Mutations") {
             try testAppSettingsConcurrentMutations()
         }
+
+        testRunner("Stress: Concurrency - Thread-Safe CaptureManager and Autoscroll Cancellation Flags") {
+            try testCaptureManagerAndAutoscrollConcurrency()
+        }
     }
 
     // MARK: - Test Implementations
@@ -501,5 +505,33 @@ public struct StressTests {
         settings.copyToClipboard = true
         settings.checkForShortcutConflicts()
         assert(!settings.isHotkeyConflict, "Default hotkeys must have zero conflict")
+    }
+
+    private static func testCaptureManagerAndAutoscrollConcurrency() throws {
+        let coordinator = AutoscrollCaptureCoordinator.shared
+        let manager = CaptureManager.shared
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "shots.stress.concurrency", attributes: .concurrent)
+
+        for i in 0..<100 {
+            group.enter()
+            queue.async {
+                if i % 2 == 0 {
+                    coordinator.isAborted = (i % 4 == 0)
+                    coordinator.isFinishedEarly = (i % 4 != 0)
+                } else {
+                    _ = coordinator.isAborted
+                    _ = coordinator.isFinishedEarly
+                }
+
+                if i % 3 == 0 {
+                    manager.lastCapture = LastCaptureRecord(mode: .fullscreen)
+                } else {
+                    _ = manager.lastCapture
+                }
+                group.leave()
+            }
+        }
+        group.wait()
     }
 }

@@ -6,8 +6,36 @@ public final class AutoscrollCaptureCoordinator: NSObject {
     public static let shared = AutoscrollCaptureCoordinator()
 
     private var hudWindow: NSPanel?
-    private var isAborted = false
-    private var isFinishedEarly = false
+    private let stateLock = NSLock()
+    private var _isAborted = false
+    private var _isFinishedEarly = false
+
+    public var isAborted: Bool {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _isAborted
+        }
+        set {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            _isAborted = newValue
+        }
+    }
+
+    public var isFinishedEarly: Bool {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _isFinishedEarly
+        }
+        set {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            _isFinishedEarly = newValue
+        }
+    }
+
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
 
@@ -41,10 +69,14 @@ public final class AutoscrollCaptureCoordinator: NSObject {
         isAborted = false
         isFinishedEarly = false
 
-        // Compute screen coordinates for the center of the region
+        // Compute screen coordinates for the center of the region on main thread
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let globalAppKitX = region.screen.frame.origin.x + region.rect.midX
-        let globalAppKitY = region.screen.frame.origin.y + region.rect.midY
+        let screenFrame = region.screen.frame
+        let screenSize = screenFrame.size
+        let regionRect = region.rect
+        let displayID = region.displayID
+        let globalAppKitX = screenFrame.origin.x + regionRect.midX
+        let globalAppKitY = screenFrame.origin.y + regionRect.midY
         let targetCenterCG = CGPoint(x: globalAppKitX, y: primaryHeight - globalAppKitY)
 
         // Present floating status HUD
@@ -66,8 +98,8 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             }
 
             // 1. Initial Frame Capture
-            guard let initialDisplay = CGDisplayCreateImage(region.displayID),
-                  let firstFrame = CaptureService.shared.cropImage(initialDisplay, to: region.rect, in: region.screen.frame.size) else {
+            guard let initialDisplay = CGDisplayCreateImage(displayID),
+                  let firstFrame = CaptureService.shared.cropImage(initialDisplay, to: regionRect, in: screenSize) else {
                 DispatchQueue.main.async {
                     self.dismissHUD()
                     completion?(nil)
@@ -97,8 +129,8 @@ public final class AutoscrollCaptureCoordinator: NSObject {
                 guard !self.isAborted && !self.isFinishedEarly else { break }
 
                 // Capture next display frame
-                guard let currentDisplay = CGDisplayCreateImage(region.displayID),
-                      let currentFrame = CaptureService.shared.cropImage(currentDisplay, to: region.rect, in: region.screen.frame.size) else {
+                guard let currentDisplay = CGDisplayCreateImage(displayID),
+                  let currentFrame = CaptureService.shared.cropImage(currentDisplay, to: regionRect, in: screenSize) else {
                     break
                 }
 
@@ -145,9 +177,12 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             }
 
             if let result = finalImage {
-                CaptureManager.shared.lastCapture = LastCaptureRecord(
-                    mode: .region(rect: region.rect, screenFrame: region.screen.frame, displayID: region.displayID)
+                let lastRecord = LastCaptureRecord(
+                    mode: .region(rect: regionRect, screenFrame: screenFrame, displayID: displayID)
                 )
+                DispatchQueue.main.async {
+                    CaptureManager.shared.lastCapture = lastRecord
+                }
                 CaptureManager.shared.processCapturedImage(result)
             }
 
@@ -236,12 +271,16 @@ public final class AutoscrollCaptureCoordinator: NSObject {
 
     public func abortAutoscroll() {
         isAborted = true
-        dismissHUD()
+        DispatchQueue.main.async { [weak self] in
+            self?.dismissHUD()
+        }
     }
 
     public func finishAutoscroll() {
         isFinishedEarly = true
-        dismissHUD()
+        DispatchQueue.main.async { [weak self] in
+            self?.dismissHUD()
+        }
     }
 
     public func stopAutoscroll() {
