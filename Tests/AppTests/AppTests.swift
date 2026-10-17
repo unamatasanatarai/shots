@@ -82,13 +82,17 @@ public struct AppTests {
 
             settings.scrollingCaptureSpeed = .slow
             assert(testDefaults.string(forKey: AppSettings.Keys.scrollingCaptureSpeed) == ScrollingCaptureSpeed.slow.rawValue, "UserDefaults must store updated scrollingCaptureSpeed")
-            assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 500_000, "Slow speed must have 500ms step delay")
-            assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 45, "Slow speed must have 45px scroll delta")
+            assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 350_000, "Slow speed must have 350ms step delay")
+            assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 60, "Slow speed must have 60px scroll delta")
+
+            settings.scrollingCaptureSpeed = .normal
+            assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 200_000, "Normal speed must have 200ms step delay")
+            assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 90, "Normal speed must have 90px scroll delta")
 
             settings.scrollingCaptureSpeed = .fast
             assert(testDefaults.string(forKey: AppSettings.Keys.scrollingCaptureSpeed) == ScrollingCaptureSpeed.fast.rawValue, "UserDefaults must store fast scrollingCaptureSpeed")
-            assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 200_000, "Fast speed must have 200ms step delay")
-            assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 90, "Fast speed must have 90px scroll delta")
+            assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 100_000, "Fast speed must have 100ms step delay")
+            assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 120, "Fast speed must have 120px scroll delta")
 
             settings.hotkeyKeyCode = UInt16(kVK_ANSI_2)
             assert(testDefaults.integer(forKey: AppSettings.Keys.hotkeyKeyCode) == Int(kVK_ANSI_2), "UserDefaults must store updated keyCode")

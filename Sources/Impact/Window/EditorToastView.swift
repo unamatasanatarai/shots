@@ -54,8 +54,9 @@ public final class EditorToastView: NSVisualEffectView {
         container.addSubview(toast)
 
         NSLayoutConstraint.activate([
-            toast.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            toast.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: -40)
+            toast.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            toast.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
+            toast.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 20)
         ])
         container.layoutSubtreeIfNeeded()
 

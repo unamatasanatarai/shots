@@ -1291,8 +1291,8 @@ private final class RegionSelectionView: NSView {
             bottomX = origin.x
         }
 
-        let bottomOrigin = NSPoint(x: round(bottomX), y: origin.y)
-        let topOrigin = NSPoint(x: round(topX), y: origin.y + rowSpacing)
+        let bottomOrigin = NSPoint(x: round(bottomX), y: origin.y - 1.0)
+        let topOrigin = NSPoint(x: round(topX), y: origin.y + rowSpacing - 1.0)
 
         (bottom as NSString).draw(at: bottomOrigin, withAttributes: attributes)
         (finalTop as NSString).draw(at: topOrigin, withAttributes: attributes)

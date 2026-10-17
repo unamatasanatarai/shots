@@ -35,27 +35,27 @@ public enum ScrollingCaptureSpeed: String, CaseIterable, Identifiable {
 
     public var detailDescription: String {
         switch self {
-        case .slow: return "Step: 45 px • Pause: 500 ms (Gentle, ideal for heavy web pages and smooth inertial settling)"
-        case .normal: return "Step: 60 px • Pause: 350 ms (Balanced, recommended for editors and documents)"
-        case .fast: return "Step: 90 px • Pause: 200 ms (Rapid capture for simple native windows)"
+        case .slow: return "Step: 60 px • Pause: 350 ms (Gentle, ideal for heavy web pages and smooth inertial settling)"
+        case .normal: return "Step: 90 px • Pause: 200 ms (Balanced, recommended for editors and documents)"
+        case .fast: return "Step: 120 px • Pause: 100 ms (Ultra-rapid capture for fast scrolling feeds and native windows)"
         }
     }
 
     /// Pause duration between scroll steps in microseconds for usleep
     public var stepDelayMicroseconds: useconds_t {
         switch self {
-        case .slow: return 500_000
-        case .normal: return 350_000
-        case .fast: return 200_000
+        case .slow: return 350_000
+        case .normal: return 200_000
+        case .fast: return 100_000
         }
     }
 
     /// Scroll delta in pixels per step
     public var scrollDeltaPixels: Int32 {
         switch self {
-        case .slow: return 45
-        case .normal: return 60
-        case .fast: return 90
+        case .slow: return 60
+        case .normal: return 90
+        case .fast: return 120
         }
     }
 }

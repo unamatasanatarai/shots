@@ -1,12 +1,34 @@
 import Cocoa
 import SwiftUI
 
+public final class PreferencesWindow: NSWindow {
+    override public func cancelOperation(_ sender: Any?) {
+        close()
+    }
+
+    override public func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Escape
+            close()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override public func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.keyCode == 53 { // Escape
+            close()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 public final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     public static let shared = PreferencesWindowController()
 
     private init() {
         let hostingController = NSHostingController(rootView: PreferencesView())
-        let window = NSWindow(
+        let window = PreferencesWindow(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 435),
             styleMask: [.titled, .closable],
             backing: .buffered,
