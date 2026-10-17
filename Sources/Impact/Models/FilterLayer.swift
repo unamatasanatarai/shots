@@ -214,19 +214,8 @@ public final class FilterLayer: AnnotationLayer {
                 context.addPath(path)
                 context.strokePath()
             }
-        } else {
-            context.setLineWidth(1.5)
-            for (idx, r) in rects.enumerated() {
-                guard r.width > 0 && r.height > 0 else { continue }
-                if selectedRectIndex == idx {
-                    let effectiveRadius = max(0.0, min(cornerRadius, min(r.width / 2.0, r.height / 2.0)))
-                    let path = CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
-                    context.addPath(path)
-                    context.setStrokeColor(NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor)
-                    context.strokePath()
-                }
-            }
         }
+        // Blur and pixelate filters have zero outline. Never outline.
 
         context.restoreGState()
     }
@@ -270,7 +259,6 @@ public final class FilterLayer: AnnotationLayer {
     private static var scratchContextHeight: Int = 0
     private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
     private static let spotlightDarkMaskColor = CGColor(gray: 0.0, alpha: 0.50)
-    private static let blurOutlineColor = CGColor(gray: 0.75, alpha: 0.35)
 
     private func drawSpotlightMask(canvasBounds: CGRect, in context: CGContext) {
         let width = Int(ceil(canvasBounds.width))
@@ -437,10 +425,7 @@ public final class FilterLayer: AnnotationLayer {
                 }
             }
 
-            // Outline around blurred area
-            context.setStrokeColor(Self.blurOutlineColor)
-            context.setLineWidth(1.0)
-            context.stroke(intersect)
+            // Blur tool has zero outline. Never outline.
 
             context.restoreGState()
         }

@@ -1118,11 +1118,15 @@ public enum EditorTests {
                 dimLayer
             ]
 
-            // 1. Verify hoverPath generates a valid CGPath for every layer
+            // 1. Verify hoverPath generates a valid CGPath for outlined layers, and nil for blur
             for layer in allLayers {
                 let path = canvas.hoverPath(for: layer)
-                assert(path != nil, "hoverPath must return non-nil CGPath for \(type(of: layer))")
-                assert(!path!.isEmpty, "hoverPath must not be empty for \(type(of: layer))")
+                if let filter = layer as? FilterLayer, filter.filterMode != .spotlight {
+                    assert(path == nil, "hoverPath must return nil for blur FilterLayer (never outline)")
+                } else {
+                    assert(path != nil, "hoverPath must return non-nil CGPath for \(type(of: layer))")
+                    assert(!path!.isEmpty, "hoverPath must not be empty for \(type(of: layer))")
+                }
             }
 
             // 2. Verify hover state updates for arbitrary layers (rectLayer, counterLayer, etc.)
@@ -2259,6 +2263,166 @@ public enum EditorTests {
             let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds)!
             canvas.cacheDisplay(in: canvas.bounds, to: rep)
             assert(rep.size.width > 0, "Canvas must draw display cache with blur under spotlight")
+        }
+
+        testRunner("Editor - Blur Tool Has Zero Outline") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let blurLayer = FilterLayer(rects: [CGRect(x: 40, y: 40, width: 120, height: 80)], filterMode: .gaussian)
+            doc.addLayer(blurLayer)
+            let canvas = EditorCanvasView(document: doc)
+
+            // 1. hoverPath must strictly be nil for blur layers
+            assert(canvas.hoverPath(for: blurLayer) == nil, "hoverPath for blur layer must be nil")
+
+            // 2. updateHoverState must not set hoverOutlineLayer for blur layers
+            canvas.updateHoverState(to: blurLayer)
+            assert(canvas.hoverOutlineLayer == nil, "hoverOutlineLayer must be nil when hovering over blur layer")
+
+            // 3. FilterLayer.draw(in:scale:) must not draw selection outline when selected
+            blurLayer.selectedRectIndex = 0
+            guard let bitmapCtx = CGContext(
+                data: nil,
+                width: 200,
+                height: 200,
+                bitsPerComponent: 8,
+                bytesPerRow: 200 * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create CGContext"])
+            }
+            blurLayer.draw(in: bitmapCtx, scale: 1.0)
+            // Path in context must remain empty after drawing blur layer
+            assert(bitmapCtx.path == nil || bitmapCtx.path?.isEmpty == true, "FilterLayer.draw for blur must not stroke or set any path in context")
+
+            // 4. Spotlight on the other hand DOES return a hoverPath
+            let spotlight = FilterLayer(rects: [CGRect(x: 40, y: 40, width: 120, height: 80)], filterMode: .spotlight)
+            assert(canvas.hoverPath(for: spotlight) != nil, "Spotlight layer must have a hover path")
+            canvas.updateHoverState(to: spotlight)
+            assert(canvas.hoverOutlineLayer?.id == spotlight.id, "hoverOutlineLayer must be set for spotlight layer")
+        }
+
+        testRunner("Editor - Any Tool Inside Spotlight Square Works Normally") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let spotlight = FilterLayer(rects: [CGRect(x: 50, y: 50, width: 200, height: 200)], filterMode: .spotlight)
+            doc.addLayer(spotlight)
+
+            let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let canvas = EditorCanvasView(document: doc)
+            canvas.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+            win.contentView = canvas
+
+            // 1. Arrow tool used inside Spotlight square: must NOT return to select
+            doc.activeTool = .arrow
+            let startInside = NSPoint(x: 100, y: 100)
+            let endInside = NSPoint(x: 180, y: 160)
+
+            let arrowDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: canvas.convert(startInside, to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 10,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            canvas.mouseDown(with: arrowDown)
+            assert(doc.activeTool == .arrow, "Active tool must remain .arrow when clicking inside spotlight square (must not return to select)")
+            assert(canvas.activeCreatingLayer is ArrowLayer, "activeCreatingLayer must be an ArrowLayer")
+
+            let arrowDrag = NSEvent.mouseEvent(
+                with: .leftMouseDragged,
+                location: canvas.convert(endInside, to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 11,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            canvas.mouseDragged(with: arrowDrag)
+
+            let arrowUp = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: canvas.convert(endInside, to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 12,
+                clickCount: 1,
+                pressure: 0.0
+            )!
+            canvas.mouseUp(with: arrowUp)
+
+            let createdArrow = doc.layers.first(where: { $0 is ArrowLayer }) as? ArrowLayer
+            assert(createdArrow != nil, "ArrowLayer must be created and added to document")
+            assert(createdArrow?.start == CGPoint(x: 100, y: 100), "Arrow start must be inside spotlight square")
+
+            // Clean up arrow before testing rectangle and pen tools
+            doc.removeLayer(id: createdArrow!.id)
+
+            // 2. Rectangle tool used inside Spotlight square
+            doc.activeTool = .rectangle
+            let rectDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: canvas.convert(NSPoint(x: 110, y: 110), to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 13,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            canvas.mouseDown(with: rectDown)
+            assert(doc.activeTool == .rectangle, "Active tool must remain .rectangle when clicking inside spotlight square")
+            assert(canvas.activeCreatingLayer is RectangleLayer, "activeCreatingLayer must be a RectangleLayer")
+
+            let rectUp = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: canvas.convert(NSPoint(x: 110, y: 110), to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 14,
+                clickCount: 1,
+                pressure: 0.0
+            )!
+            canvas.mouseUp(with: rectUp)
+
+            // 3. Pen tool used inside Spotlight square
+            doc.activeTool = .pen
+            let penDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: canvas.convert(NSPoint(x: 120, y: 120), to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 15,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            canvas.mouseDown(with: penDown)
+            assert(doc.activeTool == .pen, "Active tool must remain .pen when clicking inside spotlight square")
+            assert(canvas.activeCreatingLayer is PenLayer, "activeCreatingLayer must be a PenLayer")
         }
     }
 }

@@ -6,8 +6,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     public private(set) var document: EditorDocument
 
     // Interactive drawing & manipulation state
-    private var activeCreatingLayer: AnnotationLayer?
-    private var activeDraggingLayer: AnnotationLayer?
+    var activeCreatingLayer: AnnotationLayer?
+    var activeDraggingLayer: AnnotationLayer?
     private var activeHandleIndex: Int?
     private var activeDraggingRectIndex: Int?
     private var initialRectForDrag: CGRect?
@@ -223,7 +223,6 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private static let handleFillCGColor = CGColor(gray: 1.0, alpha: 1.0)
     private static let counterHandleBorderCGColor = CGColor(gray: 0.25, alpha: 0.9)
     private static let blurHighlightFillCGColor = CGColor(srgbRed: 0.15, green: 0.55, blue: 0.95, alpha: 0.28)
-    private static let blurHighlightStrokeCGColor = CGColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.90)
     private static let brushDarkOutlineCGColor = CGColor(gray: 0.0, alpha: 0.60)
     private static let brushLightOutlineCGColor = CGColor(gray: 1.0, alpha: 0.95)
 
@@ -437,18 +436,18 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return
         }
 
-        // If clicking inside a spotlight rectangle (hollow center), select it and cancel tool to "Select (V)"
-        if let spotlight = document.layers.reversed().first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
-            if let rectIdx = spotlight.rects.indices.reversed().first(where: { spotlight.rects[$0].standardized.contains(point) }) {
-                document.saveSnapshot()
-                if document.activeTool != .select {
+        // If clicking inside a spotlight rectangle (hollow center) while spotlight tool is active, cancel tool to "Select (V)"
+        if document.activeTool == .spotlight {
+            if let spotlight = document.layers.reversed().first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
+                if let rectIdx = spotlight.rects.indices.reversed().first(where: { spotlight.rects[$0].standardized.contains(point) }) {
+                    document.saveSnapshot()
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                    document.selectLayer(spotlight)
+                    spotlight.selectedRectIndex = rectIdx
+                    needsDisplay = true
+                    return
                 }
-                document.selectLayer(spotlight)
-                spotlight.selectedRectIndex = rectIdx
-                needsDisplay = true
-                return
             }
         }
 
@@ -945,7 +944,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     func updateHoverState(to newLayer: AnnotationLayer?) {
         if newLayer?.id != hoveredLayer?.id {
             hoveredLayer = newLayer
-            hoverOutlineLayer = newLayer
+            if let filter = newLayer as? FilterLayer, filter.filterMode != .spotlight {
+                hoverOutlineLayer = nil
+            } else {
+                hoverOutlineLayer = newLayer
+            }
             hoverAlpha = (newLayer != nil) ? 1.0 : 0.0
             needsDisplay = true
         }
@@ -972,6 +975,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         } else if let pen = layer as? PenLayer {
             return pen.hoverOutlinePath()
         } else if let filter = layer as? FilterLayer {
+            // Blur tool must have NO OUTLINE. Zero outline. Never outline.
+            guard filter.filterMode == .spotlight else { return nil }
             let path = CGMutablePath()
             let rectsToOutline: [CGRect]
             if filter.rects.count > 1, let pt = currentMouseCanvasPoint, let idx = filter.rectIndex(at: pt) ?? filter.hitTestHandle(point: pt).map({ $0 / 8 }) {
@@ -1046,16 +1051,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         let effectiveRadius = max(0.0, min(6.0, min(rect.width / 2.0, rect.height / 2.0)))
         let path = CGPath(roundedRect: rect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
 
-        // Frosted translucent highlight fill
+        // Frosted translucent highlight fill with zero outline
         context.setFillColor(Self.blurHighlightFillCGColor)
         context.addPath(path)
         context.fillPath()
-
-        // Crisp accent border
-        context.setStrokeColor(Self.blurHighlightStrokeCGColor)
-        context.setLineWidth(1.5)
-        context.addPath(path)
-        context.strokePath()
 
         context.restoreGState()
     }
