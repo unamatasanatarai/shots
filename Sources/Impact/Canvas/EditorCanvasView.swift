@@ -344,6 +344,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if let selected = document.getSelectedLayers().first,
            let handleIndex = selected.hitTestHandle(point: point) {
             document.saveSnapshot()
+            if document.activeTool != .select && document.activeTool != .blur {
+                document.activeTool = .select
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                document.selectLayer(selected)
+            }
             activeDraggingLayer = selected
             activeHandleIndex = handleIndex
             if let rectLayer = selected as? RectangleLayer {
@@ -357,15 +362,15 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     initialRectForDrag = filter.rects[rectIdx]
                 }
             }
-            if document.activeTool != .select && document.activeTool != .blur {
-                document.activeTool = .select
-                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
-            }
             return
         }
         for layer in document.layers.reversed() where layer.isVisible {
             if let handleIndex = layer.hitTestHandle(point: point) {
                 document.saveSnapshot()
+                if document.activeTool != .select && document.activeTool != .blur {
+                    document.activeTool = .select
+                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                }
                 document.selectLayer(layer)
                 activeDraggingLayer = layer
                 activeHandleIndex = handleIndex
@@ -380,10 +385,6 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         initialRectForDrag = filter.rects[rectIdx]
                     }
                 }
-                if document.activeTool != .select && document.activeTool != .blur {
-                    document.activeTool = .select
-                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
-                }
                 return
             }
         }
@@ -392,6 +393,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if let selected = document.getSelectedLayers().first {
             if selected.contains(point: point) {
                 document.saveSnapshot()
+                if document.activeTool != .select && document.activeTool != .blur {
+                    document.activeTool = .select
+                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                    document.selectLayer(selected)
+                }
                 activeDraggingLayer = selected
                 activeHandleIndex = nil
                 if let filter = selected as? FilterLayer {
@@ -402,10 +408,6 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         initialRectForDrag = filter.rects[rectIdx]
                     }
                 }
-                if document.activeTool != .select && document.activeTool != .blur {
-                    document.activeTool = .select
-                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
-                }
                 return
             }
         }
@@ -414,6 +416,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // do not add a new element; immediately select it and revert activeTool to pointer (.select)
         if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }) {
             document.saveSnapshot()
+            if document.activeTool != .select && document.activeTool != .blur {
+                document.activeTool = .select
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+            }
             document.selectLayer(hit)
             activeDraggingLayer = hit
             activeHandleIndex = nil
@@ -425,22 +431,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     initialRectForDrag = filter.rects[rectIdx]
                 }
             }
-            if document.activeTool != .select && document.activeTool != .blur {
-                document.activeTool = .select
-                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
-            }
             return
         }
 
         // If clicking inside a spotlight rectangle (hollow center), select it and cancel tool to "Select (V)"
-        if let spotlight = document.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
-            if let rectIdx = spotlight.rects.firstIndex(where: { $0.standardized.contains(point) }) {
+        if let spotlight = document.layers.reversed().first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
+            if let rectIdx = spotlight.rects.indices.reversed().first(where: { spotlight.rects[$0].standardized.contains(point) }) {
                 document.saveSnapshot()
                 if document.activeTool != .select {
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
                 document.selectLayer(spotlight)
+                spotlight.selectedRectIndex = rectIdx
                 needsDisplay = true
                 return
             }
@@ -967,7 +970,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return pen.hoverOutlinePath()
         } else if let filter = layer as? FilterLayer {
             let path = CGMutablePath()
-            for r in filter.rects {
+            let rectsToOutline: [CGRect]
+            if filter.rects.count > 1, let pt = currentMouseCanvasPoint, let idx = filter.rectIndex(at: pt) ?? filter.hitTestHandle(point: pt).map({ $0 / 8 }) {
+                rectsToOutline = [filter.rects[idx]]
+            } else {
+                rectsToOutline = filter.rects
+            }
+            for r in rectsToOutline {
                 guard r.width > 0 && r.height > 0 else { continue }
                 let effectiveRadius = max(0.0, min(filter.cornerRadius, min(r.width / 2.0, r.height / 2.0)))
                 path.addPath(CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil))
@@ -1138,19 +1147,17 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return
         }
 
-        // When in select mode, check if hovering over any movable layer
-        if document.activeTool == .select {
-            if hoveredLayer != nil {
-                NSCursor.sleekMove.set()
-                return
-            }
-            let hitsMovableLayer = document.layers.reversed().contains { layer in
-                layer.isVisible && layer.contains(point: point)
-            }
-            if hitsMovableLayer {
-                NSCursor.sleekMove.set()
-                return
-            }
+        // Check if hovering over any movable layer border/body
+        if hoveredLayer != nil {
+            NSCursor.sleekMove.set()
+            return
+        }
+        let hitsMovableLayer = document.layers.reversed().contains { layer in
+            layer.isVisible && layer.contains(point: point)
+        }
+        if hitsMovableLayer {
+            NSCursor.sleekMove.set()
+            return
         }
 
         // Also if any already selected layer contains the point (even if switching tools), dragging it moves it

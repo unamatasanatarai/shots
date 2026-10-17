@@ -2159,11 +2159,61 @@ public enum EditorTests {
             canvas.mouseDown(with: centerClickDown)
             assert(doc.activeTool == .select, "Clicking inside spotlight rectangle must cancel spotlight tool and pick Select (V)")
             assert(doc.selectedLayerIDs.contains(spotlight.id), "Spotlight layer must be selected")
+            assert(spotlight.selectedRectIndex == 0, "Selected rect index must be set to clicked hole")
 
             // 6. Test border catchment matching rectangle: max(10.0, strokeWidth + 6.0)
             spotlight.strokeWidth = 8.0
             assert(spotlight.rectIndex(at: CGPoint(x: 50 - 12, y: 60)) != nil, "Point within 14px of left border must be caught")
             assert(spotlight.rectIndex(at: CGPoint(x: 50 - 20, y: 60)) == nil, "Point outside 14px must not be caught")
+
+            // 7. Test hover area on borders: hover event on border sets hoveredLayer to spotlight
+            let borderMoveEvent = NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: canvas.convert(NSPoint(x: 50 - 5, y: 60), to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 4,
+                clickCount: 0,
+                pressure: 0.0
+            )!
+            canvas.mouseMoved(with: borderMoveEvent)
+            assert(canvas.hoveredLayer?.id == spotlight.id, "Hovering over spotlight border must set hoveredLayer")
+
+            // Hovering inside the hole or on distant overlay clears hoveredLayer
+            let centerMoveEvent = NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: canvas.convert(NSPoint(x: 100, y: 90), to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 5,
+                clickCount: 0,
+                pressure: 0.0
+            )!
+            canvas.mouseMoved(with: centerMoveEvent)
+            assert(canvas.hoveredLayer == nil, "Hovering inside hollow center must not set hoveredLayer")
+
+            // 8. Active clicking on border while spotlight tool is active selects it, cancels tool, and prepares drag
+            doc.activeTool = .spotlight
+            toolbar.updateSelectedToolVisuals()
+            let borderClickDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: canvas.convert(NSPoint(x: 50 - 5, y: 60), to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 6,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            canvas.mouseDown(with: borderClickDown)
+            assert(doc.activeTool == .select, "Clicking on spotlight border must switch activeTool to .select")
+            assert(doc.selectedLayerIDs.contains(spotlight.id), "Spotlight layer must remain selected after border click")
+            assert(spotlight.selectedRectIndex == 0, "Selected rect index must be 0")
         }
     }
 }
