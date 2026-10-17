@@ -1032,9 +1032,17 @@ public struct AppTests {
             let nonExistentURL = tempDir.appendingPathComponent("shot_missing.png")
 
             let historyService = ScreenshotHistoryService.shared
+            var revealedURLs: [URL] = []
+            historyService.onRevealInFinder = { url in
+                revealedURLs.append(url)
+            }
+            defer {
+                historyService.onRevealInFinder = { _ in }
+            }
 
             // 1. Verification of revealScreenshotInFinder API
             assert(historyService.revealScreenshotInFinder(fileURL: validShotURL) == true, "Existing file must reveal successfully")
+            assert(revealedURLs.contains(validShotURL), "Valid URL must be captured by reveal handler")
             assert(historyService.revealScreenshotInFinder(fileURL: nonExistentURL) == false, "Missing file must fail reveal safely")
 
             // 2. Verification of StatusBarController selection wiring
@@ -1048,6 +1056,7 @@ public struct AppTests {
 
             // Execute selection action on valid item
             controller.recentScreenshotSelected(item)
+            assert(revealedURLs.filter { $0 == validShotURL }.count >= 2, "recentScreenshotSelected must invoke reveal handler for valid item")
 
             // Execute selection action on missing item (must not crash)
             item.representedObject = nonExistentURL
@@ -1119,8 +1128,17 @@ public struct AppTests {
             assert(copyActionItem?.action == #selector(controller.copyRecentScreenshotAction(_:)), "Copy action selector must match")
 
             // Test executing both action selectors
+            var actionRevealedURLs: [URL] = []
+            ScreenshotHistoryService.shared.onRevealInFinder = { url in
+                actionRevealedURLs.append(url)
+            }
+            defer {
+                ScreenshotHistoryService.shared.onRevealInFinder = { _ in }
+            }
+
             if let revealItem = revealActionItem {
                 controller.revealRecentScreenshotAction(revealItem)
+                assert(!actionRevealedURLs.isEmpty, "revealRecentScreenshotAction must trigger reveal handler")
             }
             if let copyItem = copyActionItem {
                 controller.copyRecentScreenshotAction(copyItem)

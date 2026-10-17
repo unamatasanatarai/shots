@@ -108,32 +108,35 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         context.draw(document.originalImage, in: CGRect(x: document.originalImageBounds.origin.x, y: 0, width: document.originalImageBounds.width, height: document.originalImageBounds.height))
         context.restoreGState()
 
-        // 2. Draw Destructive / Masking Layers (Spotlight & Blur)
+        // 2a. Draw Blur / Pixelate Layers (always UNDER spotlight overlay)
+        for layer in document.layers where layer.isVisible {
+            if let filter = layer as? FilterLayer, filter.filterMode != .spotlight {
+                // When actively dragging/moving an existing blur layer, don't draw its blurred image mid-drag
+                if activeDraggingLayer?.id != filter.id {
+                    filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
+                }
+            }
+        }
+
+        // 2b. Draw Spotlight Overlay (always ON TOP of blur layers)
         // Combine any live creating spotlight with the existing spotlight overlay so there is only one unified overlay
         var drawnSpotlight = false
         for layer in document.layers where layer.isVisible {
-            if let filter = layer as? FilterLayer {
-                if filter.filterMode == .spotlight {
-                    drawnSpotlight = true
-                    if let liveSpotlight = activeCreatingLayer as? FilterLayer, liveSpotlight.filterMode == .spotlight, let liveRect = liveSpotlight.rects.first {
-                        let combinedRects = filter.rects + [liveRect]
-                        let combined = FilterLayer(
-                            rects: combinedRects,
-                            filterMode: .spotlight,
-                            intensity: filter.intensity,
-                            color: filter.color,
-                            strokeWidth: filter.strokeWidth,
-                            cornerRadius: filter.cornerRadius
-                        )
-                        combined.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
-                    } else {
-                        filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
-                    }
+            if let filter = layer as? FilterLayer, filter.filterMode == .spotlight {
+                drawnSpotlight = true
+                if let liveSpotlight = activeCreatingLayer as? FilterLayer, liveSpotlight.filterMode == .spotlight, let liveRect = liveSpotlight.rects.first {
+                    let combinedRects = filter.rects + [liveRect]
+                    let combined = FilterLayer(
+                        rects: combinedRects,
+                        filterMode: .spotlight,
+                        intensity: filter.intensity,
+                        color: filter.color,
+                        strokeWidth: filter.strokeWidth,
+                        cornerRadius: filter.cornerRadius
+                    )
+                    combined.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
                 } else {
-                    // For blur: when actively dragging/moving an existing blur layer, don't draw its blurred image mid-drag
-                    if activeDraggingLayer?.id != filter.id {
-                        filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
-                    }
+                    filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
                 }
             }
         }

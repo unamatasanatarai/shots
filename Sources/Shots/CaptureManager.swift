@@ -141,11 +141,13 @@ public final class CaptureManager {
     }
 
     @discardableResult
-    public func processScrollingFrames(_ frames: [CGImage]) -> CGImage? {
+    public func processScrollingFrames(_ frames: [CGImage], dispatch: Bool = false) -> CGImage? {
         guard let stitched = ScrollingCaptureService.shared.stitchFrames(frames) else {
             return nil
         }
-        processCapturedImage(stitched)
+        if dispatch {
+            processCapturedImage(stitched)
+        }
         return stitched
     }
 

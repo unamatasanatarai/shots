@@ -2215,6 +2215,51 @@ public enum EditorTests {
             assert(doc.selectedLayerIDs.contains(spotlight.id), "Spotlight layer must remain selected after border click")
             assert(spotlight.selectedRectIndex == 0, "Selected rect index must be 0")
         }
+
+        testRunner("Editor - Blur Areas Always Under Spotlight Overlay") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+
+            // 1. When adding spotlight first, then adding blur: blur layer must be inserted before spotlight in doc.layers
+            doc.ensureSpotlightOverlay()
+            guard let spotlight = doc.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Spotlight not found"])
+            }
+            spotlight.rects = [CGRect(x: 100, y: 100, width: 200, height: 200)]
+
+            let blurLayer = FilterLayer(rects: [CGRect(x: 50, y: 50, width: 300, height: 300)], filterMode: .gaussian, intensity: 10.0)
+            doc.addLayer(blurLayer)
+
+            let blurIdx = doc.layers.firstIndex(where: { $0.id == blurLayer.id })!
+            let spotIdx = doc.layers.firstIndex(where: { $0.id == spotlight.id })!
+            assert(blurIdx < spotIdx, "Blur layer must be positioned before (under) spotlight in document.layers")
+
+            // 2. When creating blur first, then ensuring spotlight: spotlight must be placed after blur
+            let doc2 = EditorDocument(image: cgImage)
+            let existingBlur = FilterLayer(rects: [CGRect(x: 20, y: 20, width: 80, height: 80)], filterMode: .gaussian)
+            doc2.addLayer(existingBlur)
+            doc2.ensureSpotlightOverlay()
+
+            let blurIdx2 = doc2.layers.firstIndex(where: { $0.id == existingBlur.id })!
+            let spotIdx2 = doc2.layers.firstIndex(where: { ($0 as? FilterLayer)?.filterMode == .spotlight })!
+            assert(blurIdx2 < spotIdx2, "Spotlight overlay must be placed after blur layer in document.layers")
+
+            // 3. Composition rendering: rendered composition must succeed with blur under spotlight
+            let comp = doc.renderComposition()
+            assert(comp != nil, "Composition with blur under spotlight must render successfully")
+
+            // 4. Canvas drawing: verify canvas draw pass with both blur and spotlight active
+            let canvas = EditorCanvasView(document: doc)
+            canvas.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+            let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds)!
+            canvas.cacheDisplay(in: canvas.bounds, to: rep)
+            assert(rep.size.width > 0, "Canvas must draw display cache with blur under spotlight")
+        }
     }
 }
 

@@ -46,7 +46,12 @@ public final class EditorDocument {
             return
         }
         let overlay = FilterLayer(rects: [], filterMode: .spotlight, color: activeColor)
-        layers.insert(overlay, at: 0)
+        // Ensure spotlight is positioned after any existing blur layers so blur areas remain under spotlight
+        if let lastBlurIndex = layers.lastIndex(where: { ($0 as? FilterLayer)?.filterMode != .spotlight }) {
+            layers.insert(overlay, at: lastBlurIndex + 1)
+        } else {
+            layers.insert(overlay, at: 0)
+        }
         selectedLayerIDs = [overlay.id]
     }
 
@@ -104,7 +109,13 @@ public final class EditorDocument {
 
     public func addLayer(_ layer: AnnotationLayer) {
         saveSnapshot()
-        layers.append(layer)
+        if let filter = layer as? FilterLayer, filter.filterMode != .spotlight,
+           let spotlightIndex = layers.firstIndex(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) {
+            // Blur areas must always be UNDER spotlight's overlay in layer hierarchy
+            layers.insert(layer, at: spotlightIndex)
+        } else {
+            layers.append(layer)
+        }
         selectedLayerIDs = [layer.id]
         isModified = true
         computeElasticBounds()
@@ -289,9 +300,16 @@ public final class EditorDocument {
         context.draw(originalImage, in: CGRect(x: originalImageBounds.origin.x, y: 0, width: originalImageBounds.width, height: originalImageBounds.height))
         context.restoreGState()
 
-        // 3. Draw Destructive / Masking layers (Spotlight & Blur)
+        // 3a. Draw Blur / Pixelate Filter layers first (always UNDER spotlight overlay)
         for layer in layers where layer.isVisible {
-            if let filterLayer = layer as? FilterLayer {
+            if let filterLayer = layer as? FilterLayer, filterLayer.filterMode != .spotlight {
+                filterLayer.applyFilter(to: originalImage, canvasBounds: activeCanvasBounds, in: context)
+            }
+        }
+
+        // 3b. Draw Spotlight overlay (always ON TOP of blur layers)
+        for layer in layers where layer.isVisible {
+            if let filterLayer = layer as? FilterLayer, filterLayer.filterMode == .spotlight {
                 filterLayer.applyFilter(to: originalImage, canvasBounds: activeCanvasBounds, in: context)
             }
         }

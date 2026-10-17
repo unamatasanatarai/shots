@@ -11,6 +11,9 @@ struct TestMain {
         var failed = 0
         let totalStart = CFAbsoluteTimeGetCurrent()
 
+        // Silence external GUI operations (e.g. Finder activations) during automated test runs
+        ScreenshotHistoryService.shared.onRevealInFinder = { _ in }
+
         let runTest: (String, () throws -> Void) -> Void = { name, block in
             let start = CFAbsoluteTimeGetCurrent()
             do {

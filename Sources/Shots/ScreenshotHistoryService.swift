@@ -139,13 +139,20 @@ public final class ScreenshotHistoryService {
         lock.unlock()
     }
 
+    /// Optional closure hook for intercepting or testing file reveal without opening external Finder windows
+    public var onRevealInFinder: ((URL) -> Void)?
+
     /// Reveals a selected screenshot file in macOS Finder, returning true on success.
     @discardableResult
     public func revealScreenshotInFinder(fileURL: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return false
         }
-        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        if let customHandler = onRevealInFinder {
+            customHandler(fileURL)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        }
         return true
     }
 

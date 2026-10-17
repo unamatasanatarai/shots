@@ -23,6 +23,7 @@ rm -f "$sdk_file"
 
 test_dir="${XDG_RUNTIME_DIR:-/tmp}"
 test_bin="${test_dir}/RunSwiftTests_${RANDOM}"
+trap 'rm -f "$test_bin"' EXIT INT TERM
 
 # Collect Shots app sources excluding entry points with @main (e.g. Main.swift)
 sources=()
