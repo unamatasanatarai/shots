@@ -4,16 +4,16 @@ import Cocoa
 
 public struct PreferencesView: View {
     public enum Tab: String, CaseIterable, Identifiable {
-        case general = "General"
         case capture = "Capture"
+        case general = "General"
         case shortcuts = "Shortcuts"
 
         public var id: String { rawValue }
 
         public var icon: String {
             switch self {
-            case .general: return "gearshape"
             case .capture: return "camera"
+            case .general: return "gearshape"
             case .shortcuts: return "keyboard"
             }
         }
@@ -44,7 +44,7 @@ public struct PreferencesView: View {
     }
 
     @ObservedObject public var settings = AppSettings.shared
-    @State private var selectedTab: Tab = .general
+    @State private var selectedTab: Tab = .capture
     @State private var recordingTarget: ShortcutTarget? = nil
     @State private var eventMonitor: Any?
     @State private var screenCaptureGranted: Bool = PermissionsManager.shared.isScreenRecordingGranted
@@ -67,13 +67,8 @@ public struct PreferencesView: View {
                         .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
                 }
 
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("Shots")
-                        .font(.system(size: 15, weight: .bold))
-                    Text("v\(AppConfig.version)")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
+                Text("Shots")
+                    .font(.system(size: 15, weight: .bold))
 
                 Spacer()
 
@@ -128,6 +123,16 @@ public struct PreferencesView: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
             }
+
+            // Footer with Version in Lower Right Corner
+            HStack {
+                Spacer()
+                Text("v\(AppConfig.version)")
+                    .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                    .foregroundColor(Color.secondary.opacity(0.65))
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 8)
         }
         .frame(width: 480, height: 435)
         .onAppear {
