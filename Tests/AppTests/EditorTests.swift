@@ -1446,9 +1446,9 @@ public enum EditorTests {
             panel.handleZoomWheel(with: eventDown)
             assert(sv.magnification >= sv.minMagnification, "Zoom must not fall below minMagnification (0.05)")
 
-            // 6. Reset to 100% zoom button
-            assert(panel.toolbarView.zoomResetButton != nil, "Toolbar must have zoomResetButton")
-            assert(panel.toolbarView.zoomFitButton != nil, "Toolbar must have zoomFitButton")
+            // 6. Compact zoom controls (magnifying glass buttons removed, only capsule with minus, percent, plus)
+            assert(panel.toolbarView.zoomResetButton == nil, "Toolbar zoomResetButton must be removed from capsule")
+            assert(panel.toolbarView.zoomFitButton == nil, "Toolbar zoomFitButton must be removed from capsule")
             assert(panel.toolbarView.zoomPercentButton != nil, "Toolbar must have zoomPercentButton")
             assert(panel.toolbarView.zoomInButton != nil, "Toolbar must have zoomInButton")
             assert(panel.toolbarView.zoomOutButton != nil, "Toolbar must have zoomOutButton")
@@ -1464,25 +1464,31 @@ public enum EditorTests {
             panel.toolbarView.zoomOutButton?.onAction?()
             assert(sv.magnification < magBeforeOut, "Clicking zoomOutButton must decrease magnification")
 
-            // Test Zoom Reset (100% / Actual Size) button
+            // Test Zoom Reset (100% / Actual Size) via callback / menu action
             sv.magnification = 3.25
             panel.canvasView.zoomScale = 3.25
-            panel.toolbarView.zoomResetButton?.onAction?()
-            assert(sv.magnification == 1.0, "Clicking zoomResetButton must reset magnification to 1.0 (100%)")
+            panel.toolbarView.onZoomResetRequested?()
+            assert(sv.magnification == 1.0, "onZoomResetRequested must reset magnification to 1.0 (100%)")
             assert(panel.canvasView.zoomScale == 1.0, "canvasView.zoomScale must be 1.0 after reset")
-            assert(panel.toolbarView.metaLabel.stringValue.contains("(100%)"), "metaLabel must display (100%) after zoom reset")
+            assert(panel.toolbarView.metaLabel.superview == nil, "metaLabel must be removed from the toolbar")
             assert(panel.toolbarView.zoomPercentButton?.titleLabel.stringValue == "100%", "zoomPercentButton must display 100%")
 
-            // Test Zoom Fit button
-            panel.toolbarView.zoomFitButton?.onAction?()
-            assert(sv.magnification == 1.0, "Clicking zoomFitButton on small image must show 100%")
+            // Test Zoom Fit via callback / menu action
+            panel.toolbarView.onZoomFitRequested?()
+            assert(sv.magnification == 1.0, "onZoomFitRequested on small image must show 100%")
 
-            // Test Zoom Presets Menu
+            // Test Zoom Presets Menu (ordered from lowest to largest, with 100% holding Cmd+0)
             let presetsMenu = panel.toolbarView.buildZoomPresetsMenu()
             assert(presetsMenu.items.contains { $0.title == "Best Fit" }, "Presets menu must contain 'Best Fit'")
-            assert(presetsMenu.items.contains { $0.title == "Actual Size (100%)" }, "Presets menu must contain 'Actual Size (100%)'")
-            assert(presetsMenu.items.contains { $0.title == "200%" }, "Presets menu must contain 200%")
-            assert(presetsMenu.items.contains { $0.title == "50%" }, "Presets menu must contain 50%")
+            assert(!presetsMenu.items.contains { $0.title == "Actual Size (100%)" }, "Presets menu must NOT contain 'Actual Size (100%)'")
+
+            let item100 = presetsMenu.items.first { $0.title == "100%" }
+            assert(item100 != nil, "Presets menu must contain '100%'")
+            assert(item100?.keyEquivalent == "0", "'100%' item must have keyEquivalent '0'")
+            assert(item100?.keyEquivalentModifierMask == [.command], "'100%' item must have Cmd modifier mask")
+
+            let percentItems = presetsMenu.items.compactMap { $0.title.hasSuffix("%") ? $0.title : nil }
+            assert(percentItems == ["25%", "50%", "75%", "100%", "150%", "200%", "400%", "800%"], "Presets menu must list zoom percentages from lowest to largest")
 
             // Test onZoomSetRequested
             panel.toolbarView.onZoomSetRequested?(0.5)
@@ -1827,7 +1833,7 @@ public enum EditorTests {
             assert(emptyPanel.welcomeDropView?.isHidden == false, "welcomeDropView must be visible when hasImage == false")
             assert(emptyPanel.welcomeDropView?.titleLabel.stringValue == "Drag or click to open", "Title must be 'Drag or click to open'")
             assert(emptyPanel.scrollView?.isHidden == true, "Canvas scrollView must be hidden in empty state")
-            assert(emptyPanel.toolbarView.metaLabel.stringValue.isEmpty, "Meta label must be empty in empty state")
+            assert(emptyPanel.toolbarView.metaLabel.superview == nil, "Meta label must not be in toolbar stack")
 
             // 2. Loading image into the existing empty window
             let context = CGContext(
@@ -1847,7 +1853,7 @@ public enum EditorTests {
             assert(emptyPanel.scrollView?.isHidden == false, "scrollView must be visible after loadImage")
             assert(emptyPanel.document.activeCanvasBounds.width == 320, "Canvas bounds width must match loaded image")
             assert(emptyPanel.document.activeCanvasBounds.height == 240, "Canvas bounds height must match loaded image")
-            assert(emptyPanel.toolbarView.metaLabel.stringValue.contains("320 × 240 px"), "Meta label must show 320 x 240 px")
+            assert(emptyPanel.toolbarView.metaLabel.superview == nil, "Meta label must remain omitted from toolbar")
 
             emptyPanel.close()
         }

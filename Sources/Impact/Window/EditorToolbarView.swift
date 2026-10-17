@@ -778,31 +778,8 @@ public final class EditorToolbarView: NSVisualEffectView {
         self.zoomInButton = zoomInBtn
         zoomStack.addArrangedSubview(zoomInBtn)
 
-        zoomStack.addArrangedSubview(createSegmentDivider())
-
-        let zoomFitBtn = ModernToolbarButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", tooltip: "Best Fit [Cmd 1]", size: NSSize(width: 26, height: 26), pointSize: 11.0, isSegment: true)
-        zoomFitBtn.onAction = { [weak self] in
-            self?.onZoomFitRequested?()
-        }
-        self.zoomFitButton = zoomFitBtn
-        zoomStack.addArrangedSubview(zoomFitBtn)
-
-        zoomStack.addArrangedSubview(createSegmentDivider())
-
-        let zoomResetBtn = ModernToolbarButton(systemName: "1.magnifyingglass", tooltip: "Actual Size (100%) [Cmd 0]", size: NSSize(width: 26, height: 26), pointSize: 11.0, isSegment: true)
-        zoomResetBtn.onAction = { [weak self] in
-            self?.onZoomResetRequested?()
-        }
-        self.zoomResetButton = zoomResetBtn
-        zoomStack.addArrangedSubview(zoomResetBtn)
-
         self.zoomContainerView = zoomCapsule
         stack.addArrangedSubview(zoomCapsule)
-
-        metaLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .medium)
-        metaLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
-        metaLabel.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(metaLabel)
 
         // Flexible spacer to right-align color swatch & action buttons
         let spacer = NSView()
@@ -886,17 +863,13 @@ public final class EditorToolbarView: NSVisualEffectView {
         if totalW <= 0 { return }
 
         // Progressive collapsing based directly on window width:
-        // 1. Zoom controls (Zoom capsule: 148px, Dimension Badge: ~130px)
+        // 1. Zoom controls (Zoom capsule)
         let showZoom = (totalW >= 740.0)
-        let showMeta = (totalW >= 920.0)
         zoomContainerView?.isHidden = !showZoom
         zoomOutButton?.isHidden = !showZoom
         zoomPercentButton?.isHidden = !showZoom
         zoomInButton?.isHidden = !showZoom
-        zoomFitButton?.isHidden = !showZoom
-        zoomResetButton?.isHidden = !showZoom
         zoomSeparatorView?.isHidden = !showZoom
-        metaLabel.isHidden = !showMeta
 
         // 2. Single color picker & tools separator
         updateColorVisibility()
@@ -1062,19 +1035,15 @@ public final class EditorToolbarView: NSVisualEffectView {
         fitItem.target = self
         menu.addItem(fitItem)
 
-        let actualItem = NSMenuItem(title: "Actual Size (100%)", action: #selector(zoomPresetResetSelected(_:)), keyEquivalent: "0")
-        actualItem.keyEquivalentModifierMask = [.command]
-        actualItem.target = self
-        if currentPercent == 100 {
-            actualItem.state = .on
-        }
-        menu.addItem(actualItem)
-
         menu.addItem(NSMenuItem.separator())
 
-        let presets: [Int] = [800, 400, 200, 150, 100, 75, 50, 25]
+        let presets: [Int] = [25, 50, 75, 100, 150, 200, 400, 800]
         for p in presets {
-            let item = NSMenuItem(title: "\(p)%", action: #selector(zoomPresetPercentSelected(_:)), keyEquivalent: "")
+            let keyEq = (p == 100) ? "0" : ""
+            let item = NSMenuItem(title: "\(p)%", action: #selector(zoomPresetPercentSelected(_:)), keyEquivalent: keyEq)
+            if p == 100 {
+                item.keyEquivalentModifierMask = [.command]
+            }
             item.target = self
             item.representedObject = CGFloat(p) / 100.0
             if currentPercent == p {
@@ -1215,6 +1184,5 @@ public final class EditorToolbarView: NSVisualEffectView {
 
     public func updateMeta(bounds: CGRect, zoomPercent: Int) {
         zoomPercentButton?.setTitle("\(zoomPercent)%")
-        metaLabel.stringValue = "\(Int(bounds.width)) × \(Int(bounds.height)) px  (\(zoomPercent)%)"
     }
 }
