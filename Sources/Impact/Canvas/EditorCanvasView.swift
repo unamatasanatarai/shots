@@ -357,7 +357,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     initialRectForDrag = filter.rects[rectIdx]
                 }
             }
-            if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
+            if document.activeTool != .select && document.activeTool != .blur {
                 document.activeTool = .select
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
@@ -380,7 +380,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         initialRectForDrag = filter.rects[rectIdx]
                     }
                 }
-                if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
+                if document.activeTool != .select && document.activeTool != .blur {
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
@@ -402,7 +402,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                         initialRectForDrag = filter.rects[rectIdx]
                     }
                 }
-                if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
+                if document.activeTool != .select && document.activeTool != .blur {
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 }
@@ -425,11 +425,25 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     initialRectForDrag = filter.rects[rectIdx]
                 }
             }
-            if document.activeTool != .select && document.activeTool != .spotlight && document.activeTool != .blur {
+            if document.activeTool != .select && document.activeTool != .blur {
                 document.activeTool = .select
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
             return
+        }
+
+        // If clicking inside a spotlight rectangle (hollow center), select it and cancel tool to "Select (V)"
+        if let spotlight = document.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
+            if let rectIdx = spotlight.rects.firstIndex(where: { $0.standardized.contains(point) }) {
+                document.saveSnapshot()
+                if document.activeTool != .select {
+                    document.activeTool = .select
+                    (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                }
+                document.selectLayer(spotlight)
+                needsDisplay = true
+                return
+            }
         }
 
         switch document.activeTool {
@@ -532,7 +546,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         case .spotlight:
             let spot = FilterLayer(
                 rects: [CGRect(origin: point, size: .zero)],
-                filterMode: .spotlight
+                filterMode: .spotlight,
+                color: document.activeColor
             )
             activeCreatingLayer = spot
 
@@ -837,6 +852,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     } else {
                         document.addLayer(creating)
                         document.selectLayer(creating)
+                    }
+                } else if let filter = creating as? FilterLayer, filter.filterMode == .spotlight {
+                    // Clicking on the overlay without creating a valid rectangle cancels tool to "Select (V)"
+                    document.cleanupEmptySpotlight()
+                    if document.activeTool != .select {
+                        document.activeTool = .select
                     }
                 }
             }

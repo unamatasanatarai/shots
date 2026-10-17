@@ -1104,21 +1104,17 @@ public final class EditorToolbarView: NSVisualEffectView {
         guard let doc = canvasView?.document else { return false }
         let selectedLayers = doc.getSelectedLayers()
         if !selectedLayers.isEmpty {
-            // Colors are invisible when using spotlight as they do not matter for this tool
-            let isSpotlight = selectedLayers.contains { ($0 as? FilterLayer)?.filterMode == .spotlight || $0.type == .spotlight }
-            if isSpotlight {
+            // Only blur has no outline / color
+            let isBlurOnly = selectedLayers.allSatisfy { $0.type == .blur }
+            if isBlurOnly {
                 return false
             }
             return true
         }
 
         // When no annotation is selected:
-        // Must show up only if a tool is selected (select is pointer/selection tool)
-        if doc.activeTool == .select {
-            return false
-        }
-        // Colors are invisible when using spotlight as they do not matter for this tool
-        if doc.activeTool == .spotlight {
+        // Must show up only if a tool is selected (select is pointer/selection tool, blur has no outline)
+        if doc.activeTool == .select || doc.activeTool == .blur {
             return false
         }
         return true
@@ -1151,7 +1147,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         let popoutVC = ColorPopoutViewController()
         let currentHex: String
         let selected = canvasView?.document.getSelectedLayers() ?? []
-        if let first = selected.first, first.type != .spotlight && first.type != .blur {
+        if let first = selected.first, first.type != .blur {
             currentHex = first.color
         } else {
             currentHex = canvasView?.document.activeColor ?? "#FF3B30"
@@ -1166,11 +1162,17 @@ public final class EditorToolbarView: NSVisualEffectView {
                 if !selected.isEmpty {
                     doc.saveSnapshot()
                     for layer in selected {
-                        if layer.type != .spotlight && layer.type != .blur {
+                        if layer.type != .blur {
                             layer.color = hex
                         }
                     }
                     doc.onNeedsDisplay?()
+                } else if doc.activeTool == .spotlight {
+                    if let spotlight = doc.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) {
+                        doc.saveSnapshot()
+                        spotlight.color = hex
+                        doc.onNeedsDisplay?()
+                    }
                 }
             }
             popover?.performClose(nil)
@@ -1202,7 +1204,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         let doc = canvasView?.document
         let selectedLayers = doc?.getSelectedLayers() ?? []
         let currentHex: String
-        if let first = selectedLayers.first, first.type != .spotlight && first.type != .blur {
+        if let first = selectedLayers.first, first.type != .blur {
             currentHex = first.color.uppercased()
         } else {
             currentHex = doc?.activeColor.uppercased() ?? "#FF3B30"

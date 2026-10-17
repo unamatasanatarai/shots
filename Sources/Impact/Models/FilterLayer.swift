@@ -79,7 +79,7 @@ public final class FilterLayer: AnnotationLayer {
     /// Returns the index of the rectangle whose boundary catchment area (10px) contains the point.
     /// The hollow center returns nil to prevent moving by grabbing the center.
     public func rectIndex(at point: CGPoint) -> Int? {
-        let catchment: CGFloat = 10.0
+        let catchment: CGFloat = max(10.0, strokeWidth + 6.0)
         for (idx, r) in rects.enumerated().reversed() {
             let outer = r.standardized.insetBy(dx: -catchment, dy: -catchment)
             let inner = r.standardized.insetBy(dx: catchment, dy: catchment)

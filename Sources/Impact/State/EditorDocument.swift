@@ -45,7 +45,7 @@ public final class EditorDocument {
             selectedLayerIDs = [existing.id]
             return
         }
-        let overlay = FilterLayer(rects: [], filterMode: .spotlight)
+        let overlay = FilterLayer(rects: [], filterMode: .spotlight, color: activeColor)
         layers.insert(overlay, at: 0)
         selectedLayerIDs = [overlay.id]
     }
@@ -148,7 +148,7 @@ public final class EditorDocument {
 
     public func selectLayer(_ layer: AnnotationLayer) {
         selectedLayerIDs = [layer.id]
-        if layer.type != .spotlight && layer.type != .blur {
+        if layer.type != .blur {
             activeColor = layer.color
         }
         onNeedsDisplay?()
@@ -159,7 +159,7 @@ public final class EditorDocument {
         for layer in layers.reversed() {
             if layer.isVisible && layer.contains(point: point) {
                 selectedLayerIDs = [layer.id]
-                if layer.type != .spotlight && layer.type != .blur {
+                if layer.type != .blur {
                     activeColor = layer.color
                 }
                 onNeedsDisplay?()

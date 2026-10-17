@@ -1873,11 +1873,17 @@ public enum EditorTests {
             assert(toolbar.shouldShowColorPicker == true, "Color picker must show when drawing tool is selected")
             assert(toolbar.colorStackView?.isHidden == false, "Color picker stack must be visible when arrow tool is selected")
 
-            // 4. When Spotlight tool is selected, colors are INVISIBLE
+            // 4. When Spotlight tool is selected, color picker is VISIBLE (spotlight outline color can be changed)
             doc.activeTool = .spotlight
             toolbar.updateSelectedToolVisuals()
-            assert(toolbar.shouldShowColorPicker == false, "Colors must be invisible when using spotlight")
-            assert(toolbar.colorStackView?.isHidden == true, "Color picker must be hidden when spotlight is active")
+            assert(toolbar.shouldShowColorPicker == true, "Color picker must be visible when spotlight is active")
+            assert(toolbar.colorStackView?.isHidden == false, "Color picker stack must be visible when spotlight is active")
+
+            // When Blur tool is selected, color picker is INVISIBLE (only blur has no outline)
+            doc.activeTool = .blur
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.shouldShowColorPicker == false, "Color picker must be hidden when blur is active because only blur has no outline")
+            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must be hidden when blur is active")
 
             // 5. In Select mode, selecting a colorable annotation makes color picker VISIBLE with that annotation's color
             doc.activeTool = .select
@@ -1889,14 +1895,24 @@ public enum EditorTests {
             assert(toolbar.colorStackView?.isHidden == false, "Color picker must be visible when an annotation is selected")
             assert(toolbar.singleColorButton?.currentColor.uppercased() == "#7048E8", "Single color button must reflect the selected annotation's color")
 
-            // 6. When a Spotlight annotation is selected, color picker remains INVISIBLE
+            // 6. When a Spotlight annotation is selected, color picker is VISIBLE (spotlight outline color can be changed)
             doc.selectedLayerIDs.removeAll()
-            let spotLayer = FilterLayer(rects: [CGRect(x: 5, y: 5, width: 20, height: 20)], filterMode: .spotlight)
+            let spotLayer = FilterLayer(rects: [CGRect(x: 5, y: 5, width: 20, height: 20)], filterMode: .spotlight, color: "#FF3B30")
             doc.addLayer(spotLayer)
             doc.selectLayer(spotLayer)
             toolbar.updateSelectedToolVisuals()
-            assert(toolbar.shouldShowColorPicker == false, "Color picker must remain invisible when spotlight annotation is selected")
-            assert(toolbar.colorStackView?.isHidden == true, "Color picker must be hidden for spotlight annotation")
+            assert(toolbar.shouldShowColorPicker == true, "Color picker must be visible when spotlight annotation is selected")
+            assert(toolbar.colorStackView?.isHidden == false, "Color picker must be visible for spotlight annotation")
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#FF3B30", "Single color button must reflect spotlight's outline color")
+
+            // When a Blur annotation is selected, color picker remains INVISIBLE (only blur has no outline)
+            doc.selectedLayerIDs.removeAll()
+            let blurLayer = FilterLayer(rects: [CGRect(x: 5, y: 5, width: 20, height: 20)], filterMode: .gaussian)
+            doc.addLayer(blurLayer)
+            doc.selectLayer(blurLayer)
+            toolbar.updateSelectedToolVisuals()
+            assert(toolbar.shouldShowColorPicker == false, "Color picker must remain invisible when blur annotation is selected")
+            assert(toolbar.colorStackView?.isHidden == true, "Color picker must be hidden for blur annotation")
 
             // 7. Popout grid contains exactly 8 predefined swatches and operates without custom color
             let popoutVC = ColorPopoutViewController()
@@ -1980,11 +1996,12 @@ public enum EditorTests {
             toolbar.updateSelectedColorVisuals()
             assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar button must show active color")
 
-            // 2. Switching to blur tool must not mutate activeColor
+            // 2. Switching to blur tool must not mutate activeColor, and hides color picker because blur has no outline
             doc.activeTool = .blur
             toolbar.updateSelectedToolVisuals()
             assert(doc.activeColor.uppercased() == "#007AFF", "Switching to blur tool must preserve activeColor")
-            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar must preserve color display when blur tool is active")
+            assert(toolbar.shouldShowColorPicker == false, "Color picker must be hidden when blur tool is active because only blur has no outline")
+            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must be hidden when blur is active")
 
             // 3. Adding and selecting a blur layer must not mutate activeColor
             let blurLayer = FilterLayer(
@@ -1998,12 +2015,12 @@ public enum EditorTests {
             toolbar.updateSelectedToolVisuals()
 
             assert(doc.activeColor.uppercased() == "#007AFF", "Selecting blur layer must not overwrite activeColor")
-            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar color must remain unchanged when blur layer is selected")
+            assert(toolbar.shouldShowColorPicker == false, "Color picker must remain hidden for blur layer")
+            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must remain hidden for blur layer")
 
             // 4. Hit-testing selection on blur layer must also not mutate activeColor
             _ = doc.selectLayer(at: CGPoint(x: 60, y: 60))
             assert(doc.activeColor.uppercased() == "#007AFF", "Selecting blur layer at point must not overwrite activeColor")
-            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#007AFF", "Toolbar color must remain unchanged after point selection of blur layer")
 
             // 5. Subsequent vector annotations created must retain user's chosen activeColor
             let arrow = ArrowLayer(
@@ -2012,6 +2029,141 @@ public enum EditorTests {
                 color: doc.activeColor
             )
             assert(arrow.color.uppercased() == "#007AFF", "Subsequent layer must use user-chosen activeColor, not white")
+        }
+
+        testRunner("Editor - Spotlight Outline Color Can Be Changed") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let canvas = EditorCanvasView(document: doc)
+            let toolbar = EditorToolbarView(canvasView: canvas)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 600, height: 44)
+
+            let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.contentView?.addSubview(toolbar)
+
+            // 1. Initial active color is #FF3B30
+            doc.activeColor = "#FF3B30"
+            doc.activeTool = .spotlight
+            toolbar.updateSelectedToolVisuals()
+
+            // 2. Color picker MUST be visible when spotlight is active
+            assert(toolbar.shouldShowColorPicker == true, "Color picker must be visible when spotlight is active")
+            assert(toolbar.colorStackView?.isHidden == false, "Color stack view must be visible when spotlight is active")
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#FF3B30", "Color button must show active color")
+
+            // 3. Spotlight overlay layer was created with active color
+            guard let spotOverlay = doc.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Spotlight overlay not found"])
+            }
+            assert(spotOverlay.color.uppercased() == "#FF3B30", "Spotlight overlay must inherit initial activeColor")
+
+            // 4. Changing color via popout updates the spotlight outline color
+            toolbar.singleColorButton?.onAction?()
+            if let popVC = toolbar.colorPopover?.contentViewController as? ColorPopoutViewController {
+                popVC.onColorSelected?("#34C759")
+            }
+            assert(spotOverlay.color.uppercased() == "#34C759", "Spotlight overlay color must update to chosen green hex")
+            assert(doc.activeColor.uppercased() == "#34C759", "Document activeColor must update to chosen green hex")
+            assert(toolbar.singleColorButton?.currentColor.uppercased() == "#34C759", "Toolbar color button must reflect new spotlight outline color")
+
+            // 5. Drawing in dummy context uses the updated spotlight outline color
+            let dummyContext = CGContext(
+                data: nil,
+                width: 100,
+                height: 100,
+                bitsPerComponent: 8,
+                bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            spotOverlay.rects = [CGRect(x: 10, y: 10, width: 40, height: 40)]
+            spotOverlay.draw(in: dummyContext, scale: 1.0)
+        }
+
+        testRunner("Editor - Clicking Spotlight Rectangle or Overlay Cancels Tool to Select") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+
+            let doc = EditorDocument(image: cgImage)
+            let canvas = EditorCanvasView(document: doc)
+            canvas.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+            let toolbar = EditorToolbarView(canvasView: canvas)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 600, height: 44)
+            let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.contentView?.addSubview(canvas)
+            win.contentView?.addSubview(toolbar)
+
+            // 1. Activate spotlight tool
+            doc.activeTool = .spotlight
+            toolbar.updateSelectedToolVisuals()
+            assert(doc.activeTool == .spotlight, "Active tool must be spotlight")
+
+            // 2. Click on the overlay (without dragging to size) -> must cancel tool and pick Select (V)
+            let overlayWinPt = canvas.convert(NSPoint(x: 200, y: 200), to: nil)
+            let overlayClickDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: overlayWinPt,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            let overlayClickUp = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: overlayWinPt,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 2,
+                clickCount: 1,
+                pressure: 0.0
+            )!
+            canvas.mouseDown(with: overlayClickDown)
+            canvas.mouseUp(with: overlayClickUp)
+            assert(doc.activeTool == .select, "Clicking on overlay must cancel spotlight tool and pick Select (V)")
+            assert(toolbar.toolButtons[.select]?.isActive == true, "Select (V) button must be active")
+
+            // 3. Add a spotlight hole
+            let spotlight = FilterLayer(rects: [CGRect(x: 50, y: 50, width: 100, height: 80)], filterMode: .spotlight)
+            doc.addLayer(spotlight)
+
+            // 4. Activate spotlight tool again
+            doc.activeTool = .spotlight
+            toolbar.updateSelectedToolVisuals()
+
+            // 5. Click inside the spotlight rectangle (hollow center at (100, 90)) -> cancels tool and picks Select (V)
+            let centerWinPt = canvas.convert(NSPoint(x: 100, y: 90), to: nil)
+            let centerClickDown = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: centerWinPt,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: win.windowNumber,
+                context: nil,
+                eventNumber: 3,
+                clickCount: 1,
+                pressure: 1.0
+            )!
+            canvas.mouseDown(with: centerClickDown)
+            assert(doc.activeTool == .select, "Clicking inside spotlight rectangle must cancel spotlight tool and pick Select (V)")
+            assert(doc.selectedLayerIDs.contains(spotlight.id), "Spotlight layer must be selected")
+
+            // 6. Test border catchment matching rectangle: max(10.0, strokeWidth + 6.0)
+            spotlight.strokeWidth = 8.0
+            assert(spotlight.rectIndex(at: CGPoint(x: 50 - 12, y: 60)) != nil, "Point within 14px of left border must be caught")
+            assert(spotlight.rectIndex(at: CGPoint(x: 50 - 20, y: 60)) == nil, "Point outside 14px must not be caught")
         }
     }
 }
