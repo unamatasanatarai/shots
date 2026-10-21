@@ -141,6 +141,12 @@ public final class EditorPanel: NSPanel {
             zoomOut()
             return
         }
+        if event.keyCode == 123 || event.keyCode == 124 || event.keyCode == 125 || event.keyCode == 126 { // Arrow keys
+            let isShift = event.modifierFlags.contains(.shift)
+            if canvasView.nudgeSelectedLayers(keyCode: event.keyCode, isShift: isShift, isRepeat: event.isARepeat) {
+                return
+            }
+        }
         super.keyDown(with: event)
     }
 

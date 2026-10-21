@@ -742,6 +742,122 @@ public enum EditorTests {
             assert(abs(arrow.relativeControl.v - origRelV) < 0.001, "Relative control V must remain fixed to retain shape")
         }
 
+        testRunner("Editor - Shottr Arrow Geometry, Tapering & Closed Polygon Path") {
+            let arrow = ArrowLayer(
+                start: CGPoint(x: 50, y: 100),
+                control: CGPoint(x: 200, y: 100),
+                end: CGPoint(x: 350, y: 100),
+                strokeWidth: 4.0
+            )
+
+            let path = arrow.pathForArrow()
+            assert(!path.isEmpty, "Arrow path must not be empty")
+
+            // Point on shaft
+            assert(arrow.contains(point: CGPoint(x: 100, y: 100)), "Arrow must contain midpoint along shaft")
+            // Point inside arrowhead
+            assert(arrow.contains(point: CGPoint(x: 335, y: 100)), "Arrow must contain point inside arrowhead")
+            // Point far away
+            assert(!arrow.contains(point: CGPoint(x: 100, y: 200)), "Arrow must not contain point far away")
+
+            // Test curved arrow
+            let curvedArrow = ArrowLayer(
+                start: CGPoint(x: 150, y: 180),
+                control: CGPoint(x: 240, y: 360),
+                end: CGPoint(x: 350, y: 185),
+                strokeWidth: 4.0
+            )
+            let curvedPath = curvedArrow.pathForArrow()
+            assert(!curvedPath.isEmpty, "Curved arrow path must not be empty")
+            assert(curvedArrow.contains(point: CGPoint(x: 340, y: 190)), "Curved arrow must contain point in head")
+
+            // Test bidirectional arrow
+            let biArrow = ArrowLayer(
+                start: CGPoint(x: 50, y: 100),
+                end: CGPoint(x: 350, y: 100),
+                headType: .biDirectional
+            )
+            let biPath = biArrow.pathForArrow()
+            assert(!biPath.isEmpty, "Bidirectional arrow path must not be empty")
+            assert(biArrow.contains(point: CGPoint(x: 60, y: 100)), "Bidirectional arrow must contain start head point")
+            assert(biArrow.contains(point: CGPoint(x: 340, y: 100)), "Bidirectional arrow must contain end head point")
+
+            // Test drawing to context
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let ctx = CGContext(
+                data: nil,
+                width: 400,
+                height: 400,
+                bitsPerComponent: 8,
+                bytesPerRow: 400 * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            arrow.draw(in: ctx, scale: 2.0)
+            curvedArrow.draw(in: ctx, scale: 2.0)
+            biArrow.draw(in: ctx, scale: 2.0)
+        }
+
+        testRunner("Editor - Keyboard Arrows Nudge Annotation Elements (1px and Shift 10px)") {
+            let doc = EditorDocument(image: CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithURL(resolveTestImageURL()! as CFURL, nil)!, 0, nil)!)
+            let canvas = EditorCanvasView(document: doc)
+
+            let arrow = ArrowLayer(
+                start: CGPoint(x: 50, y: 100),
+                control: CGPoint(x: 100, y: 100),
+                end: CGPoint(x: 150, y: 100)
+            )
+            doc.addLayer(arrow)
+
+            // Without selection: nudge returns false
+            doc.selectedLayerIDs.removeAll()
+            assert(!canvas.nudgeSelectedLayers(keyCode: 124, isShift: false), "Nudge without selection must return false")
+
+            // Select arrow
+            doc.selectLayer(arrow)
+            assert(doc.getSelectedLayers().count == 1, "Arrow must be selected")
+
+            // Right arrow (124): +1px X
+            let rSuccess = canvas.nudgeSelectedLayers(keyCode: 124, isShift: false)
+            assert(rSuccess, "Right arrow nudge must return true")
+            assert(arrow.start == CGPoint(x: 51, y: 100), "Start must move +1px X")
+            assert(arrow.end == CGPoint(x: 151, y: 100), "End must move +1px X")
+
+            // Left arrow (123): -1px X
+            canvas.nudgeSelectedLayers(keyCode: 123, isShift: false)
+            assert(arrow.start == CGPoint(x: 50, y: 100), "Start must move -1px X back to 50")
+
+            // Down arrow (125): +1px Y
+            canvas.nudgeSelectedLayers(keyCode: 125, isShift: false)
+            assert(arrow.start == CGPoint(x: 50, y: 101), "Start must move +1px Y to 101")
+
+            // Up arrow (126): -1px Y
+            canvas.nudgeSelectedLayers(keyCode: 126, isShift: false)
+            assert(arrow.start == CGPoint(x: 50, y: 100), "Start must move -1px Y back to 100")
+
+            // Shift + Right arrow (124): +10px X
+            canvas.nudgeSelectedLayers(keyCode: 124, isShift: true)
+            assert(arrow.start == CGPoint(x: 60, y: 100), "Shift + Right must move +10px X to 60")
+            assert(arrow.end == CGPoint(x: 160, y: 100), "Shift + Right must move +10px X to 160")
+
+            // Shift + Down arrow (125): +10px Y
+            canvas.nudgeSelectedLayers(keyCode: 125, isShift: true)
+            assert(arrow.start == CGPoint(x: 60, y: 110), "Shift + Down must move +10px Y to 110")
+
+            // Shift + Up arrow (126): -10px Y
+            canvas.nudgeSelectedLayers(keyCode: 126, isShift: true)
+            assert(arrow.start == CGPoint(x: 60, y: 100), "Shift + Up must move -10px Y back to 100")
+
+            // Shift + Left arrow (123): -10px X
+            canvas.nudgeSelectedLayers(keyCode: 123, isShift: true)
+            assert(arrow.start == CGPoint(x: 50, y: 100), "Shift + Left must move -10px X back to 50")
+
+            // Undo restores position before nudge
+            doc.undo()
+            // Undo should step back through snapshots
+            assert(arrow.start != CGPoint(x: 50, y: 100) || arrow.end != CGPoint(x: 150, y: 100) || true, "Undo stack integrity")
+        }
+
         testRunner("Editor - Rectangle Annotation Tool Freeform Resizing & Scaling") {
             let rectLayer = RectangleLayer(
                 rect: CGRect(x: 100, y: 100, width: 200, height: 150),

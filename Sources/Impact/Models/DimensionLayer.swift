@@ -97,6 +97,13 @@ public final class DimensionLayer: AnnotationLayer {
     public func draw(in context: CGContext, scale: CGFloat) {
         context.saveGState()
 
+        // Subtle natural shadow for depth and crispness
+        context.setShadow(
+            offset: CGSize(width: 0, height: -1.0),
+            blur: 2.5,
+            color: NSColor.black.withAlphaComponent(0.25).cgColor
+        )
+
         let strokeCGColor = FastColor.shared.cgColor(hex: color)
         context.setStrokeColor(strokeCGColor)
         context.setLineWidth(strokeWidth)
@@ -150,6 +157,9 @@ public final class DimensionLayer: AnnotationLayer {
         let pillPath = CGPath(roundedRect: badgeRect, cornerWidth: 4.0, cornerHeight: 4.0, transform: nil)
         context.addPath(pillPath)
         context.fillPath()
+
+        // Clear shadow before drawing text for crispness
+        context.setShadow(offset: .zero, blur: 0, color: nil)
 
         // Text
         let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)

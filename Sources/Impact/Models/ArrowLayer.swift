@@ -80,62 +80,40 @@ public final class ArrowLayer: AnnotationLayer {
     public func getBoundingBox() -> CGRect {
         if let cached = _cachedBoundingBox { return cached }
 
-        // Sample points along the quadratic curve: B(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
-        var minX = min(start.x, end.x, control.x)
-        var minY = min(start.y, end.y, control.y)
-        var maxX = max(start.x, end.x, control.x)
-        var maxY = max(start.y, end.y, control.y)
+        let path = pathForArrow()
+        let bounds = path.boundingBoxOfPath
 
-        // For precise quadratic extrema
-        let denomX = start.x - 2 * control.x + end.x
-        if abs(denomX) > 0.001 {
-            let tx = (start.x - control.x) / denomX
-            if tx > 0 && tx < 1 {
-                let x = (1 - tx) * (1 - tx) * start.x + 2 * (1 - tx) * tx * control.x + tx * tx * end.x
-                minX = min(minX, x)
-                maxX = max(maxX, x)
-            }
+        let padding = max(strokeWidth * 2.0 + 8.0, 16.0)
+        let box: CGRect
+        if bounds.isNull || bounds.isEmpty || bounds.isInfinite {
+            let minX = min(start.x, end.x, control.x)
+            let minY = min(start.y, end.y, control.y)
+            let maxX = max(start.x, end.x, control.x)
+            let maxY = max(start.y, end.y, control.y)
+            box = CGRect(
+                x: minX - padding,
+                y: minY - padding,
+                width: max(padding * 2, maxX - minX + padding * 2),
+                height: max(padding * 2, maxY - minY + padding * 2)
+            )
+        } else {
+            var b = bounds.insetBy(dx: -padding, dy: -padding)
+            b = b.union(CGRect(x: start.x - padding, y: start.y - padding, width: padding * 2, height: padding * 2))
+            b = b.union(CGRect(x: end.x - padding, y: end.y - padding, width: padding * 2, height: padding * 2))
+            b = b.union(CGRect(x: control.x - padding, y: control.y - padding, width: padding * 2, height: padding * 2))
+            box = b
         }
-        let denomY = start.y - 2 * control.y + end.y
-        if abs(denomY) > 0.001 {
-            let ty = (start.y - control.y) / denomY
-            if ty > 0 && ty < 1 {
-                let y = (1 - ty) * (1 - ty) * start.y + 2 * (1 - ty) * ty * control.y + ty * ty * end.y
-                minY = min(minY, y)
-                maxY = max(maxY, y)
-            }
-        }
-
-        let padding = max(strokeWidth * 4.0 + 16.0, 48.0)
-        let box = CGRect(
-            x: minX - padding,
-            y: minY - padding,
-            width: maxX - minX + padding * 2,
-            height: maxY - minY + padding * 2
-        )
         _cachedBoundingBox = box
         return box
     }
 
     public func contains(point: CGPoint) -> Bool {
-        // Fast early rejection via cached bounding box
         guard getBoundingBox().contains(point) else { return false }
-
-        // Distance check along sampled Bezier curve using squared distances (no sqrt/hypot)
-        let steps = 30
-        let threshold = max(strokeWidth * 1.5, 10.0)
-        let thresholdSq = threshold * threshold
-
-        var prev = start
-        for i in 1...steps {
-            let t = CGFloat(i) / CGFloat(steps)
-            let curr = pointOnCurve(t: t)
-            if distanceToSegmentSq(p: point, a: prev, b: curr) <= thresholdSq {
-                return true
-            }
-            prev = curr
-        }
-        return false
+        let path = pathForArrow()
+        if path.contains(point) { return true }
+        let tolerance = max(strokeWidth, 8.0)
+        let stroked = path.copy(strokingWithWidth: tolerance * 2.0, lineCap: .round, lineJoin: .round, miterLimit: 10.0)
+        return stroked.contains(point)
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
@@ -192,6 +170,14 @@ public final class ArrowLayer: AnnotationLayer {
     // MARK: - Drawing
 
     public func draw(in context: CGContext, scale: CGFloat) {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let totalDistSq = dx * dx + dy * dy
+        guard totalDistSq > 16.0 else { return }
+
+        let path = pathForArrow()
+        guard !path.isEmpty else { return }
+
         context.saveGState()
 
         let strokeColor = _cachedStrokeColor ?? {
@@ -200,51 +186,17 @@ public final class ArrowLayer: AnnotationLayer {
             return c
         }()
 
+        context.setFillColor(strokeColor)
         context.setStrokeColor(strokeColor)
-        context.setLineCap(.round)
+        context.setLineWidth(1.8)
         context.setLineJoin(.round)
+        context.setLineCap(.round)
 
         // Subtle natural shadow for depth and crispness
         context.setShadow(offset: CGSize(width: 0, height: -1.0), blur: 2.5, color: NSColor.black.withAlphaComponent(0.25).cgColor)
 
-        let dx = end.x - start.x
-        let dy = end.y - start.y
-        let totalDistSq = dx * dx + dy * dy
-        guard totalDistSq > 16.0 else { // > 4.0 px distance
-            context.restoreGState()
-            return
-        }
-        let totalDist = sqrt(totalDistSq)
-
-        // Maximum width scale: stroke scales slightly with arrow length, but strictly capped at a maximum width
-        let lengthFactor = min(1.0, max(0.0, (totalDist - 20.0) / 350.0))
-        let effectiveStroke = min(5.5, max(2.5, strokeWidth * (0.8 + 0.35 * lengthFactor)))
-        context.setLineWidth(effectiveStroke)
-
-        let path = pathForArrow()
         context.addPath(path)
-        context.strokePath()
-
-        // If bidirectional, draw open-chevron arrowhead at 'start' pointing backwards
-        if headType == .biDirectional {
-            let startTangent = tangentAt(t: 0.0) + .pi
-            let headLength = min(28.0, max(9.0, totalDist * 0.065 + 10.0))
-            let barbAngle: CGFloat = 32.0 * .pi / 180.0
-
-            let leftAngle = startTangent + .pi - barbAngle
-            let rightAngle = startTangent + .pi + barbAngle
-
-            let leftBarb = CGPoint(x: start.x + cos(leftAngle) * headLength, y: start.y + sin(leftAngle) * headLength)
-            let rightBarb = CGPoint(x: start.x + cos(rightAngle) * headLength, y: start.y + sin(rightAngle) * headLength)
-
-            let headPath = CGMutablePath()
-            headPath.move(to: leftBarb)
-            headPath.addLine(to: start)
-            headPath.addLine(to: rightBarb)
-
-            context.addPath(headPath)
-            context.strokePath()
-        }
+        context.drawPath(using: .fillStroke)
 
         context.restoreGState()
     }
@@ -260,28 +212,171 @@ public final class ArrowLayer: AnnotationLayer {
             _cachedPath = empty
             return empty
         }
-        let totalDist = sqrt(totalDistSq)
+
+        // 1. Calculate approximate arc length along quadratic Bezier curve
+        let sampleSteps = 32
+        var arcLength: CGFloat = 0.0
+        var prevPt = start
+        for i in 1...sampleSteps {
+            let t = CGFloat(i) / CGFloat(sampleSteps)
+            let pt = pointOnCurve(t: t)
+            arcLength += hypot(pt.x - prevPt.x, pt.y - prevPt.y)
+            prevPt = pt
+        }
+
+        guard arcLength > 4.0 else {
+            let empty = CGMutablePath()
+            _cachedPath = empty
+            return empty
+        }
+
+        let scale = max(0.5, strokeWidth / 4.0)
+        let maxHeadLength: CGFloat = 43.0 * scale
+
+        // Head length smoothly scales with arrow length up to maxHeadLength
+        let targetHeadLength = min(
+            maxHeadLength,
+            max(8.0 * scale, maxHeadLength * (1.0 - exp(-pow(arcLength / (90.0 * scale), 0.7))))
+        )
+        let isBiDirectional = (headType == .biDirectional)
+        let maxHeadRatio: CGFloat = isBiDirectional ? 0.35 : 0.38
+        let headLength = min(arcLength * maxHeadRatio, targetHeadLength)
+        // Equilateral triangle arrowhead (apex angle ≈ 60 degrees, base ≈ 1.16 * L)
+        let headWidth = headLength * 1.16
+
+        // Shaft end width at arrowhead base
+        let shaftEndWidth = max(3.0 * scale, headLength * 0.38)
+        // Shaft start width at tail (gentle taper for short arrows, reaching ~53% on long arrows)
+        let taperFactor = min(0.85, max(0.53, 0.85 - 0.32 * min(1.0, arcLength / 350.0)))
+        let shaftStartWidth = isBiDirectional ? shaftEndWidth : max(2.5 * scale, shaftEndWidth * taperFactor)
+
+        // Tangent and normal at end (t = 1.0)
+        let endTanAngle = tangentAt(t: 1.0)
+        let txEnd = cos(endTanAngle)
+        let tyEnd = sin(endTanAngle)
+        let nxEnd = -tyEnd
+        let nyEnd = txEnd
+
+        // Arrowhead base center at end:
+        let headBaseCenter = CGPoint(
+            x: end.x - txEnd * headLength,
+            y: end.y - tyEnd * headLength
+        )
+
+        let halfHeadW = headWidth / 2.0
+        let leftBarb = CGPoint(x: headBaseCenter.x + nxEnd * halfHeadW, y: headBaseCenter.y + nyEnd * halfHeadW)
+        let rightBarb = CGPoint(x: headBaseCenter.x - nxEnd * halfHeadW, y: headBaseCenter.y - nyEnd * halfHeadW)
+
+        let halfEndW = shaftEndWidth / 2.0
+        let shaftRightEnd = CGPoint(x: headBaseCenter.x - nxEnd * halfEndW, y: headBaseCenter.y - nyEnd * halfEndW)
+        let shaftLeftEnd = CGPoint(x: headBaseCenter.x + nxEnd * halfEndW, y: headBaseCenter.y + nyEnd * halfEndW)
+
+        // Tangent and normal at start (t = 0.0)
+        let startTanAngle = tangentAt(t: 0.0)
+        let txStart = cos(startTanAngle)
+        let tyStart = sin(startTanAngle)
+        let nxStart = -tyStart
+        let nyStart = txStart
 
         let path = CGMutablePath()
 
-        // 1. Shaft: Quadratic Bezier from start to end
-        path.move(to: start)
-        path.addQuadCurve(to: end, control: control)
+        if isBiDirectional {
+            // Bidirectional: Arrowhead at start and arrowhead at end
+            let startHeadBaseCenter = CGPoint(
+                x: start.x + txStart * headLength,
+                y: start.y + tyStart * headLength
+            )
+            let startLeftBarb = CGPoint(x: startHeadBaseCenter.x + nxStart * halfHeadW, y: startHeadBaseCenter.y + nyStart * halfHeadW)
+            let startRightBarb = CGPoint(x: startHeadBaseCenter.x - nxStart * halfHeadW, y: startHeadBaseCenter.y - nyStart * halfHeadW)
+            let shaftLeftStart = CGPoint(x: startHeadBaseCenter.x + nxStart * halfEndW, y: startHeadBaseCenter.y + nyStart * halfEndW)
+            let shaftRightStart = CGPoint(x: startHeadBaseCenter.x - nxStart * halfEndW, y: startHeadBaseCenter.y - nyStart * halfEndW)
 
-        // 2. Head: Handdrawn open chevron wings anchored at end
-        let endTangent = tangentAt(t: 1.0)
-        let headLength = min(28.0, max(9.0, totalDist * 0.065 + 10.0))
-        let barbAngle: CGFloat = 32.0 * .pi / 180.0
+            let tHeadStart = min(0.40, headLength / arcLength)
+            let tHeadEnd = max(tHeadStart + 0.05, 1.0 - (headLength / arcLength))
 
-        let leftAngle = endTangent + .pi - barbAngle
-        let rightAngle = endTangent + .pi + barbAngle
+            let shaftSteps = 24
+            var rightShaftPts: [CGPoint] = [shaftRightStart]
+            var leftShaftPts: [CGPoint] = [shaftLeftStart]
+            rightShaftPts.reserveCapacity(shaftSteps + 1)
+            leftShaftPts.reserveCapacity(shaftSteps + 1)
 
-        let leftBarb = CGPoint(x: end.x + cos(leftAngle) * headLength, y: end.y + sin(leftAngle) * headLength)
-        let rightBarb = CGPoint(x: end.x + cos(rightAngle) * headLength, y: end.y + sin(rightAngle) * headLength)
+            for i in 1..<shaftSteps {
+                let frac = CGFloat(i) / CGFloat(shaftSteps)
+                let t = tHeadStart + (tHeadEnd - tHeadStart) * frac
+                let pt = pointOnCurve(t: t)
+                let tan = tangentAt(t: t)
+                let nx = -sin(tan)
+                let ny = cos(tan)
 
-        path.move(to: leftBarb)
-        path.addLine(to: end)
-        path.addLine(to: rightBarb)
+                let u = abs(frac - 0.5) * 2.0
+                let w = shaftStartWidth * 0.7 + (shaftEndWidth - shaftStartWidth * 0.7) * u
+                let h = w / 2.0
+                rightShaftPts.append(CGPoint(x: pt.x - nx * h, y: pt.y - ny * h))
+                leftShaftPts.append(CGPoint(x: pt.x + nx * h, y: pt.y + ny * h))
+            }
+            rightShaftPts.append(shaftRightEnd)
+            leftShaftPts.append(shaftLeftEnd)
+
+            path.move(to: rightBarb)
+            path.addLine(to: end)
+            path.addLine(to: leftBarb)
+            path.addLine(to: shaftLeftEnd)
+            for pt in leftShaftPts.dropLast().reversed() {
+                path.addLine(to: pt)
+            }
+            path.addLine(to: shaftLeftStart)
+            path.addLine(to: startLeftBarb)
+            path.addLine(to: start)
+            path.addLine(to: startRightBarb)
+            path.addLine(to: shaftRightStart)
+            for pt in rightShaftPts.dropFirst() {
+                path.addLine(to: pt)
+            }
+            path.addLine(to: shaftRightEnd)
+            path.closeSubpath()
+        } else {
+            // Standard/Filled: Flat tail at start, arrowhead at end
+            let halfStartW = shaftStartWidth / 2.0
+            let shaftRightStart = CGPoint(x: start.x - nxStart * halfStartW, y: start.y - nyStart * halfStartW)
+            let shaftLeftStart = CGPoint(x: start.x + nxStart * halfStartW, y: start.y + nyStart * halfStartW)
+
+            let tEnd = max(0.05, 1.0 - (headLength / arcLength))
+            let shaftSteps = 24
+            var rightShaftPts: [CGPoint] = [shaftRightStart]
+            var leftShaftPts: [CGPoint] = [shaftLeftStart]
+            rightShaftPts.reserveCapacity(shaftSteps + 1)
+            leftShaftPts.reserveCapacity(shaftSteps + 1)
+
+            for i in 1..<shaftSteps {
+                let frac = CGFloat(i) / CGFloat(shaftSteps)
+                let t = frac * tEnd
+                let pt = pointOnCurve(t: t)
+                let tan = tangentAt(t: t)
+                let nx = -sin(tan)
+                let ny = cos(tan)
+
+                let w = shaftStartWidth + (shaftEndWidth - shaftStartWidth) * frac
+                let h = w / 2.0
+                rightShaftPts.append(CGPoint(x: pt.x - nx * h, y: pt.y - ny * h))
+                leftShaftPts.append(CGPoint(x: pt.x + nx * h, y: pt.y + ny * h))
+            }
+            rightShaftPts.append(shaftRightEnd)
+            leftShaftPts.append(shaftLeftEnd)
+
+            path.move(to: shaftRightStart)
+            for pt in rightShaftPts.dropFirst() {
+                path.addLine(to: pt)
+            }
+            path.addLine(to: rightBarb)
+            path.addLine(to: end)
+            path.addLine(to: leftBarb)
+            path.addLine(to: shaftLeftEnd)
+            for pt in leftShaftPts.dropLast().reversed() {
+                path.addLine(to: pt)
+            }
+            // Flat butt cap at tail connects shaftLeftStart back to shaftRightStart
+            path.closeSubpath()
+        }
 
         _cachedPath = path
         return path
@@ -304,25 +399,10 @@ public final class ArrowLayer: AnnotationLayer {
         let u = 1.0 - t
         let dx = 2 * u * (control.x - start.x) + 2 * t * (end.x - control.x)
         let dy = 2 * u * (control.y - start.y) + 2 * t * (end.y - control.y)
-        return atan2(dy, dx)
-    }
-
-    @inline(__always)
-    private func distanceToSegmentSq(p: CGPoint, a: CGPoint, b: CGPoint) -> CGFloat {
-        let dx = b.x - a.x
-        let dy = b.y - a.y
-        let lenSq = dx * dx + dy * dy
-        if lenSq < 0.001 {
-            let px = p.x - a.x
-            let py = p.y - a.y
-            return px * px + py * py
+        if dx * dx + dy * dy < 0.000001 {
+            return atan2(end.y - start.y, end.x - start.x)
         }
-        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq))
-        let projX = a.x + t * dx
-        let projY = a.y + t * dy
-        let dpx = p.x - projX
-        let dpy = p.y - projY
-        return dpx * dpx + dpy * dpy
+        return atan2(dy, dx)
     }
 
     public func clone() -> AnnotationLayer {

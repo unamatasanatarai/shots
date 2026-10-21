@@ -1222,6 +1222,40 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
     }
 
+    @discardableResult
+    public func nudgeSelectedLayers(keyCode: UInt16, isShift: Bool, isRepeat: Bool = false) -> Bool {
+        let selectedLayers = document.getSelectedLayers()
+        guard !selectedLayers.isEmpty else { return false }
+
+        let step: CGFloat = isShift ? 10.0 : 1.0
+        let delta: CGPoint
+
+        switch keyCode {
+        case 123: // Left Arrow
+            delta = CGPoint(x: -step, y: 0)
+        case 124: // Right Arrow
+            delta = CGPoint(x: step, y: 0)
+        case 125: // Down Arrow
+            delta = CGPoint(x: 0, y: step)
+        case 126: // Up Arrow
+            delta = CGPoint(x: 0, y: -step)
+        default:
+            return false
+        }
+
+        if !isRepeat {
+            document.saveSnapshot()
+        }
+
+        for layer in selectedLayers {
+            layer.move(by: delta)
+        }
+
+        document.computeElasticBounds()
+        needsDisplay = true
+        return true
+    }
+
     override public func cancelOperation(_ sender: Any?) {
         handleEscapeKey()
     }
@@ -1230,6 +1264,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if event.keyCode == 53 { // Escape
             handleEscapeKey()
             return
+        }
+        if event.keyCode == 123 || event.keyCode == 124 || event.keyCode == 125 || event.keyCode == 126 { // Arrow keys
+            let isShift = event.modifierFlags.contains(.shift)
+            if nudgeSelectedLayers(keyCode: event.keyCode, isShift: isShift, isRepeat: event.isARepeat) {
+                return
+            }
         }
         if event.keyCode == 49 { // Spacebar
             isSpacePressed = true
