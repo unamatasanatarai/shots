@@ -67,6 +67,7 @@ Screen capture on macOS is often trapped between two extremes: minimal system sh
 - **Elastic Canvas**: Add annotations, arrows, or callout badges that extend outside the captured image boundary; the canvas dynamically expands with a 10px breathing margin and contracts cleanly on deletion.
 - **3-Point Quadratic Bezier Arrows (`A`)**: Create curved arrows with dynamic curvature retention that maintain proportional arc geometry when stretched or reoriented.
 - **Auto-Incrementing Counter Badges (`C`)**: Drop sequential numbered badges that calculate the next integer in sequence and feature draggable directional pointer tails.
+- **Live-Sizing Text Callouts (`T`)**: Click to drop a speech-bubble callout and type straight into it; the box grows and shrinks with every keystroke, the beak can be aimed from any edge at any length, and each editing session is a single undo step.
 - **Single-Layer Multi-Hole Spotlight (`S`)**: Darken the image with a unified 50% mask and punch clean, rounded rectangular focus windows across points of interest.
 - **Privacy Redaction Blur (`B`)**: Apply localized Gaussian blur filters to redact sensitive tokens, passwords, or faces, featuring interactive 8-point resize handles and 10px boundary catchment dragging.
 - **Smooth Vector Ink & Highlighter (`P` / `H`)**: Natural quadratic Bezier ink curves with pre-draw footprint previews and multiply-blend highlighting.
@@ -111,6 +112,7 @@ Screen capture on macOS is often trapped between two extremes: minimal system sh
 | **Oval / Ellipse** | `O` | Proportional or freeform elliptical bounding layer |
 | **Spotlight** | `S` | Darkened mask with punched transparent highlight holes |
 | **Step Counter** | `C` | Auto-incrementing numbered badge with pointer tail |
+| **Callout** | `T` | Text box that sizes to its text, with a draggable tapered beak |
 | **Freehand Pen** | `P` or `D` | Opaque smooth vector ink with nib preview |
 | **Highlighter** | `H` | Translucent multiply-blended freehand marker |
 | **Privacy Blur** | `B` or `U` | Localized Gaussian blur with 8-point resize handles |

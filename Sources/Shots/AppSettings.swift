@@ -58,6 +58,13 @@ public enum ScrollingCaptureSpeed: String, CaseIterable, Identifiable {
         case .fast: return 120
         }
     }
+
+    /// Scroll delta adapted to the selected region: at most half its height, so consecutive
+    /// frames always overlap enough to stitch (a 50pt-tall region scrolls 25pt per step)
+    public func scrollDeltaPixels(forRegionHeight regionHeight: CGFloat) -> Int32 {
+        let halfRegion = Int32(max(4.0, (regionHeight / 2.0).rounded(.down)))
+        return min(scrollDeltaPixels, halfRegion)
+    }
 }
 
 public final class AppSettings: ObservableObject {

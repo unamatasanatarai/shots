@@ -85,3 +85,4 @@ coverage/
 
 # Local app data and user settings
 *.plist.local
+.agents

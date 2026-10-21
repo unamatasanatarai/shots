@@ -1,6 +1,6 @@
 # Tool Manipulation & Interaction Specification
 
-This document defines the formal interaction model, geometric algorithms, coordinate systems, hit-testing rules, and state transitions for manipulating annotations in **Impact**: **Pointer (Select)**, **Highlighter**, **Rectangle**, and **Arrow**.
+This document defines the formal interaction model, geometric algorithms, coordinate systems, hit-testing rules, and state transitions for manipulating annotations in **Impact**: **Pointer (Select)**, **Highlighter**, **Rectangle**, **Arrow**, and **Callout**.
 
 ---
 
@@ -15,9 +15,10 @@ This document defines the formal interaction model, geometric algorithms, coordi
 - **Spacebar (Hold during drag)**: Freezes dimension expansion and translates the layer origin in-flight by $\Delta = (x - x_{\text{prev}}, y - y_{\text{prev}})$.
 - **Shift (Hold during drag)**: Constrains aspect ratios or angles (e.g., 1:1 square/circle constraints).
 - **Delete / Backspace**: Deletes all currently selected layers and instantly clears hover states.
-- **Escape Key (ESC)**: Two-stage dismissal lifecycle:
-  1. *First ESC*: If any annotations are selected, an inline text editor is open, or a non-pointer tool is active, ESC immediately deselects all layers, dismisses any inline editor, and returns to the pointer tool (`.select`, shortcut `V`).
-  2. *Next ESC*: When already on the pointer tool with no active selection or editor, the subsequent ESC closes Impact.
+- **Escape Key (ESC)**: Staged dismissal lifecycle:
+  1. *Callout editing ESC*: While a callout's text is being edited (Section 10), ESC only finishes editing. The callout stays selected (or is removed if its text is empty) and the pointer tool (`.select`, shortcut `V`) becomes active. This ESC never deselects and never closes the window.
+  2. *First ESC*: If any annotations are selected or a non-pointer tool is active, ESC immediately deselects all layers and returns to the pointer tool.
+  3. *Next ESC*: When already on the pointer tool with no active selection or editor, the subsequent ESC closes Impact.
 - **Right-Click Drag**: Pans the canvas scroll view with an active `closedHand` cursor.
 
 ---
@@ -418,7 +419,90 @@ The Line tool (`.line`, shortcut `L`) provides straight line segments between a 
 
 ---
 
-## 10. Verification & Test Criteria
+## 10. Callout Tool Specification
+
+The Callout tool (`.callout`, shortcut `T`, toolbar button **Callout [T]** with the `text.bubble` icon, placed right after Counter) creates a filled text box with a single aimable beak. The text is typed in place, and the box size always follows the text.
+
+```
+        ╭──────────────────────╮
+        │  Text sets the size  │   Body: bold 16 px text, padding 8 × 12, radius 5
+        ╰─────────╮  ╭─────────╯
+                   ╲╱
+                   ●  Handle 0: beak tip (the only handle)
+```
+
+### 10.1 Body, Text & Color Constants
+- **Font**: system bold, $16\text{ px}$. One TextKit 1 configuration (`CalloutTextLayout`) is shared by measuring, drawing, and the editor, so text never shifts when editing ends.
+- **Padding**: $8\text{ px}$ top/bottom, $12\text{ px}$ left/right. **Corner Radius**: $R = 5.0\text{ px}$ (clamped to half the body size).
+- **No Wrapping**: Lines break only at Return. Body width is the widest line fragment (trailing spaces included); body height is the laid-out height, including the extra line after a trailing newline.
+- **Minimum Size**: Text width $\ge 14\text{ px}$, so the minimum body width is $14 + 24 = 38\text{ px}$ (wide enough for the full default beak). Empty text measures one line tall, so a new callout already has its single-line height.
+- **Background**: The active color picker swatch. Recoloring a selected callout recolors its background.
+- **Text Color**: Always white, except `#1E272E` on the white swatch (`#FFFFFF`), where white text would vanish.
+- **Rendering**: One closed contour (body with the beak spliced into one edge, no seam), filled with a soft shadow (offset $(0, -1)$, blur $2.5$, black $25\%$); text is drawn on top without shadow.
+
+### 10.2 Creation
+1. **Press**: With `.callout` active, `mouseDown` pins the beak tip at the press point and places an empty callout centered above it, with a $9\text{ px}$ gap (the default short beak hanging from the bottom edge).
+2. **Drag (Optional)**: Dragging before release moves the body with the cursor while the tip stays pinned; the beak re-attaches to the edge facing the tip.
+3. **Release**: The callout is appended to the document and an in-place editor opens immediately with a blinking caret (Section 10.4). Creation itself records no undo step; the editing session does.
+4. **Cursor**: The I-beam cursor is shown while the Callout tool is active.
+
+### 10.3 Beak Geometry
+The beak tip ($P_{\text{tip}}$, handle 0) can sit on any side of the body at any distance.
+
+- **Edge Snapping**: The beak attaches to the edge facing the tip. With $d = P_{\text{tip}} - \text{center}$, it uses the left/right edge if $|d_x| \cdot h > |d_y| \cdot w$, else the top/bottom edge.
+- **Edge-Local Frame**: $u$ runs along the edge (clockwise contour), $v$ points outward. Tip depth is clamped to $v_{\text{tip}} \ge 8.0\text{ px}$ (minimum beak length).
+- **Fixed Base Width**: The base is independent of the body size:
+  $$\text{base} = \min\big(\text{flat},\; \max(16,\; 18 + 0.2 \cdot \max(0,\, v_{\text{tip}} - 9))\big)$$
+  The default beak is $18\text{ px}$ wide and $9\text{ px}$ deep. Only dragging the tip further out widens the base ($k = 0.2$ per point of extra length).
+- **Corner Exclusion**: The base never touches a rounded corner. Usable flat length is $\text{flat} = \max(4,\, L_{\text{edge}} - 2(R + 2))$, and the base center is clamped to $[R + 2 + \frac{\text{base}}{2},\; L_{\text{edge}} - R - 2 - \frac{\text{base}}{2}]$ while following the tip's $u$.
+- **Fillets**: Concave shoulders where the beak meets the body, radius $\min(6,\; 0.25 \cdot \text{base})$, kept off the corner arcs.
+- **Taper & Tip**: Cubic sides taper to a round tip cap of radius $1.5\text{ px}$ perpendicular to the beak axis. The side trailing the tip hugs the edge longer (control lead up to $0.22 \times$ the tip offset, capped at the base width), so long tails sweep out of the body; tip-side controls sit $40\%$ along the base-to-tip chords.
+- **Re-Anchoring While Typing**: When the text changes, the body grows away from the tip. The beak's edge keeps its outer position and the base center keeps the same fraction along that edge on the same canvas point, so the tip and beak never move (a new callout grows symmetrically above a bottom-center beak).
+
+### 10.4 Editing Session
+- **Editor**: A transparent, plain-text `NSTextView` (`CalloutTextView`) sits exactly over the body. While it is open, the layer draws only the bubble, the tip handle is hidden, and the I-beam shows over the body (arrow elsewhere).
+- **Live Resizing**: Every keystroke updates the layer text; the body re-measures, re-anchors around the beak, and the editor frame follows. Typing past the image edge grows the elastic canvas and the editor stays aligned.
+- **Plain Text Only**: Paste is always plain text. Automatic substitutions, spelling correction, and link detection are off.
+- **Selection**: Text can be selected with the mouse or ⌘A. The selection highlight is the text color at $35\%$ alpha; the caret uses the text color.
+- **Finishing**: Any of the following ends the session:
+  1. ESC.
+  2. A click outside the editing callout. The click is consumed: it does not select, drag, or create anything, even on another layer. Clicks on the editing callout's beak are ignored and keep the editor open.
+  3. A tool change (toolbar button, overflow menu, or Select button). The chosen tool stays active and nothing is selected.
+  4. ⌘C / Save / copy-on-close export and window close: the session is committed first so the export includes the text.
+- **On Finish** (cases 1 and 2): Empty text removes the callout. Whitespace-only text (`" "`, `"\n"`) is kept. The tool returns to `.select` and the callout stays selected.
+
+### 10.5 Click Rules on Existing Callouts
+- **Double-Click** (`clickCount >= 2`) on any callout body enters editing, with any tool active.
+- **Click on the Selected Callout**: A press on the body of the only selected callout becomes a pending edit. If the mouse moves more than $3.0\text{ pt}$ before release, it turns into a normal body drag; otherwise `mouseUp` enters editing. The no-op drag snapshot taken on `mouseDown` is discarded, so the session remains one undo step.
+- **Click on an Unselected Callout**: Selects it (and switches to `.select` per Section 2.1). A second click then edits (a slow double-click).
+- **Caret Placement**: Re-entering editing places the caret at the clicked character (`characterIndexForInsertion(at:)`). New callouts start with the caret at the end.
+- **Tip Handle**: A click within $10\text{ px}$ of the tip always grabs the handle and never edits. Dragging the handle aims the beak; a tip dropped inside the body is pushed $8\text{ px}$ past the nearest edge.
+- **Body Drag & Nudge**: Dragging the body (or using arrow keys while selected and not editing) moves the body and the tip together.
+
+### 10.6 Keyboard While Editing
+| Key | Behavior |
+| :--- | :--- |
+| Letters, digits, Delete | Edit the text. Single-letter tool shortcuts and layer deletion are disabled. |
+| Return | Inserts a new line (the box grows taller). |
+| Tab / Shift-Tab | Swallowed. |
+| Arrow keys | Move the caret; the layer is not nudged. |
+| ⌘C / ⌘X / ⌘V / ⌘A | Copy, cut, paste as plain text, select all, on the text. |
+| ⌘Z | Reverts the whole session (see Section 10.7). |
+| ⇧⌘Z | Swallowed (there is nothing to redo inside a session). |
+| ⌘= / ⌘− / ⌘0 / ⌘1 / ⌘O | Zoom and Open keep working; the editor stays aligned at every magnification. |
+| ESC | Finishes editing (Section 1.2, stage 1). |
+
+### 10.7 Undo Semantics
+- **One Step Per Session**: The layers are snapshotted when the session begins (before the new layer is appended, for a new callout). When the session ends with a change, that snapshot is pushed as exactly one undo step. Keystrokes are never individual undo steps.
+- **What Counts as a Change**: For a new callout, any non-empty text. For an existing callout, a different text or a different color.
+- **No-Op Sessions**: A new callout finished empty, or an existing callout finished unchanged, records no undo step.
+- **Recolor During a Session**: Picking a swatch while editing records no separate snapshot; it folds into the session's step.
+- **⌘Z While Editing**: Finishes the session and, if it changed anything, undoes it as a whole. A new callout disappears; an existing callout gets its original text and color back and stays selected. An unchanged session is simply closed, so no earlier undo step is touched.
+- **After Finishing**: One ⌘Z undoes the whole session (an emptied, removed callout comes back); ⇧⌘Z redoes it.
+
+---
+
+## 11. Verification & Test Criteria
 
 Any conformant implementation must satisfy the following automated validation assertions:
 
@@ -448,7 +532,30 @@ Any conformant implementation must satisfy the following automated validation as
    - Blur center returns `contains(point) == false` (non-draggable hollow center).
    - Blur boundary returns `contains(point) == true` within 10px catchment.
    - Blurring is suppressed and replaced by translucent highlight preview during creation and moving/resizing drags.
-6. **Escape Key Two-Stage Dismissal**:
+6. **Escape Key Staged Dismissal**:
+   - Pressing ESC while editing a callout finishes editing, sets `activeTool = .select`, keeps the callout selected, and keeps the window open.
    - Pressing ESC with an active selection or non-pointer tool deselects all layers, sets `activeTool = .select`, and keeps the window open.
    - Pressing ESC in clean state (pointer tool, 0 selected layers) immediately closes the window.
+7. **Callout Model & Beak Geometry**:
+   - `textSize("")` is zero-width, `" "` is a few points wide, `"\n"` never reports the unbounded container width, and a trailing newline keeps the widest line's width.
+   - `bodyRect` grows and shrinks with the text; the beak tip does not move while the body re-anchors.
+   - Tips below, above, left, and right of the body attach the beak to the facing edge; a tip dropped inside the body is pushed outside.
+   - `contains` covers the body and the beak and rejects far points; `hitTestHandle(tip) == 0`.
+   - `move(by:)` shifts the tip with the body; `clone().id` equals the original's.
+   - `textColor` is white, and `#1E272E` on `#FFFFFF`.
+8. **Callout Creation & Editing Session**:
+   - Keyboard shortcut `t` selects `.callout`; press, drag, release creates one `CalloutLayer` with the tip at the press point and opens a `CalloutTextView` editor.
+   - Typing grows the body live; ESC with `"Hi"` keeps the layer selected under `.select` and adds one undo step; ESC with `""` removes it and adds none; `" "` and `"\n"` are kept.
+   - An outside click ends editing without selecting or creating another layer; a beak click keeps the editor open.
+   - ⌘A then ⌘C puts the text on the general pasteboard; Tab is swallowed; letters type instead of switching tools.
+   - Recoloring to `#FFFFFF` while editing switches the editor's text color.
+9. **Callout Click Rules & Undo**:
+   - First click on an unselected callout selects it; a second click without movement edits; a second click with a $5\text{ px}$ drag moves instead; `clickCount == 2` edits; a tip-handle click never edits.
+   - Re-entering editing at the right/left end of `"Hello"` puts the caret at 5 / 0.
+   - An edit from `"Hello"` to `"Hi"` is one undo step (`undo()` restores, `redo()` reapplies); emptying an existing callout removes it and `undo()` restores it.
+   - ⌘Z while editing removes a new callout, restores an edited one, and never pops an earlier undo step when nothing changed.
+   - A tool change, `copyCompositionToClipboard()`, and `close()` during a session each commit it, and the rendered composition contains the text.
+10. **Responsive Toolbar With Callout**:
+    - The toolbar holds 11 collapsible tools; each width rung collapses exactly one tool, from the end of the list (Ruler, Blur, Highlighter, Pen, then Callout).
+    - A collapsed Callout is listed in the overflow menu and remains reachable with `T`.
 

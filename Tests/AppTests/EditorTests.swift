@@ -10,8 +10,35 @@ public enum EditorTests {
             URL(fileURLWithPath: "Resources/test-image.jpg"),
             URL(fileURLWithPath: "test-image.jpg")
         ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+        if let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) { return found }
+        return generatedFixtureURL
     }
+
+    /// Fallback fixture: an 800×600 PNG (gradient + shapes) written once to NSTemporaryDirectory().
+    private static let generatedFixtureURL: URL? = {
+        let width = 800, height = 600
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return nil
+        }
+        let colors = [CGColor(red: 0.15, green: 0.35, blue: 0.75, alpha: 1), CGColor(red: 0.95, green: 0.75, blue: 0.35, alpha: 1)] as CFArray
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+            ctx.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: width, y: height), options: [])
+        }
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 80, y: 80, width: 240, height: 160))
+        ctx.setFillColor(CGColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1))
+        ctx.fillEllipse(in: CGRect(x: 450, y: 300, width: 220, height: 220))
+        ctx.setFillColor(CGColor(red: 0.85, green: 0.2, blue: 0.2, alpha: 1))
+        ctx.fill(CGRect(x: 360, y: 60, width: 60, height: 480))
+
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("impact-test-fixture-800x600.png")
+        guard let image = ctx.makeImage(),
+              let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(dest, image, nil)
+        return CGImageDestinationFinalize(dest) ? url : nil
+    }()
 
     public static func run(testRunner: (String, () throws -> Void) -> Void) {
         testRunner("Editor - Load test-image.jpg into EditorDocument") {
@@ -166,6 +193,9 @@ public enum EditorTests {
 
             let highlighter = HighlighterLayer(points: [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)])
             assert(highlighter.clone().id == highlighter.id, "HighlighterLayer.clone() must preserve ID")
+
+            let callout = CalloutLayer(tip: CGPoint(x: 50, y: 50), text: "Hi")
+            assert(callout.clone().id == callout.id, "CalloutLayer.clone() must preserve ID")
         }
 
         testRunner("Editor - Composition Rendering Output") {
@@ -1227,11 +1257,12 @@ public enum EditorTests {
             let spotlightFilter = FilterLayer(rects: [CGRect(x: 5, y: 5, width: 30, height: 30)], filterMode: .spotlight)
             let blurFilter = FilterLayer(rects: [CGRect(x: 10, y: 10, width: 30, height: 30)], filterMode: .gaussian)
             let dimLayer = DimensionLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 100, y: 0))
+            let calloutLayer = CalloutLayer(tip: CGPoint(x: 120, y: 150), text: "Callout")
 
             let allLayers: [AnnotationLayer] = [
                 rectLayer, ellipseLayer, arrowLayer, counterLayer,
                 lineLayer, penLayer, highlighterLayer, spotlightFilter, blurFilter,
-                dimLayer
+                dimLayer, calloutLayer
             ]
 
             // 1. Verify hoverPath generates a valid CGPath for outlined layers, and nil for blur
@@ -1421,6 +1452,7 @@ public enum EditorTests {
             assert(toolbar.toolButtons[.ellipse]?.isHidden == false, "Oval must be visible when wide")
             assert(toolbar.toolButtons[.spotlight]?.isHidden == false, "Spotlight must be visible when wide")
             assert(toolbar.toolButtons[.counter]?.isHidden == false, "Counter must be visible when wide")
+            assert(toolbar.toolButtons[.callout]?.isHidden == false, "Callout must be visible when wide")
             assert(toolbar.toolButtons[.pen]?.isHidden == false, "Pen must be visible when wide")
             assert(toolbar.toolButtons[.highlighter]?.isHidden == false, "Highlighter must be visible when wide")
             assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur must be visible when wide")
@@ -1432,19 +1464,48 @@ public enum EditorTests {
             assert(toolbar.pinButton?.isHidden == false, "Pin must be visible")
 
             // Progressive one-by-one collapse:
-            // Width 860pt: exactly 1 tool (Ruler, rightmost) moves to dropdown, 9 tools remain
-            toolbar.frame = NSRect(x: 0, y: 0, width: 860, height: 44)
+            // Width 830pt: exactly 1 tool (Ruler, rightmost) moves to dropdown, 10 tools remain
+            toolbar.frame = NSRect(x: 0, y: 0, width: 830, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown first")
-            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur still on toolbar at 860pt")
+            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur still on toolbar at 830pt")
             assert(toolbar.overflowButton?.isHidden == false, "Overflow button appears when 1 tool moves to dropdown")
 
-            // Width 770pt: Ruler, Blur, Highlighter moved to dropdown, 7 tools remain
+            // Width 770pt: Ruler, Blur, Highlighter moved to dropdown, 8 tools remain
             toolbar.frame = NSRect(x: 0, y: 0, width: 770, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown as space narrows")
             assert(toolbar.toolButtons[.blur]?.isHidden == true, "Blur moves to dropdown as space narrows")
+            assert(toolbar.toolButtons[.highlighter]?.isHidden == true, "Highlighter moves to dropdown as space narrows")
             assert(toolbar.toolButtons[.pen]?.isHidden == false, "Pen still on toolbar at 770pt")
+
+            // Every rung collapses exactly one more tool, from the end of the collapsible list
+            let rungs: [(width: CGFloat, visible: Int)] = [
+                (844, 11), (811, 10), (778, 9), (745, 8), (740, 7), (600, 7), (567, 6),
+                (534, 5), (501, 4), (468, 3), (435, 2), (402, 1), (401, 0)
+            ]
+            for rung in rungs {
+                toolbar.frame = NSRect(x: 0, y: 0, width: rung.width, height: 44)
+                toolbar.layout()
+                for (index, def) in toolbar.collapsibleToolDefinitions.enumerated() {
+                    let expectedHidden = index >= rung.visible
+                    assert(toolbar.toolButtons[def.type]?.isHidden == expectedHidden, "\(def.title) hidden must be \(expectedHidden) at \(rung.width)pt")
+                }
+                assert(toolbar.overflowButton?.isHidden == (rung.visible == 11), "Overflow button shows whenever a tool is collapsed (\(rung.width)pt)")
+            }
+
+            // Callout collapses after Pen, Highlighter, Blur, and Ruler and stays reachable from the overflow menu
+            toolbar.frame = NSRect(x: 0, y: 0, width: 600, height: 44)
+            toolbar.layout()
+            assert(toolbar.toolButtons[.callout]?.isHidden == false, "Callout still on toolbar at 600pt")
+            assert(toolbar.toolButtons[.pen]?.isHidden == true, "Pen moves to dropdown before Callout")
+            toolbar.frame = NSRect(x: 0, y: 0, width: 580, height: 44)
+            toolbar.layout()
+            assert(toolbar.toolButtons[.callout]?.isHidden == true, "Callout moves to dropdown below 600pt")
+            assert(toolbar.toolButtons[.counter]?.isHidden == false, "Counter still on toolbar at 580pt")
+            let narrowMenuTitles = toolbar.buildOverflowMenu().items.map { $0.title }
+            assert(narrowMenuTitles.contains("Callout"), "Collapsed Callout must be listed in the overflow menu")
+            assert(!narrowMenuTitles.contains("Counter"), "Visible Counter must not be repeated in the overflow menu")
 
             // 2. Narrow window (450pt): Rightmost tools hide under 3-dots
             toolbar.frame = NSRect(x: 0, y: 0, width: 450, height: 44)
@@ -1472,7 +1533,7 @@ public enum EditorTests {
             assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible at 340pt")
 
             // 4. Overflow menu tool activation & dropdown items matching reference image
-            assert(toolbar.dropdownToolDefinitions.count == 10, "Dropdown must contain full suite of remaining tools")
+            assert(toolbar.dropdownToolDefinitions.count == 11, "Dropdown must contain full suite of remaining tools")
             let titles = toolbar.dropdownToolDefinitions.map { $0.title }
             assert(titles.contains("Arrow"), "Dropdown must contain Arrow")
             assert(!titles.contains("Speech Bubble"), "Dropdown must NOT contain removed Speech Bubble")
@@ -1488,6 +1549,16 @@ public enum EditorTests {
             assert(titles.contains("Highlighter"), "Dropdown must contain Highlighter")
             assert(titles.contains("Spotlight"), "Dropdown must contain Spotlight")
             assert(titles.contains("Counter"), "Dropdown must contain Counter")
+            assert(titles.contains("Callout"), "Dropdown must contain Callout")
+            if let counterIdx = titles.firstIndex(of: "Counter"), let calloutIdx = titles.firstIndex(of: "Callout") {
+                assert(calloutIdx == counterIdx + 1, "Callout must sit right after Counter in the dropdown")
+            }
+            let collapsibleTitles = toolbar.collapsibleToolDefinitions.map { $0.title }
+            if let counterIdx = collapsibleTitles.firstIndex(of: "Counter"), let calloutIdx = collapsibleTitles.firstIndex(of: "Callout") {
+                assert(calloutIdx == counterIdx + 1, "Callout must sit right after Counter in the toolbar")
+            } else {
+                assert(false, "Toolbar must contain Counter and Callout")
+            }
             assert(titles.contains("Oval"), "Dropdown must contain Oval")
             assert(titles.contains("Line"), "Dropdown must contain Line")
 
@@ -1805,6 +1876,7 @@ public enum EditorTests {
             assert(panel.frame.width == 900.0)
             assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer visible at 900pt")
             assert(panel.toolbarView.toolButtons[.blur]?.isHidden == false, "Blur visible at 900pt")
+            assert(panel.toolbarView.toolButtons[.callout]?.isHidden == false, "Callout visible at 900pt")
             assert(panel.toolbarView.overflowButton?.isHidden == true, "3-dots overflow button hidden when all tools fit at 900pt")
 
             // 3. Window resizing to 600pt (Medium): Window decides width; Blur hides under 3-dots
@@ -1812,6 +1884,8 @@ public enum EditorTests {
             assert(panel.frame.width == 600.0)
             assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer visible at 600pt")
             assert(panel.toolbarView.toolButtons[.blur]?.isHidden == true, "Blur hidden at 600pt")
+            assert(panel.toolbarView.toolButtons[.pen]?.isHidden == true, "Pen hidden at 600pt")
+            assert(panel.toolbarView.toolButtons[.callout]?.isHidden == false, "Callout visible at 600pt")
             assert(panel.toolbarView.overflowButton?.isHidden == false, "3-dots overflow visible at 600pt")
 
             // 4. Window resizing to 280pt (Narrow): Menu must NOT force window to stay wider than 280pt
@@ -2546,6 +2620,775 @@ public enum EditorTests {
             assert(doc.activeTool == .pen, "Active tool must remain .pen when clicking inside spotlight square")
             assert(canvas.activeCreatingLayer is PenLayer, "activeCreatingLayer must be a PenLayer")
         }
+
+        testRunner("Editor - Callout Text Measurement & Body Sizing") {
+            let lineHeight = CalloutTextLayout.textSize(for: "A").height
+            assert(lineHeight > 10, "One line must have a positive line height")
+
+            let empty = CalloutTextLayout.textSize(for: "")
+            assert(empty.width == 0, "Empty text must measure zero width")
+
+            let space = CalloutTextLayout.textSize(for: " ")
+            assert(space.width > 0 && space.width < CalloutTextLayout.minTextWidth + 2, "A single space must measure a few points wide")
+            assert(abs(space.height - lineHeight) < 0.01, "A single space must be one line tall")
+
+            let newline = CalloutTextLayout.textSize(for: "\n")
+            assert(newline.width == 0, "A lone newline must not report the unbounded container width")
+            assert(abs(newline.height - 2 * lineHeight) < 0.01, "A lone newline must be two lines tall")
+
+            let hello = CalloutTextLayout.textSize(for: "Hello")
+            let helloNewline = CalloutTextLayout.textSize(for: "Hello\n")
+            assert(abs(helloNewline.width - hello.width) < 0.01, "A trailing newline must keep the widest line's width")
+            assert(abs(helloNewline.height - 2 * lineHeight) < 0.01, "A trailing newline must add the extra empty line")
+
+            let twoLines = CalloutTextLayout.textSize(for: "Hello\nWide second line")
+            assert(twoLines.width > hello.width, "Width must follow the widest line")
+            assert(abs(twoLines.height - 2 * lineHeight) < 0.01, "Two lines must be two lines tall")
+
+            // Body = text + compact padding (8 x 12), with a minimum text width for whitespace callouts
+            let callout = CalloutLayer(tip: CGPoint(x: 200, y: 200), text: "Hi")
+            let small = callout.bodyRect
+            assert(small.height == ceil(lineHeight + 16), "Body height must be one line plus vertical padding")
+            callout.text = "Hello there\nsecond line"
+            let grown = callout.bodyRect
+            assert(grown.width > small.width && grown.height > small.height, "Body must grow with the text")
+            assert(grown.maxY == small.maxY && grown.midX == small.midX, "A bottom-beak body must grow upward and symmetrically around the beak")
+            callout.text = "Hi"
+            assert(callout.bodyRect == small, "Body must shrink back when text shrinks")
+            callout.text = " "
+            assert(callout.bodyRect.width >= CalloutTextLayout.minTextWidth + 24, "Whitespace callout must keep a visible minimum width")
+            assert(CalloutLayer.bodySize(for: "").height == CalloutLayer.bodySize(for: "A").height, "Empty text must measure one line tall")
+            assert(CalloutLayer.bodySize(for: "").width == ceil(CalloutTextLayout.minTextWidth + 24), "Empty text must keep the minimum width")
+        }
+
+        testRunner("Editor - Callout Default Beak Keeps Its Size At Any Body Size") {
+            // Beak width measured 1pt below the body edge must not depend on the text
+            func beakWidth(_ callout: CalloutLayer) -> CGFloat {
+                let y = callout.bodyRect.maxY + 1.0
+                let path = callout.pathForCallout()
+                var minX = CGFloat.greatestFiniteMagnitude, maxX = -CGFloat.greatestFiniteMagnitude
+                var x = callout.bodyRect.minX - 20.0
+                while x <= callout.bodyRect.maxX + 20.0 {
+                    if path.contains(CGPoint(x: x, y: y)) { minX = min(minX, x); maxX = max(maxX, x) }
+                    x += 0.25
+                }
+                return maxX - minX
+            }
+            let tip = CGPoint(x: 300, y: 300)
+            let reference = CalloutLayer(tip: tip, text: "Callout")
+            let referenceWidth = beakWidth(reference)
+            for text in ["", " ", "H", "Hello world, a much longer line", "Two\nlines", "\n\n"] {
+                let callout = CalloutLayer(tip: tip, text: "")
+                callout.text = text
+                assert(abs(beakWidth(callout) - referenceWidth) < 0.5, "Default beak must keep its size for \(text.debugDescription)")
+                assert(abs(callout.bodyRect.midX - tip.x) < 0.001, "Default beak must stay centered under the body for \(text.debugDescription)")
+                assert(callout.tailTip == tip, "Typing must never move the tip")
+            }
+        }
+
+        testRunner("Editor - Callout Text Changes Re-Anchor The Body Around A Fixed Beak") {
+            // Bottom beak (default creation): the box grows left/right around the tip and upward for new lines
+            let tip = CGPoint(x: 240, y: 260)
+            let reference = CalloutLayer(tip: tip, text: "Callout")
+            let callout = CalloutLayer(tip: tip, text: "")
+            let emptyBody = callout.bodyRect
+            assert(emptyBody.height == reference.bodyRect.height, "Empty callout must already be one line tall")
+            for text in ["H", "Hel", "Hello", "Hello world", "Callout"] {
+                callout.text = text
+                let body = callout.bodyRect
+                assert(callout.tailTip == tip, "Typing must never move the tip (\(text))")
+                assert(body.midX == tip.x, "Body must stay centered on the tip (\(text))")
+                assert(body.maxY == emptyBody.maxY, "Beak edge must keep its position (\(text))")
+                // Beak base: the filled span just below the body edge
+                let path = callout.pathForCallout()
+                let filled = stride(from: body.minX, through: body.maxX, by: 0.25).filter { path.contains(CGPoint(x: $0, y: body.maxY + 1)) }
+                guard let left = filled.first, let right = filled.last else {
+                    throw NSError(domain: "EditorTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "Beak must attach to the bottom edge (\(text))"])
+                }
+                assert(abs((left + right) / 2 - tip.x) < 0.5, "Beak base center must stay at the tip's x (\(text))")
+            }
+            assert(callout.bodyRect == reference.bodyRect, "Typed callout must match one created with the same text")
+            assert(callout.pathForCallout().boundingBoxOfPath == reference.pathForCallout().boundingBoxOfPath, "Typed beak must match the reference beak")
+            callout.text = "Hello\nworld"
+            assert(callout.bodyRect.maxY == emptyBody.maxY && callout.bodyRect.height > emptyBody.height, "New lines must grow the body upward")
+            callout.text = ""
+            assert(callout.bodyRect == emptyBody, "Deleting all text must restore the empty body")
+
+            // Side beak: the right edge stays put and the beak keeps its height along it
+            let side = CalloutLayer(tip: CGPoint(x: 500, y: 300), text: "")
+            let start = side.bodyRect
+            side.updateHandle(index: 0, to: CGPoint(x: start.maxX + 30, y: start.midY))
+            let sideTip = side.tailTip
+            side.text = "Hello world"
+            assert(side.tailTip == sideTip, "Typing must not move a side tip")
+            assert(side.bodyRect.maxX == start.maxX && side.bodyRect.midY == start.midY, "A right-beak body must grow leftward around the beak")
+
+            // Direct assignment of the same text leaves the body alone
+            let before = side.bodyRect
+            side.text = "Hello world"
+            assert(side.bodyRect == before, "Re-assigning the same text must not move the body")
+        }
+
+        testRunner("Editor - Callout Beak Geometry, Hit Testing & Handles") {
+            let callout = CalloutLayer(tip: CGPoint(x: 300, y: 300), text: "Callout")
+            let body = callout.bodyRect
+            assert(abs(body.midX - 300) < 0.01, "Default body must be centered above the tip")
+            assert(abs(callout.tailTip.y - body.maxY - 9) < 0.01, "Default tip must sit 9 pt below the body")
+
+            // The beak attaches to the edge facing the tip: the outline extends to the tip on every side
+            let tips: [(String, CGPoint)] = [
+                ("bottom", CGPoint(x: body.midX + 20, y: body.maxY + 60)),
+                ("top", CGPoint(x: body.midX - 15, y: body.minY - 70)),
+                ("left", CGPoint(x: body.minX - 120, y: body.midY + 5)),
+                ("right", CGPoint(x: body.maxX + 200, y: body.midY - 3))
+            ]
+            for (name, tip) in tips {
+                callout.updateHandle(index: 0, to: tip)
+                let path = callout.pathForCallout()
+                assert(!path.isEmpty, "Callout path must not be empty (\(name))")
+                let bounds = path.boundingBoxOfPath
+                assert(bounds.insetBy(dx: -2, dy: -2).contains(tip), "Beak must reach the tip on the \(name) edge")
+                // Halfway between body edge and tip lies on the beak
+                let edgePoint: CGPoint
+                switch name {
+                case "bottom": edgePoint = CGPoint(x: tip.x, y: body.maxY)
+                case "top": edgePoint = CGPoint(x: tip.x, y: body.minY)
+                case "left": edgePoint = CGPoint(x: body.minX, y: tip.y)
+                default: edgePoint = CGPoint(x: body.maxX, y: tip.y)
+                }
+                let mid = CGPoint(x: (edgePoint.x + tip.x) / 2, y: (edgePoint.y + tip.y) / 2)
+                assert(callout.contains(point: mid), "Beak must be hit-testable on the \(name) edge")
+                assert(callout.getBoundingBox().contains(tip), "Bounding box must include the \(name) tip")
+                assert(callout.hitTestHandle(point: tip) == 0, "Tip must be handle 0 (\(name))")
+            }
+
+            // The beak only grows outward from the edge facing the tip
+            callout.updateHandle(index: 0, to: CGPoint(x: body.midX, y: body.maxY + 40))
+            assert(callout.pathForCallout().boundingBoxOfPath.minY >= body.minY - 0.01, "A bottom beak must not extend above the body")
+            callout.updateHandle(index: 0, to: CGPoint(x: body.midX, y: body.minY - 40))
+            assert(callout.pathForCallout().boundingBoxOfPath.maxY <= body.maxY + 0.01, "A top beak must not extend below the body")
+
+            // A tip dragged inside the body is pushed outside
+            callout.updateHandle(index: 0, to: CGPoint(x: body.midX, y: body.maxY - 3))
+            assert(!body.contains(callout.tailTip), "Tip inside the body must be pushed outside")
+            assert(callout.tailTip.y > body.maxY, "Tip near the bottom edge must be pushed below it")
+
+            // contains: body and beak, not far points
+            assert(callout.contains(point: CGPoint(x: body.midX, y: body.midY)), "Body center must be contained")
+            assert(callout.contains(point: CGPoint(x: body.minX + 2, y: body.minY + 2)), "Body padding must be contained")
+            assert(!callout.contains(point: CGPoint(x: body.maxX + 300, y: body.maxY + 300)), "Far point must not be contained")
+            assert(callout.hitTestHandle(point: CGPoint(x: body.midX, y: body.midY)) == nil, "Body must not hit the tip handle")
+
+            // move shifts origin and tip together
+            let originBefore = callout.origin
+            let tipBefore = callout.tailTip
+            callout.move(by: CGPoint(x: 15, y: -7))
+            assert(callout.origin == CGPoint(x: originBefore.x + 15, y: originBefore.y - 7), "Move must shift the body")
+            assert(callout.tailTip == CGPoint(x: tipBefore.x + 15, y: tipBefore.y - 7), "Move must shift the tip")
+
+            // Text color: white, dark on the white swatch
+            assert(callout.textColor == NSColor.white, "Callout text must be white on colored backgrounds")
+            callout.color = "#FFCC00"
+            assert(callout.textColor == NSColor.white, "Yellow callout must keep white text")
+            callout.color = "#FFFFFF"
+            let dark = callout.textColor.usingColorSpace(.sRGB)!
+            assert(abs(dark.redComponent - 0x1E / 255.0) < 0.01 && abs(dark.blueComponent - 0x2E / 255.0) < 0.01, "White callout must use #1E272E text")
+            callout.color = "#ffffff"
+            assert(callout.textColor != NSColor.white, "White swatch check must be case-insensitive")
+
+            // clone keeps identity and geometry
+            let copy = callout.clone() as! CalloutLayer
+            assert(copy.id == callout.id && copy.text == callout.text && copy.tailTip == callout.tailTip && copy.origin == callout.origin, "Clone must preserve id, text and geometry")
+        }
+
+        testRunner("Editor - Callout Tool Shortcut T, Click-Drag Placement & Composition") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+            let panel = EditorPanel(document: doc)
+            let canvas = panel.canvasView
+
+            let keyEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "t", charactersIgnoringModifiers: "t", isARepeat: false, keyCode: 17)!
+            canvas.keyDown(with: keyEvent)
+            assert(doc.activeTool == .callout, "Hotkey 't' must switch activeTool to .callout")
+
+            let downEvent = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 200, y: 200), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+            canvas.mouseDown(with: downEvent)
+            guard let creating = canvas.activeCreatingLayer as? CalloutLayer else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "MouseDown with Callout tool must create a CalloutLayer"])
+            }
+            let tip = creating.tailTip
+            let origin0 = creating.origin
+            assert(creating.text.isEmpty, "New callout must start empty")
+            assert(creating.bodyRect.maxY < tip.y, "New callout body must sit above the pressed tip")
+
+            let dragEvent = NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 290, y: 160), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
+            canvas.mouseDragged(with: dragEvent)
+            assert(creating.tailTip == tip, "Dragging while creating must keep the tip pinned")
+            assert(abs(creating.origin.x - origin0.x - 90) < 0.001, "Dragging must move the body horizontally with the mouse")
+            assert(abs(abs(creating.origin.y - origin0.y) - 40) < 0.001, "Dragging must move the body vertically with the mouse")
+
+            let upEvent = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 290, y: 160), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0.0)!
+            canvas.mouseUp(with: upEvent)
+            guard let editor = canvas.calloutEditor else {
+                throw NSError(domain: "EditorTests", code: 4, userInfo: [NSLocalizedDescriptionKey: "MouseUp must open the callout editor"])
+            }
+            editor.insertText("Callout", replacementRange: NSRange(location: NSNotFound, length: 0))
+            canvas.endCalloutEditing()
+
+            assert(doc.layers.count == 1, "MouseUp must commit exactly one callout")
+            guard let committed = doc.layers.first as? CalloutLayer else {
+                throw NSError(domain: "EditorTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "Committed layer must be CalloutLayer"])
+            }
+            assert(committed.tailTip == tip, "Committed callout tip must stay at the mouse-down point")
+            assert(doc.activeTool == .select, "Callout tool must return to Select after placing")
+            assert(doc.selectedLayerIDs == [committed.id], "Placed callout must stay selected")
+            assert(canvas.activeCreatingLayer == nil, "Creation state must be cleared")
+            assert(canvas.hoverPath(for: committed) != nil, "Callout must have a hover outline")
+
+            // Export renders the callout
+            let plainDoc = EditorDocument(image: cgImage)
+            let plain = plainDoc.renderComposition()!
+            let composed = doc.renderComposition()!
+            assert(composed.width >= plain.width && composed.height >= plain.height, "Composition must cover the image")
+            func pixels(_ image: CGImage) -> [UInt8] {
+                let w = image.width, h = image.height
+                var data = [UInt8](repeating: 0, count: w * h * 4)
+                let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+                return data
+            }
+            let differs = composed.width != plain.width || composed.height != plain.height || pixels(composed) != pixels(plain)
+            assert(differs, "Composition with a callout must differ from the plain image")
+
+            panel.close()
+        }
+
+        // Shared helpers for the callout editing-session tests
+        func makeCalloutPanel() throws -> (EditorDocument, EditorPanel, EditorCanvasView) {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+            let panel = EditorPanel(document: doc)
+            return (doc, panel, panel.canvasView)
+        }
+        // Converts a canvas point into the window location canvasPoint(from:) maps back to it
+        func windowLocation(_ canvas: EditorCanvasView, _ p: CGPoint) -> NSPoint {
+            let origin = canvas.document.activeCanvasBounds.origin
+            return canvas.convert(NSPoint(x: p.x - origin.x, y: p.y - origin.y), to: nil)
+        }
+        func mouse(_ type: NSEvent.EventType, _ canvas: EditorCanvasView, _ p: CGPoint, clickCount: Int = 1) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: windowLocation(canvas, p), modifierFlags: [], timestamp: 0, windowNumber: canvas.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: clickCount, pressure: type == .leftMouseUp ? 0.0 : 1.0)!
+        }
+        func key(_ chars: String, _ code: UInt16, _ mods: NSEvent.ModifierFlags = [], window: NSWindow?) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: 0, windowNumber: window?.windowNumber ?? 0, context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+        }
+        // Callout tool click at a canvas point; returns the new callout and its open editor
+        func createCallout(_ doc: EditorDocument, _ canvas: EditorCanvasView, at p: CGPoint) throws -> (CalloutLayer, CalloutTextView) {
+            doc.activeTool = .callout
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, p))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, p))
+            guard let editor = canvas.calloutEditor, let callout = doc.layers.last as? CalloutLayer else {
+                throw NSError(domain: "EditorTests", code: 5, userInfo: [NSLocalizedDescriptionKey: "Callout creation must open an editor"])
+            }
+            return (callout, editor)
+        }
+        func typeText(_ editor: CalloutTextView, _ text: String) {
+            editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
+        func sameColor(_ a: NSColor?, _ b: NSColor) -> Bool {
+            guard let a = a?.usingColorSpace(.sRGB), let b = b.usingColorSpace(.sRGB) else { return false }
+            return abs(a.redComponent - b.redComponent) < 0.01 && abs(a.greenComponent - b.greenComponent) < 0.01
+                && abs(a.blueComponent - b.blueComponent) < 0.01 && abs(a.alphaComponent - b.alphaComponent) < 0.01
+        }
+        // Closes without clipboard copy or numbered-file save side effects
+        func quietClose(_ doc: EditorDocument, _ panel: EditorPanel) {
+            doc.layers.removeAll()
+            doc.isModified = false
+            EditorPanel.copyToClipboardOverride = false
+            panel.close()
+            EditorPanel.copyToClipboardOverride = nil
+        }
+
+        testRunner("Editor - Callout Editing Opens On Creation With Focused Caret And Resizes Live") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let (callout, editor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 300))
+
+            // Empty callout with a caret, focused and ready for typing
+            assert(canvas.subviews.contains { $0 === editor }, "Creation must add a CalloutTextView to the canvas")
+            assert(canvas.isEditingCallout, "Canvas must report an editing session")
+            assert(doc.activeTool == .callout, "Tool must stay Callout while editing")
+            assert(doc.layers.count == 1 && callout.text.isEmpty, "New callout must start empty")
+            assert(callout.isTextHidden, "The layer must not draw text while the editor does")
+            assert(doc.selectedLayerIDs == [callout.id], "Editing callout must be selected")
+            assert(panel.firstResponder === editor, "Editor must be first responder so the caret appears and keys arrive")
+            assert(editor.selectedRange() == NSRange(location: 0, length: 0), "Caret must sit at the start of the empty text")
+            assert(callout.bodyRect.size == CalloutLayer.bodySize(for: ""), "Empty callout must keep minimum width and one line height")
+            assert(callout.bodyRect.height > CalloutTextLayout.padding.top + CalloutTextLayout.padding.bottom, "Empty callout must be one line tall")
+
+            // Caret, text and selection follow the callout's text color
+            assert(sameColor(editor.textColor, callout.textColor), "Editor text color must match the callout text color")
+            assert(sameColor(editor.insertionPointColor, callout.textColor), "Caret color must match the callout text color")
+            assert(sameColor(editor.typingAttributes[.foregroundColor] as? NSColor, callout.textColor), "Typing color must match the callout text color")
+            assert(!editor.drawsBackground && !editor.isRichText && !editor.allowsUndo, "Editor must be transparent, plain text and without keystroke undo")
+
+            // Same layout as CalloutLayer.draw: inset = padding, frame = body − elastic origin
+            func assertAligned(_ label: String) {
+                let o = doc.activeCanvasBounds.origin
+                assert(editor.frame == callout.bodyRect.offsetBy(dx: -o.x, dy: -o.y), "Editor frame must track the body (\(label))")
+                assert(editor.textContainerOrigin == CGPoint(x: CalloutTextLayout.padding.left, y: CalloutTextLayout.padding.top), "Editor text must start at the padding (\(label))")
+                assert(editor.textContainer?.lineFragmentPadding == 0, "Editor must use zero fragment padding (\(label))")
+                assert(editor.font == CalloutTextLayout.font, "Editor must use the callout font (\(label))")
+            }
+            assertAligned("empty")
+
+            // Typing grows the body live; deleting shrinks it back
+            let emptyBody = callout.bodyRect
+            typeText(editor, "Hi")
+            assert(callout.text == "Hi", "Typed text must reach the layer immediately")
+            assert(callout.bodyRect.width > emptyBody.width, "Typing must widen the body")
+            assert(callout.bodyRect.height == emptyBody.height, "The first keystroke must not change the body height")
+            assert(callout.tailTip == CGPoint(x: 300, y: 300), "Typing must not move the tip")
+            assert(callout.bodyRect.midX == callout.tailTip.x && callout.bodyRect.maxY == emptyBody.maxY, "Body must grow symmetrically around the tip, keeping its beak edge")
+            assertAligned("Hi")
+            if let lm = editor.layoutManager, let tc = editor.textContainer {
+                lm.ensureLayout(for: tc)
+                let used = lm.usedRect(for: tc)
+                let measured = CalloutTextLayout.textSize(for: "Hi")
+                assert(abs(used.width - measured.width) < 0.01 && abs(used.height - measured.height) < 0.01, "Editor layout must match CalloutTextLayout measurement")
+            }
+            let hiBody = callout.bodyRect
+            typeText(editor, "\nsecond line")
+            assert(callout.bodyRect.height > hiBody.height && callout.bodyRect.width > hiBody.width, "Return and a longer line must grow the body")
+            assert(callout.bodyRect.maxY == hiBody.maxY && callout.bodyRect.midX == callout.tailTip.x, "New lines must grow the body upward around the tip")
+            assertAligned("two lines")
+            editor.selectAll(nil)
+            editor.deleteBackward(nil)
+            assert(callout.text.isEmpty && callout.bodyRect == emptyBody, "Deleting must shrink the body back")
+            typeText(editor, "Hi")
+            assert(callout.bodyRect == hiBody, "Retyping must restore the size")
+
+            // Esc sent to the editor finishes: kept, selected, Select tool, editor gone, one undo step
+            editor.keyDown(with: key("\u{1b}", 53, window: panel))
+            assert(!canvas.isEditingCallout && canvas.calloutEditor == nil, "Esc must end the session")
+            assert(!canvas.subviews.contains { $0 is CalloutTextView }, "Esc must remove the editor")
+            assert(doc.layers.count == 1 && callout.text == "Hi", "Esc must keep the typed callout")
+            assert(!callout.isTextHidden, "The layer must draw its text again after editing")
+            assert(doc.activeTool == .select, "Esc must return to the Select tool")
+            assert(doc.selectedLayerIDs == [callout.id], "Finished callout must stay selected")
+            assert(panel.firstResponder === canvas, "Canvas must take keys again after editing")
+            doc.undo()
+            assert(doc.layers.isEmpty, "One undo must remove the whole new-callout session")
+            doc.redo()
+            assert((doc.layers.first as? CalloutLayer)?.text == "Hi", "Redo must restore the callout")
+            doc.selectedLayerIDs = [callout.id]
+
+            // Esc lifecycle: second Esc deselects, third closes
+            var closeCount = 0
+            canvas.onCloseRequested = { closeCount += 1 }
+            canvas.handleEscapeKey()
+            assert(doc.selectedLayerIDs.isEmpty && closeCount == 0, "Second Esc must deselect")
+            doc.layers.removeAll()
+            doc.isModified = false
+            EditorPanel.copyToClipboardOverride = false
+            canvas.handleEscapeKey()
+            EditorPanel.copyToClipboardOverride = nil
+            assert(closeCount == 1, "Third Esc must close Impact")
+        }
+
+        testRunner("Editor - Callout Editing: Empty Removal, Whitespace Kept, Outside And Beak Clicks") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+
+            // An earlier step to prove an empty session adds no undo step
+            let rect = RectangleLayer(rect: CGRect(x: 40, y: 400, width: 80, height: 60))
+            doc.addLayer(rect)
+
+            let (empty, _) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 200))
+            assert(doc.layers.count == 2, "Callout must be in the document while editing")
+            canvas.handleEscapeKey()
+            assert(!doc.layers.contains { $0.id == empty.id }, "Empty callout must be removed")
+            assert(doc.selectedLayerIDs.isEmpty, "Removing an empty callout must leave nothing selected")
+            assert(doc.activeTool == .select, "Finishing must return to Select")
+            doc.undo()
+            assert(doc.layers.isEmpty, "Empty session must not add an undo step (undo reverts the rectangle instead)")
+            doc.redo()
+            assert(doc.layers.count == 1, "Redo must restore the rectangle")
+
+            // Whitespace-only callouts are kept
+            let (space, spaceEditor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 200))
+            typeText(spaceEditor, " ")
+            canvas.handleEscapeKey()
+            assert(doc.layers.contains { $0.id == space.id } && space.text == " ", "A space-only callout must stay")
+            let (newline, newlineEditor) = try createCallout(doc, canvas, at: CGPoint(x: 500, y: 200))
+            newlineEditor.insertNewline(nil)
+            canvas.handleEscapeKey()
+            assert(doc.layers.contains { $0.id == newline.id } && newline.text == "\n", "A newline-only callout must stay")
+            assert(newline.bodyRect.height > space.bodyRect.height, "A newline callout must be two lines tall")
+
+            // Beak click while editing is ignored; an outside click finishes and is consumed
+            let layerCount = doc.layers.count
+            let (callout, editor) = try createCallout(doc, canvas, at: CGPoint(x: 400, y: 450))
+            typeText(editor, "Yo")
+            let beakPoint = CGPoint(x: callout.tailTip.x, y: callout.tailTip.y - 3)
+            assert(callout.contains(point: beakPoint) && !callout.bodyRect.contains(beakPoint), "Test point must be on the beak")
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, beakPoint))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, beakPoint))
+            assert(canvas.isEditingCallout && canvas.calloutEditor === editor, "A beak click must keep the editor open")
+
+            let onRect = CGPoint(x: rect.rect.midX, y: rect.rect.minY + 1)
+            assert(rect.contains(point: onRect), "Test point must be on the rectangle")
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, onRect))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: onRect.x + 30, y: onRect.y + 30)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: onRect.x + 30, y: onRect.y + 30)))
+            assert(!canvas.isEditingCallout, "An outside click must end editing")
+            assert(doc.layers.count == layerCount + 1 && callout.text == "Yo", "Outside click must keep the callout and create nothing")
+            assert(doc.selectedLayerIDs == [callout.id], "Outside click must leave the callout selected, not the clicked layer")
+            assert(rect.rect.origin == CGPoint(x: 40, y: 400), "The finishing click must not drag the layer under it")
+            assert(doc.activeTool == .select, "Outside click must return to Select")
+            assert(panel.firstResponder === canvas, "Canvas must be first responder after finishing")
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Callout Editor Keys: Letters Type, Tab Swallowed, Cmd-A Cmd-C Copy, Recolor") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let (callout, editor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 300))
+
+            // Letters type instead of switching tools; Tab inserts nothing
+            editor.keyDown(with: key("v", 9, window: panel))
+            editor.keyDown(with: key("a", 0, window: panel))
+            assert(callout.text == "va", "Letter keys must type into the callout")
+            assert(doc.activeTool == .callout, "Letter keys must not switch tools while editing")
+            editor.keyDown(with: key("\t", 48, window: panel))
+            assert(callout.text == "va", "Tab must be swallowed")
+            assert(canvas.isEditingCallout, "Tab must not end editing")
+
+            // ⌘A then ⌘C copies the text (the app has no Edit menu)
+            NSPasteboard.general.clearContents()
+            assert(editor.performKeyEquivalent(with: key("a", 0, .command, window: panel)), "⌘A must be handled by the editor")
+            assert(editor.selectedRange() == NSRange(location: 0, length: 2), "⌘A must select all text")
+            assert(editor.performKeyEquivalent(with: key("c", 8, .command, window: panel)), "⌘C must be handled by the editor")
+            assert(NSPasteboard.general.string(forType: .string) == "va", "⌘C must copy the selected text")
+            assert(editor.performKeyEquivalent(with: key("Z", 6, [.command, .shift], window: panel)), "⇧⌘Z must be swallowed")
+            assert(canvas.isEditingCallout, "⇧⌘Z must not end editing")
+
+            // Recolor to white flips text and caret to dark
+            callout.color = "#FFFFFF"
+            canvas.syncCalloutEditorAppearance()
+            assert(!sameColor(callout.textColor, .white), "White callout must use dark text")
+            assert(sameColor(editor.textColor, callout.textColor), "Recolor must switch the editor text color")
+            assert(sameColor(editor.insertionPointColor, callout.textColor), "Recolor must switch the caret color")
+
+            // ⌘Z reverts the whole session: the new callout disappears
+            assert(editor.performKeyEquivalent(with: key("z", 6, .command, window: panel)), "⌘Z must be handled by the editor")
+            assert(!canvas.isEditingCallout, "⌘Z must end the editing session")
+            assert(!doc.layers.contains { $0.id == callout.id }, "⌘Z must take back the new callout")
+
+            quietClose(doc, panel)
+        }
+
+        // Phase 4 helpers: a finished "Hello" callout (selected, Select tool) and plain clicks
+        func makeHelloCallout(_ doc: EditorDocument, _ canvas: EditorCanvasView, at p: CGPoint = CGPoint(x: 300, y: 300)) throws -> CalloutLayer {
+            let (callout, editor) = try createCallout(doc, canvas, at: p)
+            typeText(editor, "Hello")
+            canvas.endCalloutEditing()
+            return callout
+        }
+        func click(_ canvas: EditorCanvasView, _ p: CGPoint, clickCount: Int = 1, dragTo: CGPoint? = nil) {
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, p, clickCount: clickCount))
+            if let dragTo = dragTo {
+                canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, dragTo))
+            }
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, dragTo ?? p, clickCount: clickCount))
+        }
+        func currentCallout(_ doc: EditorDocument, _ id: UUID) -> CalloutLayer? {
+            doc.layers.first { $0.id == id } as? CalloutLayer
+        }
+        // True when the composition differs from the same document with the callout text hidden
+        func compositionShowsText(_ doc: EditorDocument, _ callout: CalloutLayer) -> Bool {
+            func pixels(_ image: CGImage) -> [UInt8] {
+                let w = image.width, h = image.height
+                var data = [UInt8](repeating: 0, count: w * h * 4)
+                let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+                return data
+            }
+            guard !callout.isTextHidden, let shown = doc.renderComposition() else { return false }
+            callout.isTextHidden = true
+            defer { callout.isTextHidden = false }
+            guard let hidden = doc.renderComposition() else { return false }
+            return pixels(shown) != pixels(hidden)
+        }
+
+        testRunner("Editor - Callout Click Rules: Select, Click Again, Drag, Double-Click, Tip Handle") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let callout = try makeHelloCallout(doc, canvas)
+            let body = CGPoint(x: callout.bodyRect.midX, y: callout.bodyRect.midY)
+
+            // A click on an unselected callout selects it and does not edit
+            doc.selectedLayerIDs = []
+            click(canvas, body)
+            assert(doc.selectedLayerIDs == [callout.id], "A click must select the callout")
+            assert(!canvas.isEditingCallout, "A click on an unselected callout must not edit")
+
+            // A second click without movement edits
+            click(canvas, body)
+            assert(canvas.isEditingCallout && canvas.calloutEditor != nil, "A click on the selected callout must edit")
+            assert(callout.isTextHidden && doc.selectedLayerIDs == [callout.id], "Editing must hide layer text and keep the selection")
+            canvas.endCalloutEditing()
+
+            // A second click with a 5 px drag moves the callout and does not edit
+            let originBefore = callout.origin
+            let tipBefore = callout.tailTip
+            click(canvas, body, dragTo: CGPoint(x: body.x + 5, y: body.y))
+            assert(!canvas.isEditingCallout, "Dragging a selected callout must not edit")
+            assert(callout.origin == CGPoint(x: originBefore.x + 5, y: originBefore.y), "The drag must move the body by the full distance")
+            assert(callout.tailTip == CGPoint(x: tipBefore.x + 5, y: tipBefore.y), "The drag must move the tip too")
+
+            // A small jitter (≤ 3 pt) still counts as a click and leaves the callout in place
+            let movedBody = CGPoint(x: callout.bodyRect.midX, y: callout.bodyRect.midY)
+            let movedOrigin = callout.origin
+            click(canvas, movedBody, dragTo: CGPoint(x: movedBody.x + 2, y: movedBody.y + 1))
+            assert(canvas.isEditingCallout, "A click with a tiny jitter must still edit")
+            assert(callout.origin == movedOrigin, "A click that edits must not move the callout")
+            canvas.endCalloutEditing()
+
+            // A clickCount 2 mouse-down on an unselected callout edits
+            doc.selectedLayerIDs = []
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, movedBody, clickCount: 2))
+            assert(canvas.isEditingCallout, "A double-click must edit an unselected callout")
+            assert(doc.selectedLayerIDs == [callout.id], "Double-click editing must select the callout")
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, movedBody, clickCount: 2))
+            assert(canvas.isEditingCallout, "The double-click's mouse-up must keep editing")
+            canvas.endCalloutEditing()
+
+            // A tip-handle click never edits, single or double
+            let tip = callout.tailTip
+            assert(callout.hitTestHandle(point: tip) == 0, "Test point must be on the tip handle")
+            click(canvas, tip)
+            assert(!canvas.isEditingCallout, "A tip-handle click must not edit")
+            click(canvas, tip, clickCount: 2)
+            assert(!canvas.isEditingCallout, "A tip-handle double-click must not edit")
+            assert(callout.tailTip == tip, "A tip-handle click must not move the tip")
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Callout Re-Edit Puts The Caret At The Clicked Character") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let callout = try makeHelloCallout(doc, canvas)
+
+            click(canvas, CGPoint(x: callout.bodyRect.maxX - 2, y: callout.bodyRect.midY))
+            assert(canvas.calloutEditor?.selectedRange() == NSRange(location: 5, length: 0), "A click at the right end must put the caret after \"Hello\"")
+            canvas.endCalloutEditing()
+
+            click(canvas, CGPoint(x: callout.bodyRect.minX + 2, y: callout.bodyRect.midY))
+            assert(canvas.calloutEditor?.selectedRange() == NSRange(location: 0, length: 0), "A click at the left end must put the caret at the start")
+            canvas.endCalloutEditing()
+
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: callout.bodyRect.maxX - 2, y: callout.bodyRect.midY), clickCount: 2))
+            assert(canvas.calloutEditor?.selectedRange() == NSRange(location: 5, length: 0), "A double-click must also place the caret where clicked")
+            canvas.endCalloutEditing()
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Callout Editing Session Is One Undo Step; Emptied Callout Is Removed And Restorable") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let callout = try makeHelloCallout(doc, canvas)
+            let id = callout.id
+
+            // "Hello" → "Hi" in one session
+            click(canvas, CGPoint(x: callout.bodyRect.midX, y: callout.bodyRect.midY))
+            guard let editor = canvas.calloutEditor else {
+                throw NSError(domain: "EditorTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "Click on the selected callout must open the editor"])
+            }
+            editor.selectAll(nil)
+            typeText(editor, "Hi")
+            editor.keyDown(with: key("\u{1b}", 53, window: panel))
+            assert(callout.text == "Hi" && doc.selectedLayerIDs == [id], "Esc must keep the edited callout selected")
+            doc.undo()
+            assert(currentCallout(doc, id)?.text == "Hello", "One undo must restore the previous text")
+            doc.redo()
+            assert(currentCallout(doc, id)?.text == "Hi", "Redo must replay the session")
+
+            // Exactly one step per session: the click's mouseDown snapshot was dropped,
+            // so the step before the session is the callout's creation
+            doc.undo()
+            doc.undo()
+            assert(doc.layers.isEmpty, "The step before the edit session must be the creation")
+            doc.redo()
+            doc.redo()
+            assert(currentCallout(doc, id)?.text == "Hi", "Redo must replay creation and edit")
+
+            // An unchanged session adds no step
+            guard let restored = currentCallout(doc, id) else {
+                throw NSError(domain: "EditorTests", code: 7, userInfo: [NSLocalizedDescriptionKey: "Callout must be present"])
+            }
+            doc.selectedLayerIDs = [id]
+            click(canvas, CGPoint(x: restored.bodyRect.midX, y: restored.bodyRect.midY))
+            assert(canvas.isEditingCallout, "Click on the selected callout must edit")
+            canvas.endCalloutEditing()
+            doc.undo()
+            assert(currentCallout(doc, id)?.text == "Hello", "An unchanged session must not add an undo step")
+            doc.redo()
+
+            // Emptying an existing callout removes it; undo brings it back
+            guard let current = currentCallout(doc, id) else {
+                throw NSError(domain: "EditorTests", code: 7, userInfo: [NSLocalizedDescriptionKey: "Callout must be present"])
+            }
+            doc.selectedLayerIDs = [id]
+            click(canvas, CGPoint(x: current.bodyRect.midX, y: current.bodyRect.midY))
+            guard let emptyEditor = canvas.calloutEditor else {
+                throw NSError(domain: "EditorTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "Editor must open"])
+            }
+            emptyEditor.selectAll(nil)
+            emptyEditor.deleteBackward(nil)
+            canvas.endCalloutEditing()
+            assert(currentCallout(doc, id) == nil && doc.selectedLayerIDs.isEmpty, "An emptied callout must be removed and deselected")
+            doc.undo()
+            assert(currentCallout(doc, id)?.text == "Hi", "Undo must bring the emptied callout back")
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Callout Cmd-Z While Editing Reverts The Whole Session") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let cmdZ = key("z", 6, .command, window: panel)
+
+            // A new typed callout disappears
+            let (typed, typedEditor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 300))
+            typeText(typedEditor, "Yo")
+            assert(typedEditor.performKeyEquivalent(with: cmdZ), "⌘Z must be handled")
+            assert(!canvas.isEditingCallout && currentCallout(doc, typed.id) == nil, "⌘Z must remove a new typed callout")
+            assert(doc.selectedLayerIDs.isEmpty && doc.activeTool == .select, "Revert must leave nothing selected and Select active")
+            doc.redo()
+            assert(currentCallout(doc, typed.id)?.text == "Yo", "⇧⌘Z after a revert must redo the session")
+            doc.undo()
+
+            // A new empty callout disappears and no earlier step is undone
+            let rect = RectangleLayer(rect: CGRect(x: 40, y: 400, width: 80, height: 60))
+            doc.addLayer(rect)
+            let (empty, emptyEditor) = try createCallout(doc, canvas, at: CGPoint(x: 500, y: 200))
+            assert(emptyEditor.performKeyEquivalent(with: cmdZ), "⌘Z must be handled")
+            assert(currentCallout(doc, empty.id) == nil, "⌘Z must remove a new empty callout")
+            assert(doc.layers.count == 1 && doc.layers.first?.id == rect.id, "⌘Z on an unchanged session must not undo an earlier step")
+
+            // An edited callout gets its old text back and stays selected
+            let callout = try makeHelloCallout(doc, canvas, at: CGPoint(x: 300, y: 250))
+            click(canvas, CGPoint(x: callout.bodyRect.midX, y: callout.bodyRect.midY))
+            guard let editor = canvas.calloutEditor else {
+                throw NSError(domain: "EditorTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "Editor must open"])
+            }
+            typeText(editor, "XX")
+            assert(editor.performKeyEquivalent(with: cmdZ), "⌘Z must be handled")
+            assert(!canvas.isEditingCallout, "⌘Z must end editing")
+            assert(currentCallout(doc, callout.id)?.text == "Hello", "⌘Z must restore the previous text")
+            assert(doc.selectedLayerIDs == [callout.id] && doc.activeTool == .select, "A reverted edit must stay selected with Select active")
+            assert(currentCallout(doc, callout.id)?.isTextHidden == false, "The reverted callout must draw its text")
+            assert(doc.layers.contains { $0.id == rect.id }, "Earlier layers must survive the revert")
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Callout Recolor During A Session Folds Into The Session Undo Step") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let callout = try makeHelloCallout(doc, canvas)
+            let originalColor = callout.color
+
+            click(canvas, CGPoint(x: callout.bodyRect.midX, y: callout.bodyRect.midY))
+            guard let editor = canvas.calloutEditor else {
+                throw NSError(domain: "EditorTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "Editor must open"])
+            }
+            panel.toolbarView.applyPickedColor("#FFFFFF")
+            assert(callout.color == "#FFFFFF", "The swatch must recolor the editing callout")
+            assert(sameColor(editor.textColor, callout.textColor), "Recolor must switch the editor text color")
+            assert(canvas.isEditingCallout, "Recolor must not end editing")
+            typeText(editor, "!")
+            canvas.endCalloutEditing()
+
+            doc.undo()
+            let restored = currentCallout(doc, callout.id)
+            assert(restored?.text == "Hello" && restored?.color == originalColor, "One undo must restore both text and color")
+            doc.undo()
+            assert(doc.layers.isEmpty, "The recolor must not add its own undo step")
+
+            // A recolor alone also counts as a change to the session
+            doc.redo()
+            guard let again = currentCallout(doc, callout.id) else {
+                throw NSError(domain: "EditorTests", code: 7, userInfo: [NSLocalizedDescriptionKey: "Callout must be present"])
+            }
+            doc.selectedLayerIDs = [again.id]
+            click(canvas, CGPoint(x: again.bodyRect.midX, y: again.bodyRect.midY))
+            panel.toolbarView.applyPickedColor("#34C759")
+            canvas.endCalloutEditing()
+            doc.undo()
+            assert(currentCallout(doc, again.id)?.color == originalColor, "A recolor-only session must be one undo step")
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Callout Editing Finishes On Tool Change, Export And Close") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+
+            // Tool change: the session ends with the text, and the new tool stays active
+            let (toolCallout, toolEditor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 300))
+            typeText(toolEditor, "Tool")
+            doc.activeTool = .arrow
+            assert(!canvas.isEditingCallout && canvas.calloutEditor == nil, "A tool change must end editing")
+            assert(!canvas.subviews.contains { $0 is CalloutTextView }, "A tool change must remove the editor")
+            assert(doc.activeTool == .arrow, "The chosen tool must stay active")
+            assert(toolCallout.text == "Tool" && !toolCallout.isTextHidden, "A tool change must commit the text")
+            assert(compositionShowsText(doc, toolCallout), "The composition must contain the committed text")
+
+            // Select button while editing keeps the callout selected
+            let (selCallout, selEditor) = try createCallout(doc, canvas, at: CGPoint(x: 500, y: 300))
+            typeText(selEditor, "Sel")
+            doc.activeTool = .select
+            assert(!canvas.isEditingCallout && doc.selectedLayerIDs == [selCallout.id], "Select must finish editing and keep the callout selected")
+
+            // Copy
+            let (copyCallout, copyEditor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 450))
+            typeText(copyEditor, "Copy")
+            canvas.copyCompositionToClipboard()
+            assert(!canvas.isEditingCallout && !copyCallout.isTextHidden, "Copy must end editing first")
+            assert(copyCallout.text == "Copy" && doc.selectedLayerIDs == [copyCallout.id], "Copy must commit and keep the callout selected")
+            assert(compositionShowsText(doc, copyCallout), "The copied composition must contain the text")
+
+            // Save
+            let saveDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("impact-callout-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: saveDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: saveDir) }
+            let (saveCallout, saveEditor) = try createCallout(doc, canvas, at: CGPoint(x: 500, y: 450))
+            typeText(saveEditor, "Save")
+            let saveURL = saveDir.appendingPathComponent("saved.png")
+            canvas.saveCompositionToFile(url: saveURL)
+            assert(!canvas.isEditingCallout && !saveCallout.isTextHidden && saveCallout.text == "Save", "Save must end editing first")
+            assert(FileManager.default.fileExists(atPath: saveURL.path), "Save must write the file")
+            quietClose(doc, panel)
+
+            // Close: a panel with a source file saves its numbered copy next to it
+            let sourceURL = saveDir.appendingPathComponent("shot.png")
+            let (closeDoc, _, _) = try makeCalloutPanel()
+            let closePanel = EditorPanel(document: closeDoc, sourceFileURL: sourceURL)
+            let closeCanvas = closePanel.canvasView
+            let (closeCallout, closeEditor) = try createCallout(closeDoc, closeCanvas, at: CGPoint(x: 300, y: 300))
+            typeText(closeEditor, "Close")
+            EditorPanel.copyToClipboardOverride = false
+            closePanel.close()
+            EditorPanel.copyToClipboardOverride = nil
+            assert(!closeCanvas.isEditingCallout && !closeCallout.isTextHidden, "Close must end editing first")
+            assert(closeCallout.text == "Close" && closeDoc.layers.contains { $0.id == closeCallout.id }, "Close must commit the text")
+            assert(compositionShowsText(closeDoc, closeCallout), "The composition saved on close must contain the text")
+            assert(FileManager.default.fileExists(atPath: saveDir.appendingPathComponent("shot-2.png").path), "Close must save the numbered copy")
+        }
+
     }
 }
 

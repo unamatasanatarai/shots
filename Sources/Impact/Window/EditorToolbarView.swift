@@ -566,6 +566,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         ToolDefinition(type: .ellipse, title: "Oval", iconName: "circle", shortcut: "o"),
         ToolDefinition(type: .spotlight, title: "Spotlight", iconName: "camera.metering.spot", shortcut: "s"),
         ToolDefinition(type: .counter, title: "Counter", iconName: "number.circle.fill", shortcut: "c"),
+        ToolDefinition(type: .callout, title: "Callout", iconName: "text.bubble", shortcut: "t"),
         ToolDefinition(type: .pen, title: "Pen", iconName: "pencil.tip", shortcut: "p"),
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b"),
@@ -579,6 +580,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         ToolDefinition(type: .ellipse, title: "Oval", iconName: "circle", shortcut: "o"),
         ToolDefinition(type: .spotlight, title: "Spotlight", iconName: "camera.metering.spot", shortcut: "s"),
         ToolDefinition(type: .counter, title: "Counter", iconName: "number.circle.fill", shortcut: "c"),
+        ToolDefinition(type: .callout, title: "Callout", iconName: "text.bubble", shortcut: "t"),
         ToolDefinition(type: .pen, title: "Pen", iconName: "pencil.tip", shortcut: "p"),
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b"),
@@ -880,32 +882,39 @@ public final class EditorToolbarView: NSVisualEffectView {
         undoButton?.isHidden = !showUndo
         actionSeparatorView?.isHidden = isColorVisible || !showUndo
 
-        // 4. Collapsible tools (Arrow, Line, Rectangle, Oval, Spotlight, Counter, Pen, Highlighter, Blur, Ruler)
-        // Calibrated to maximize visible tools across all window widths and eliminate empty space
+        // 4. Collapsible tools (Arrow, Line, Rectangle, Oval, Spotlight, Counter, Callout, Pen, Highlighter, Blur, Ruler)
+        // Calibrated from the measured layout so each rung adds exactly one tool and nothing is ever clipped.
+        // Every tool slot is a 30pt button plus 3pt stack spacing (33pt). Rungs assume the widest case
+        // (color picker and Undo visible, overflow shown): 481pt of fixed chrome with zoom, 369pt without.
+        // All 11 tools need one extra slot over 10 so Ruler collapses on its own rung (the overflow
+        // button takes its place). Below the 740pt zoom cutoff the count stays capped at 7 so tools
+        // never reappear when the zoom capsule hides.
         let totalCount = collapsibleToolDefinitions.count
         let visibleCount: Int
-        if totalW >= 880.0 {
-            visibleCount = totalCount // 10: All tools visible, overflow button hidden
-        } else if totalW >= 830.0 {
-            visibleCount = 9 // At 860pt: Ruler in dropdown, Blur visible
-        } else if totalW >= 785.0 {
-            visibleCount = 8
-        } else if totalW >= 740.0 {
-            visibleCount = 7 // At 770pt: Ruler, Blur, Highlighter in dropdown, Pen visible
-        } else if totalW >= 660.0 {
-            visibleCount = 6
-        } else if totalW >= 580.0 {
-            visibleCount = 5 // At 600pt: 5 tools (Blur hidden, overflow visible)
-        } else if totalW >= 500.0 {
-            visibleCount = 4 // At 500-579pt: 4 tools (Arrow, Line, Rectangle, Oval)
-        } else if totalW >= 430.0 {
-            visibleCount = 3 // At 430-499pt: 3 tools
-        } else if totalW >= 370.0 {
-            visibleCount = 2 // At 370-429pt: 2 tools
-        } else if totalW >= 310.0 {
-            visibleCount = 1 // At 310-369pt: 1 tool
+        if totalW >= 844.0 {
+            visibleCount = totalCount // All tools visible, overflow button hidden
+        } else if totalW >= 811.0 {
+            visibleCount = 10 // Ruler in dropdown
+        } else if totalW >= 778.0 {
+            visibleCount = 9 // Ruler, Blur in dropdown
+        } else if totalW >= 745.0 {
+            visibleCount = 8 // Ruler, Blur, Highlighter in dropdown, Pen visible
+        } else if totalW >= 600.0 {
+            visibleCount = 7 // Pen in dropdown, Callout visible (zoom capsule hidden below 740pt)
+        } else if totalW >= 567.0 {
+            visibleCount = 6 // Callout in dropdown, Counter visible
+        } else if totalW >= 534.0 {
+            visibleCount = 5
+        } else if totalW >= 501.0 {
+            visibleCount = 4 // Arrow, Line, Rectangle, Oval
+        } else if totalW >= 468.0 {
+            visibleCount = 3
+        } else if totalW >= 435.0 {
+            visibleCount = 2
+        } else if totalW >= 402.0 {
+            visibleCount = 1
         } else {
-            visibleCount = 0 // Below 310pt (e.g. 280pt): 0 tools (Arrow and Blur hidden)
+            visibleCount = 0 // Below 402pt: only Select and the overflow button remain
         }
 
         if visibleCount >= totalCount {
@@ -1123,33 +1132,41 @@ public final class EditorToolbarView: NSVisualEffectView {
         }
         popoutVC.selectedColor = currentHex
         popoutVC.onColorSelected = { [weak self, weak popover] hex in
-            guard let self = self else { return }
-            self.canvasView?.document.activeColor = hex
-            self.singleColorButton?.updateColor(hex: hex)
-            if let doc = self.canvasView?.document {
-                let selected = doc.getSelectedLayers()
-                if !selected.isEmpty {
-                    doc.saveSnapshot()
-                    for layer in selected {
-                        if layer.type != .blur {
-                            layer.color = hex
-                        }
-                    }
-                    doc.onNeedsDisplay?()
-                } else if doc.activeTool == .spotlight {
-                    if let spotlight = doc.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) {
-                        doc.saveSnapshot()
-                        spotlight.color = hex
-                        doc.onNeedsDisplay?()
-                    }
-                }
-            }
+            self?.applyPickedColor(hex)
             popover?.performClose(nil)
         }
 
         popover.contentViewController = popoutVC
         popover.show(relativeTo: btn.bounds, of: btn, preferredEdge: .minY)
         self.colorPopover = popover
+    }
+
+    /// Applies a swatch: sets the active color and recolors the selection as one undo step
+    func applyPickedColor(_ hex: String) {
+        self.canvasView?.document.activeColor = hex
+        self.singleColorButton?.updateColor(hex: hex)
+        if let doc = self.canvasView?.document {
+            let selected = doc.getSelectedLayers()
+            if !selected.isEmpty {
+                // A recolor during a callout editing session folds into the session's undo step
+                if self.canvasView?.isEditingCallout != true {
+                    doc.saveSnapshot()
+                }
+                for layer in selected {
+                    if layer.type != .blur {
+                        layer.color = hex
+                    }
+                }
+                self.canvasView?.syncCalloutEditorAppearance()
+                doc.onNeedsDisplay?()
+            } else if doc.activeTool == .spotlight {
+                if let spotlight = doc.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) {
+                    doc.saveSnapshot()
+                    spotlight.color = hex
+                    doc.onNeedsDisplay?()
+                }
+            }
+        }
     }
 
     public func updateSelectedToolVisuals() {

@@ -53,6 +53,15 @@ public final class AutoscrollCaptureCoordinator: NSObject {
         beginAutoscrollFlow(completion: completion)
     }
 
+    /// Repeats a previous scrolling capture over the same region without asking for a new selection
+    public func repeatAutoscrollCapture(region: SelectedRegionInfo, completion: ((CGImage?) -> Void)? = nil) {
+        guard PermissionsManager.shared.ensurePermissions(for: "Scrolling Capture") else {
+            completion?(nil)
+            return
+        }
+        executeAutoscrollSession(region: region, completion: completion)
+    }
+
     private func beginAutoscrollFlow(completion: ((CGImage?) -> Void)?) {
         RegionSelectionCoordinator.shared.startRegionSelection { [weak self] regionInfo in
             guard let self = self, let region = regionInfo else {
@@ -114,7 +123,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             let maxHeight = ScrollingCaptureService.maxAllowedHeight
             let maxSteps = 80 // Safety ceiling: prevents runaway loops on infinite feeds
             let speedConfig = AppSettings.shared.scrollingCaptureSpeed
-            let scrollPixels = speedConfig.scrollDeltaPixels
+            let scrollPixels = speedConfig.scrollDeltaPixels(forRegionHeight: regionRect.height)
             let stepDelay = speedConfig.stepDelayMicroseconds
 
             for _ in 0..<maxSteps {
@@ -178,7 +187,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
 
             if let result = finalImage {
                 let lastRecord = LastCaptureRecord(
-                    mode: .region(rect: regionRect, screenFrame: screenFrame, displayID: displayID)
+                    mode: .scrolling(rect: regionRect, screenFrame: screenFrame, displayID: displayID)
                 )
                 DispatchQueue.main.async {
                     CaptureManager.shared.lastCapture = lastRecord

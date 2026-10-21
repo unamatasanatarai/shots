@@ -17,6 +17,7 @@ public enum LayerType: String, Codable, CaseIterable {
     case spotlight = "Spotlight"
     case blur = "Blur"
     case highlighter = "Highlighter"
+    case callout = "Callout"
 }
 
 // MARK: - Arrow Head Types

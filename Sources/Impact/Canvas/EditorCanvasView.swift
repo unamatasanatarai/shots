@@ -12,6 +12,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var activeDraggingRectIndex: Int?
     private var initialRectForDrag: CGRect?
     private var dragStartPoint: CGPoint = .zero
+    private var calloutGrabOffset: CGPoint = .zero
     private var lastDragPoint: CGPoint = .zero
     private var isSpacePressed: Bool = false
     private var isShiftPressed: Bool = false
@@ -26,6 +27,21 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     public var onCloseRequested: (() -> Void)?
     private var isRightPanning: Bool = false
     private var rightPanStartWindowPoint: NSPoint = .zero
+
+    // In-place callout text editing
+    private struct CalloutEditSession {
+        let layer: CalloutLayer
+        let isNew: Bool
+        let preSession: [AnnotationLayer] // clones taken before the layer was appended (new) or before editing
+        let originalText: String
+        let originalColor: String
+    }
+    private var calloutSession: CalloutEditSession?
+    private(set) var calloutEditor: CalloutTextView?
+    public var isEditingCallout: Bool { calloutSession != nil }
+    private var isEndingCalloutEditing = false
+    // A click on the already-selected callout's body: edits on mouse-up unless it turns into a drag
+    private var pendingEditCallout: CalloutLayer?
 
     public init(document: EditorDocument) {
         self.document = document
@@ -44,15 +60,25 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         document.onBoundsChanged = { [weak self] newBounds in
             guard let self = self else { return }
             self.frame = NSRect(origin: .zero, size: newBounds.size)
+            // The elastic origin shifts when the canvas grows left/up; keep the editor on its bubble
+            self.positionCalloutEditor()
             self.needsDisplay = true
+        }
+
+        // Switching to any other tool finishes the session; the new tool stays active
+        document.onActiveToolChanged = { [weak self] tool in
+            guard let self = self, !self.isEndingCalloutEditing, tool != .callout, self.isEditingCallout else { return }
+            self.finishCalloutEditing(switchToSelect: false)
         }
     }
 
     /// Dynamically loads a new document into this canvas view
     public func setDocument(_ newDoc: EditorDocument) {
+        endCalloutEditing()
         self.document = newDoc
         self.activeCreatingLayer = nil
         self.activeDraggingLayer = nil
+        self.pendingEditCallout = nil
         self.activeHandleIndex = nil
         self.activeDraggingRectIndex = nil
         self.initialRectForDrag = nil
@@ -276,6 +302,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 handlePoints = [line.start, line.end]
             } else if let dim = layer as? DimensionLayer {
                 handlePoints = [dim.start, dim.end]
+            } else if let callout = layer as? CalloutLayer {
+                // Handles are hidden while the callout's text is being edited
+                handlePoints = callout.id == calloutSession?.layer.id ? [] : [callout.tailTip]
             } else if let counter = layer as? CounterLayer {
                 // Square rounded handle located on the tip of the peak
                 let p = counter.getPeakPoint()
@@ -336,9 +365,20 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseDown(with event: NSEvent) {
         let point = canvasPoint(from: event)
+
+        // While editing, a click outside the callout finishes editing and does nothing else.
+        // Body clicks land in the editor; clicks on the editing callout's beak are ignored.
+        if let session = calloutSession {
+            if !session.layer.contains(point: point) {
+                endCalloutEditing()
+            }
+            return
+        }
+
         currentMouseCanvasPoint = point
         dragStartPoint = point
         lastDragPoint = point
+        pendingEditCallout = nil
 
         clearHoverStateImmediately()
 
@@ -388,6 +428,18 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     }
                 }
                 return
+            }
+        }
+
+        // Callout body (tip handle already handled above): a double-click edits any callout,
+        // a click on the selected one edits on mouse-up unless it becomes a drag
+        if let hitCallout = document.layers.reversed().first(where: { $0.isVisible && ($0 as? CalloutLayer)?.bodyRect.contains(point) == true }) as? CalloutLayer {
+            if event.clickCount >= 2 {
+                beginCalloutEditing(hitCallout, isNew: false, caretAt: point)
+                return
+            }
+            if document.selectedLayerIDs == [hitCallout.id] {
+                pendingEditCallout = hitCallout
             }
         }
 
@@ -564,6 +616,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 color: document.activeColor
             )
             activeCreatingLayer = blur
+
+        case .callout:
+            // The press pins the beak tip; dragging places the body while the tip stays put
+            let callout = CalloutLayer(tip: point, color: document.activeColor)
+            calloutGrabOffset = CGPoint(x: point.x - callout.origin.x, y: point.y - callout.origin.y)
+            activeCreatingLayer = callout
         }
 
         needsDisplay = true
@@ -571,6 +629,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseDragged(with event: NSEvent) {
         let point = canvasPoint(from: event)
+        // A pending edit click stays a click until it moves more than 3 pt; the callout only
+        // starts moving then, so a click that edits leaves the layer untouched
+        if pendingEditCallout != nil {
+            if hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y) <= 3.0 { return }
+            pendingEditCallout = nil
+        }
+
         let delta = CGPoint(x: point.x - lastDragPoint.x, y: point.y - lastDragPoint.y)
 
         // Micro-Interaction: Spacebar mid-draw translation (Section 3.1)
@@ -792,6 +857,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 }
             } else if let dim = creating as? DimensionLayer {
                 dim.end = point
+            } else if let callout = creating as? CalloutLayer {
+                callout.origin = CGPoint(x: point.x - calloutGrabOffset.x, y: point.y - calloutGrabOffset.y)
             } else if creating is CounterLayer {
                 // Peak direction is fixed at default (7:30pm) upon placement.
                 // Changing peak direction can only happen when grabbing the point located on the tip of the peak.
@@ -813,11 +880,25 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     override public func mouseUp(with event: NSEvent) {
+        if let callout = pendingEditCallout {
+            pendingEditCallout = nil
+            // The mouseDown drag snapshot is a no-op; the editing session records its own step
+            document.discardLastSnapshot()
+            activeDraggingLayer = nil
+            beginCalloutEditing(callout, isNew: false, caretAt: canvasPoint(from: event))
+        }
         if let creating = activeCreatingLayer {
             if let counter = creating as? CounterLayer {
                 document.counterStep = counter.value + 1
                 document.addLayer(counter)
                 document.selectLayer(counter)
+            } else if let callout = creating as? CalloutLayer {
+                // Appended without addLayer's snapshot: the editing session records one undo step when it ends
+                let preSession = document.layers.map { $0.clone() }
+                document.layers.append(callout)
+                activeCreatingLayer = nil
+                document.computeElasticBounds()
+                beginCalloutEditing(callout, isNew: true, preSession: preSession)
             } else {
                 var isValidSize = true
 
@@ -990,6 +1071,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 path.addPath(CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil))
             }
             return path.isEmpty ? nil : path
+        } else if let callout = layer as? CalloutLayer {
+            return callout.pathForCallout()
         } else if let dim = layer as? DimensionLayer {
             let path = CGMutablePath()
             path.move(to: dim.start)
@@ -1061,7 +1144,17 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func resetCursorRects() {
         super.resetCursorRects()
-        let cursor = (document.activeTool == .select) ? NSCursor.arrow : NSCursor.crosshair
+        if isEditingCallout {
+            // CalloutTextView adds its own I-beam rect over the text box
+            addCursorRect(bounds, cursor: .arrow)
+            return
+        }
+        let cursor: NSCursor
+        switch document.activeTool {
+        case .select: cursor = .arrow
+        case .callout: cursor = .iBeam
+        default: cursor = .crosshair
+        }
         addCursorRect(bounds, cursor: cursor)
     }
 
@@ -1132,6 +1225,16 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return
         }
 
+        // While typing, the text box shows the text cursor; a click anywhere else only finishes editing
+        if let session = calloutSession {
+            if session.layer.bodyRect.contains(point) {
+                NSCursor.iBeam.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+            return
+        }
+
         // While actively dragging a layer's body, maintain the sleek 4-directional move cursor
         if activeDraggingLayer != nil && activeHandleIndex == nil {
             NSCursor.sleekMove.set()
@@ -1175,6 +1278,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         switch document.activeTool {
         case .select:
             NSCursor.arrow.set()
+        case .callout:
+            NSCursor.iBeam.set()
         default:
             NSCursor.crosshair.set()
         }
@@ -1188,6 +1293,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     public func handleEscapeKey() {
+        // Safety net: Esc normally reaches the editor first (cancelOperation:)
+        if isEditingCallout {
+            endCalloutEditing()
+            return
+        }
+
         let wasCreating = activeCreatingLayer != nil
         if wasCreating {
             activeCreatingLayer = nil
@@ -1350,6 +1461,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .dimension
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
+            } else if key == "t" {
+                document.activeTool = .callout
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
             } else {
                 super.keyDown(with: event)
             }
@@ -1434,6 +1549,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     // MARK: - Clipboard & Drag Export (Section 1 & 4)
 
     public func copyCompositionToClipboard() {
+        endCalloutEditingIfNeeded()
         guard let rendered = document.renderComposition() else { return }
         let rep = NSBitmapImageRep(cgImage: rendered)
         let nsImage = NSImage(cgImage: rendered, size: NSSize(width: rendered.width, height: rendered.height))
@@ -1447,6 +1563,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     public func saveCompositionToFile(url: URL, format: NSBitmapImageRep.FileType = .png) {
+        endCalloutEditingIfNeeded()
         guard let rendered = document.renderComposition() else { return }
         let rep = NSBitmapImageRep(cgImage: rendered)
         let properties: [NSBitmapImageRep.PropertyKey: Any] = (format == .jpeg) ? [.compressionFactor: 0.95] : [:]
@@ -1458,9 +1575,174 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
     }
 
+    // MARK: - Callout Text Editing
+
+    /// Opens a transparent editor over the callout body; the layer draws only the bubble meanwhile
+    func beginCalloutEditing(_ callout: CalloutLayer, isNew: Bool, preSession: [AnnotationLayer]? = nil, caretAt point: CGPoint? = nil) {
+        endCalloutEditing()
+
+        calloutSession = CalloutEditSession(
+            layer: callout,
+            isNew: isNew,
+            preSession: preSession ?? document.layers.map { $0.clone() },
+            originalText: callout.text,
+            originalColor: callout.color
+        )
+        callout.isTextHidden = true
+        document.selectedLayerIDs = [callout.id]
+
+        let editor = CalloutTextView()
+        editor.string = callout.text
+        editor.apply(textColor: callout.textColor)
+        editor.session = self
+        editor.delegate = self
+        calloutEditor = editor
+        addSubview(editor)
+        positionCalloutEditor()
+        var caret = (editor.string as NSString).length
+        if let point = point {
+            // Caret at the clicked character: canvas point → view point → editor coordinates
+            let canvasOrigin = document.activeCanvasBounds.origin
+            let viewPoint = CGPoint(x: point.x - canvasOrigin.x, y: point.y - canvasOrigin.y)
+            caret = editor.characterIndexForInsertion(at: editor.convert(viewPoint, from: self))
+        }
+        editor.setSelectedRange(NSRange(location: caret, length: 0))
+
+        // The caret must blink right away: make sure the panel is key so keystrokes reach the editor
+        if let window = window {
+            if window.isVisible && (!window.isKeyWindow || !NSApp.isActive) {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+            window.makeFirstResponder(editor)
+            window.invalidateCursorRects(for: self)
+        }
+        if let mousePoint = currentMouseCanvasPoint {
+            updateCursorForPoint(mousePoint)
+        }
+        needsDisplay = true
+    }
+
+    /// Commits the session: empty text removes the callout, a change becomes one undo step,
+    /// and the finished callout stays selected with the Select tool active
+    public func endCalloutEditing() {
+        finishCalloutEditing(switchToSelect: true)
+    }
+
+    /// Finishes a session before anything that must not see it open (export, window close)
+    public func endCalloutEditingIfNeeded() {
+        if isEditingCallout {
+            endCalloutEditing()
+        }
+    }
+
+    /// New callouts change the document once they hold text; existing ones when text or color differ
+    private func calloutSessionChanged(_ session: CalloutEditSession, text: String) -> Bool {
+        session.isNew ? !text.isEmpty : (text != session.originalText || session.layer.color != session.originalColor)
+    }
+
+    /// `switchToSelect` is false when a tool change ends the session: the chosen tool stays and nothing is selected
+    private func finishCalloutEditing(switchToSelect: Bool) {
+        guard let session = calloutSession, !isEndingCalloutEditing else { return }
+        isEndingCalloutEditing = true
+        defer { isEndingCalloutEditing = false }
+        let callout = session.layer
+        let editor = calloutEditor
+        if let editor = editor {
+            callout.text = editor.string
+        }
+        calloutSession = nil
+        calloutEditor = nil
+
+        let removed = callout.text.isEmpty
+        if removed {
+            document.layers.removeAll { $0.id == callout.id }
+        }
+        if calloutSessionChanged(session, text: callout.text) {
+            document.pushSnapshot(session.preSession)
+            document.isModified = true
+        }
+        callout.isTextHidden = false
+
+        if let editor = editor {
+            let hadFocus = window?.firstResponder === editor
+            editor.session = nil
+            editor.delegate = nil
+            editor.removeFromSuperview()
+            if hadFocus {
+                window?.makeFirstResponder(self)
+            }
+        }
+
+        // Set the tool first: its didSet clears the selection
+        if switchToSelect && document.activeTool != .select {
+            document.activeTool = .select
+        }
+        document.selectedLayerIDs = removed || document.activeTool != .select ? [] : [callout.id]
+        document.computeElasticBounds()
+        (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+        window?.invalidateCursorRects(for: self)
+        if let mousePoint = currentMouseCanvasPoint {
+            updateCursorForPoint(mousePoint)
+        }
+        needsDisplay = true
+    }
+
+    /// ⌘Z while editing: finishes the session and takes it back as a whole. An unchanged session
+    /// pushed no undo step, so ending it is the whole revert and no earlier step is touched
+    func revertCalloutSession() {
+        guard let session = calloutSession else { return }
+        let changed = calloutSessionChanged(session, text: calloutEditor?.string ?? session.layer.text)
+        endCalloutEditing()
+        if changed {
+            document.undo()
+        }
+    }
+
+    /// Re-applies the editing callout's text color after a recolor (white text flips to dark on white)
+    public func syncCalloutEditorAppearance() {
+        guard let editor = calloutEditor, let session = calloutSession else { return }
+        editor.apply(textColor: session.layer.textColor)
+        editor.needsDisplay = true
+    }
+
+    /// Keeps the editor exactly over the body: view coordinates = canvas coordinates − elastic origin
+    private func positionCalloutEditor() {
+        guard let editor = calloutEditor, let session = calloutSession else { return }
+        let canvasOrigin = document.activeCanvasBounds.origin
+        let frame = session.layer.bodyRect.offsetBy(dx: -canvasOrigin.x, dy: -canvasOrigin.y)
+        if editor.frame != frame {
+            editor.frame = frame
+        }
+    }
+
     // NSDraggingSource
     public func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         return .copy
     }
 
+}
+
+extension EditorCanvasView: CalloutEditingSession, NSTextViewDelegate {
+    public func textDidChange(_ notification: Notification) {
+        guard let editor = notification.object as? CalloutTextView, editor === calloutEditor,
+              let callout = calloutSession?.layer else { return }
+        // The body re-measures from the text, so the bubble grows and shrinks with every keystroke
+        callout.text = editor.string
+        document.computeElasticBounds()
+        positionCalloutEditor()
+        needsDisplay = true
+    }
+
+    public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard textView === calloutEditor else { return false }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            endCalloutEditing()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertTab(_:)) || commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+            return true
+        }
+        return false
+    }
 }

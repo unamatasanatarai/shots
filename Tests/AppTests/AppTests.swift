@@ -94,6 +94,12 @@ public struct AppTests {
             assert(settings.scrollingCaptureSpeed.stepDelayMicroseconds == 100_000, "Fast speed must have 100ms step delay")
             assert(settings.scrollingCaptureSpeed.scrollDeltaPixels == 120, "Fast speed must have 120px scroll delta")
 
+            // Scroll step adapts to the selected region: never more than half its height
+            assert(ScrollingCaptureSpeed.fast.scrollDeltaPixels(forRegionHeight: 50) == 25, "A 50pt-tall region must scroll 25pt per step")
+            assert(ScrollingCaptureSpeed.normal.scrollDeltaPixels(forRegionHeight: 120) == 60, "A 120pt-tall region must scroll 60pt per step at normal speed")
+            assert(ScrollingCaptureSpeed.slow.scrollDeltaPixels(forRegionHeight: 800) == 60, "Tall regions keep the speed's own scroll delta")
+            assert(ScrollingCaptureSpeed.fast.scrollDeltaPixels(forRegionHeight: 3) == 4, "Tiny regions still scroll at least 4pt per step")
+
             settings.hotkeyKeyCode = UInt16(kVK_ANSI_2)
             assert(testDefaults.integer(forKey: AppSettings.Keys.hotkeyKeyCode) == Int(kVK_ANSI_2), "UserDefaults must store updated keyCode")
 
@@ -847,6 +853,17 @@ public struct AppTests {
             } else {
                 assertionFailure("Cached mode must be .region")
             }
+
+            // Scrolling captures are remembered as scrolling, so repeating them scrolls again
+            let scrollingRecord = LastCaptureRecord(mode: .scrolling(rect: testRect, screenFrame: testFrame, displayID: testDisplayID))
+            manager.lastCapture = scrollingRecord
+            if case .scrolling(let r, let f, let d) = manager.lastCapture?.mode {
+                assert(r == testRect && f == testFrame && d == testDisplayID, "Cached scrolling record must keep its region")
+            } else {
+                assertionFailure("Cached mode must be .scrolling")
+            }
+            assert(scrollingRecord != regionRecord, "A scrolling record must differ from a plain region record")
+            manager.lastCapture = regionRecord
 
             // 3. Status bar menu item state reflects presence of lastCapture
             let controller = StatusBarController()

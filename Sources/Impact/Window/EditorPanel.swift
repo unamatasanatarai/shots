@@ -178,6 +178,9 @@ public final class EditorPanel: NSPanel {
     public var shouldCopyOnClose: Bool = true
 
     override public func close() {
+        // Commit any callout being typed so the copy and the saved file include it
+        canvasView.endCalloutEditingIfNeeded()
+
         // If no image was ever loaded in this window, do not copy or save empty compositions
         guard hasImage else {
             super.close()

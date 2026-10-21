@@ -31,9 +31,12 @@ public final class EditorDocument {
                 selectedLayerIDs.removeAll()
                 onNeedsDisplay?()
                 onSelectionChanged?()
+                onActiveToolChanged?(activeTool)
             }
         }
     }
+    /// Fires after every tool change (the canvas finishes a callout editing session on it)
+    public var onActiveToolChanged: ((LayerType) -> Void)?
     public var activeColor: String = "#FF3B30"
     public var activeStrokeWidth: CGFloat = 4.0
     public var activeFontSize: CGFloat = 16.0
@@ -193,6 +196,18 @@ public final class EditorDocument {
         undoStack.append(snapshot)
         if undoStack.count > 50 { undoStack.removeFirst() }
         redoStack.removeAll()
+    }
+
+    /// Pushes a snapshot captured earlier (e.g. before a callout editing session) as one undo step
+    public func pushSnapshot(_ snapshot: [AnnotationLayer]) {
+        undoStack.append(snapshot)
+        if undoStack.count > 50 { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    /// Drops the most recent snapshot when the gesture that saved it turned out to change nothing
+    public func discardLastSnapshot() {
+        _ = undoStack.popLast()
     }
 
     public func undo() {

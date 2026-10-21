@@ -5,6 +5,7 @@ public struct LastCaptureRecord: Equatable {
     public enum Mode: Equatable {
         case fullscreen
         case region(rect: NSRect, screenFrame: NSRect, displayID: CGDirectDisplayID)
+        case scrolling(rect: NSRect, screenFrame: NSRect, displayID: CGDirectDisplayID)
     }
 
     public let mode: Mode
@@ -176,7 +177,7 @@ public final class CaptureManager {
                 switch last.mode {
                 case .fullscreen:
                     return CaptureService.shared.activeScreen() ?? NSScreen.main
-                case .region(_, let screenFrame, _):
+                case .region(_, let screenFrame, _), .scrolling(_, let screenFrame, _):
                     return NSScreen.screens.first { $0.frame == screenFrame } ?? NSScreen.main
                 }
             }()
@@ -208,6 +209,17 @@ public final class CaptureManager {
                 image = CaptureService.shared.compositeCursor(on: image, screen: screen, cropRect: selRect) ?? image
             }
             processCapturedImage(image)
+
+        case .scrolling(let selRect, let screenFrame, let displayID):
+            let screen = NSScreen.screens.first {
+                ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
+            } ?? NSScreen.screens.first { $0.frame == screenFrame } ?? NSScreen.main
+            guard let targetScreen = screen else {
+                NSLog("No screen available for repeated scrolling capture")
+                return
+            }
+            let region = SelectedRegionInfo(rect: selRect, screen: targetScreen, displayID: displayID)
+            AutoscrollCaptureCoordinator.shared.repeatAutoscrollCapture(region: region)
         }
     }
 
