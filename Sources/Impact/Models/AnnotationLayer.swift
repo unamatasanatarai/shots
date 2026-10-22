@@ -64,11 +64,16 @@ public protocol AnnotationLayer: AnyObject {
     /// Renders vector content into CGContext
     func draw(in context: CGContext, scale: CGFloat)
 
-    /// Clones layer for undo/redo snapshots
-    func clone() -> AnnotationLayer
+    /// Clones layer under the given id (copy, cut, paste and duplicate need fresh ids)
+    func clone(withID newID: UUID) -> AnnotationLayer
 }
 
 public extension AnnotationLayer {
+    /// Clones layer keeping its id, for undo/redo snapshots
+    func clone() -> AnnotationLayer {
+        clone(withID: id)
+    }
+
     func hitTestHandle(point: CGPoint) -> Int? {
         hitTestHandle(point: point, radius: 8.0)
     }

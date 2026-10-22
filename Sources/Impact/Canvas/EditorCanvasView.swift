@@ -1405,8 +1405,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.undo()
             }
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "c" {
-            copyCompositionToClipboard()
-            (window as? EditorPanel)?.showCopiedToClipboardToast()
+            copySelectionOrComposition()
+        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "x" {
+            cutSelectedLayers()
+        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
+            pasteLayers()
+        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "d" {
+            duplicateSelectedLayers()
         } else if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "=" || event.charactersIgnoringModifiers == "+") {
             (window as? EditorPanel)?.zoomIn()
         } else if event.modifierFlags.contains(.command) && (event.charactersIgnoringModifiers == "-" || event.charactersIgnoringModifiers == "_") {
@@ -1437,7 +1442,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .counter
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
-            } else if key == "p" || key == "d" {
+            } else if key == "p" {
                 document.activeTool = .pen
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
@@ -1449,7 +1454,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .spotlight
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
-            } else if key == "b" || key == "u" {
+            } else if key == "b" {
                 document.activeTool = .blur
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
@@ -1544,6 +1549,37 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         sv.setMagnification(newMag, centeredAt: anchor)
         zoomScale = sv.magnification
         (window as? EditorPanel)?.updateMetaLabel()
+    }
+
+    // MARK: - Annotation Clipboard (⌘C / ⌘X / ⌘V / ⌘D)
+    // While a callout's text is edited, CalloutTextView takes ⌘C / ⌘X / ⌘V for the text first
+
+    /// ⌘C: copies the selected annotations silently; with nothing selected, the flattened composition
+    public func copySelectionOrComposition() {
+        if !isEditingCallout && document.copySelectedLayers() {
+            return
+        }
+        copyCompositionToClipboard()
+        (window as? EditorPanel)?.showCopiedToClipboardToast()
+    }
+
+    public func cutSelectedLayers() {
+        guard !isEditingCallout, document.cutSelectedLayers() else { return }
+        clearHoverStateImmediately()
+        needsDisplay = true
+    }
+
+    /// Pastes and selects the copies; the document switches to the Select tool so they can be dragged
+    public func pasteLayers() {
+        guard !isEditingCallout, document.pasteLayers() else { return }
+        (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+        needsDisplay = true
+    }
+
+    public func duplicateSelectedLayers() {
+        guard !isEditingCallout, document.duplicateSelectedLayers() else { return }
+        (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+        needsDisplay = true
     }
 
     // MARK: - Clipboard & Drag Export (Section 1 & 4)

@@ -1209,6 +1209,21 @@ public enum EditorTests {
             canvas.keyDown(with: keyEventP)
             assert(doc.activeTool == .pen, "Hotkey 'p' must switch activeTool back to .pen")
 
+            // Verify 'd' does not switch to .pen (only 'p' switches to pen)
+            doc.activeTool = .select
+            let keyEventD = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "d", charactersIgnoringModifiers: "d", isARepeat: false, keyCode: 2)!
+            canvas.keyDown(with: keyEventD)
+            assert(doc.activeTool != .pen, "Hotkey 'd' must NOT switch activeTool to .pen (pen is only 'p')")
+
+            // Verify 'u' does not switch to .blur (only 'b' switches to blur)
+            doc.activeTool = .select
+            let keyEventU = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "u", charactersIgnoringModifiers: "u", isARepeat: false, keyCode: 32)!
+            canvas.keyDown(with: keyEventU)
+            assert(doc.activeTool != .blur, "Hotkey 'u' must NOT switch activeTool to .blur (blur is only 'b')")
+
+            // Reset to pen for drawing test
+            canvas.keyDown(with: keyEventP)
+
             // Draw freehand stroke: down at (10, 10), drag to (30, 20) and (50, 40), up at (50, 40)
             let downEvent = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1.0)!
             canvas.mouseDown(with: downEvent)
@@ -3389,8 +3404,257 @@ public enum EditorTests {
             assert(FileManager.default.fileExists(atPath: saveDir.appendingPathComponent("shot-2.png").path), "Close must save the numbered copy")
         }
 
+        // MARK: - Annotation Copy / Cut / Paste / Duplicate
+
+        testRunner("Editor - Annotation Copy And Paste Cascades 10px Per Paste With Fresh IDs") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let clipboard = AnnotationClipboard()
+            let arrow = ArrowLayer(start: CGPoint(x: 100, y: 100), end: CGPoint(x: 200, y: 150))
+            let rect = RectangleLayer(rect: CGRect(x: 300, y: 300, width: 80, height: 40))
+            doc.addLayer(arrow)
+            doc.addLayer(rect)
+
+            assert(!doc.pasteLayers(from: clipboard), "Paste must do nothing before anything was copied")
+            doc.selectedLayerIDs = [arrow.id, rect.id]
+            assert(doc.copySelectedLayers(to: clipboard), "Copy must succeed with a selection")
+            assert(doc.layers.count == 2, "Copy must not change the canvas")
+
+            // First paste: +10/+10, on top, in the same relative order, selected, one undo step
+            doc.activeTool = .arrow
+            assert(doc.pasteLayers(from: clipboard), "Paste must succeed after a copy")
+            assert(doc.layers.count == 4, "Paste must add both copied layers")
+            guard let pastedArrow = doc.layers[2] as? ArrowLayer, let pastedRect = doc.layers[3] as? RectangleLayer else {
+                throw NSError(domain: "EditorTests", code: 20, userInfo: [NSLocalizedDescriptionKey: "Pasted layers must sit on top in their original order"])
+            }
+            assert(pastedArrow.start == CGPoint(x: 110, y: 110) && pastedArrow.end == CGPoint(x: 210, y: 160), "First paste must land 10px right and down")
+            assert(pastedRect.rect.origin == CGPoint(x: 310, y: 310), "Group members must keep their relative positions")
+            assert(pastedArrow.id != arrow.id && pastedRect.id != rect.id, "Pasted layers must get fresh ids")
+            assert(Set(doc.layers.map { $0.id }).count == 4, "Every layer id must be unique")
+            assert(doc.selectedLayerIDs == [pastedArrow.id, pastedRect.id], "Pasted layers must become the selection")
+            assert(doc.activeTool == .select, "Paste must switch to the Select tool")
+            assert(arrow.start == CGPoint(x: 100, y: 100), "Paste must not move the originals")
+
+            // Second paste of the same contents cascades another 10px
+            doc.pasteLayers(from: clipboard)
+            guard let secondArrow = doc.layers[4] as? ArrowLayer else {
+                throw NSError(domain: "EditorTests", code: 21, userInfo: [NSLocalizedDescriptionKey: "Second paste must append an arrow"])
+            }
+            assert(secondArrow.start == CGPoint(x: 120, y: 120), "Second paste must land 20px from the original")
+            assert(secondArrow.id != pastedArrow.id, "Each paste must create new ids")
+
+            // Undo takes back exactly one paste
+            doc.undo()
+            assert(doc.layers.count == 4, "Undo must remove only the last paste")
+
+            // A new copy starts the cascade over
+            doc.selectedLayerIDs = [arrow.id]
+            doc.copySelectedLayers(to: clipboard)
+            doc.pasteLayers(from: clipboard)
+            guard let restartArrow = doc.layers.last as? ArrowLayer else {
+                throw NSError(domain: "EditorTests", code: 22, userInfo: [NSLocalizedDescriptionKey: "Paste after a new copy must append an arrow"])
+            }
+            assert(restartArrow.start == CGPoint(x: 110, y: 110), "A new copy must reset the cascade to 10px")
+
+            // Clipboard holds snapshots: later edits to the original do not leak into pastes
+            arrow.move(by: CGPoint(x: 500, y: 0))
+            doc.pasteLayers(from: clipboard)
+            assert((doc.layers.last as? ArrowLayer)?.start == CGPoint(x: 120, y: 120), "Paste must use the copied state, not the live layer")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Annotation Cut Removes Selection As One Undo Step") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let clipboard = AnnotationClipboard()
+            let keep = RectangleLayer(rect: CGRect(x: 50, y: 50, width: 40, height: 40))
+            let arrow = ArrowLayer(start: CGPoint(x: 100, y: 100), end: CGPoint(x: 200, y: 150))
+            let counter = CounterLayer(center: CGPoint(x: 300, y: 300), value: 1)
+            doc.addLayer(keep)
+            doc.addLayer(arrow)
+            doc.addLayer(counter)
+
+            doc.selectedLayerIDs = []
+            assert(!doc.cutSelectedLayers(to: clipboard), "Cut must do nothing without a selection")
+            assert(clipboard.isEmpty && doc.layers.count == 3, "An empty cut must change nothing")
+
+            doc.selectedLayerIDs = [arrow.id, counter.id]
+            assert(doc.cutSelectedLayers(to: clipboard), "Cut must succeed with a selection")
+            assert(doc.layers.map { $0.id } == [keep.id], "Cut must remove only the selected layers")
+            assert(doc.selectedLayerIDs.isEmpty, "Cut must clear the selection")
+            assert(clipboard.layers.count == 2, "Cut must store the selection in the clipboard")
+
+            doc.undo()
+            assert(doc.layers.map { $0.id } == [keep.id, arrow.id, counter.id], "One undo must restore every cut layer")
+
+            // Pasting after a cut + undo still works, cascading from the original position
+            doc.pasteLayers(from: clipboard)
+            assert((doc.layers[3] as? ArrowLayer)?.start == CGPoint(x: 110, y: 110), "Paste after cut must land 10px away")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Annotation Duplicate Offsets, Selects Copies And Leaves Clipboard Alone") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let clipboard = AnnotationClipboard()
+            let shared = AnnotationClipboard.shared
+            let sharedBefore = (shared.layers.map { $0.id }, shared.pasteCount)
+            let rect = RectangleLayer(rect: CGRect(x: 100, y: 100, width: 60, height: 30), color: "#34C759", strokeWidth: 7, fillStyle: .solid)
+            let other = ArrowLayer(start: CGPoint(x: 400, y: 100), end: CGPoint(x: 450, y: 150))
+            doc.addLayer(rect)
+            doc.addLayer(other)
+            doc.selectedLayerIDs = [rect.id]
+            doc.copySelectedLayers(to: clipboard)
+
+            doc.selectedLayerIDs = []
+            assert(!doc.duplicateSelectedLayers(), "Duplicate must do nothing without a selection")
+
+            doc.selectedLayerIDs = [rect.id]
+            assert(doc.duplicateSelectedLayers(), "Duplicate must succeed with a selection")
+            guard let copy = doc.layers.last as? RectangleLayer else {
+                throw NSError(domain: "EditorTests", code: 23, userInfo: [NSLocalizedDescriptionKey: "Duplicate must append a rectangle on top"])
+            }
+            assert(copy.id != rect.id, "Duplicate must get a fresh id")
+            assert(copy.rect == CGRect(x: 110, y: 110, width: 60, height: 30), "Duplicate must land 10px right and down")
+            assert(copy.color == "#34C759" && copy.strokeWidth == 7 && copy.fillStyle == .solid, "Duplicate must keep the styling")
+            assert(doc.selectedLayerIDs == [copy.id], "The copy must become the selection")
+
+            // Repeated ⌘D duplicates the new copy, building a cascade
+            doc.duplicateSelectedLayers()
+            assert((doc.layers.last as? RectangleLayer)?.rect.origin == CGPoint(x: 120, y: 120), "A second duplicate must cascade from the copy")
+            assert(doc.layers.count == 4, "Each duplicate must add one layer")
+
+            assert(clipboard.layers.count == 1 && clipboard.layers[0].id == rect.id && clipboard.pasteCount == 0, "Duplicate must not touch the clipboard")
+            assert(shared.layers.map { $0.id } == sharedBefore.0 && shared.pasteCount == sharedBefore.1, "Duplicate must not touch the shared clipboard")
+
+            doc.undo()
+            assert(doc.layers.count == 3, "Undo must take back exactly one duplicate")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Annotation Paste Renumbers Counters Across Canvases") {
+            let (source, sourcePanel, _) = try makeCalloutPanel()
+            let (target, targetPanel, _) = try makeCalloutPanel()
+            let clipboard = AnnotationClipboard()
+
+            let c1 = CounterLayer(center: CGPoint(x: 100, y: 100), value: 1)
+            let c3 = CounterLayer(center: CGPoint(x: 200, y: 100), value: 3, color: "#007AFF")
+            let c2 = CounterLayer(center: CGPoint(x: 150, y: 100), value: 2)
+            source.addLayer(c1)
+            source.addLayer(c3)
+            source.addLayer(c2)
+            for value in 1...5 {
+                target.addLayer(CounterLayer(center: CGPoint(x: CGFloat(value) * 40, y: 400), value: value))
+            }
+
+            // ② and ③ onto a canvas whose highest counter is ⑤ become ⑥ and ⑦, in their original order
+            source.selectedLayerIDs = [c3.id, c2.id]
+            source.copySelectedLayers(to: clipboard)
+            target.pasteLayers(from: clipboard)
+            let pasted = target.layers.suffix(2).compactMap { $0 as? CounterLayer }
+            assert(pasted.count == 2, "Both counters must be pasted")
+            assert(pasted[0].value == 7 && pasted[0].color == "#007AFF", "The copy of ③ must become ⑦ and keep its color")
+            assert(pasted[1].value == 6, "The copy of ② must become ⑥")
+            assert(pasted[0].center == CGPoint(x: 210, y: 110), "Pasting across canvases keeps the coordinates plus the offset")
+            assert(c2.value == 2 && c3.value == 3, "The source counters must keep their numbers")
+
+            // Duplicate continues from the highest counter on the canvas
+            source.selectedLayerIDs = [c1.id]
+            source.duplicateSelectedLayers()
+            assert((source.layers.last as? CounterLayer)?.value == 4, "A duplicated counter must take the next free number")
+
+            // The next free number follows the canvas, not a stale counter step
+            source.counterStep = 20
+            source.selectedLayerIDs = [c1.id]
+            source.duplicateSelectedLayers()
+            assert((source.layers.last as? CounterLayer)?.value == 5, "Renumbering must use the highest counter on the canvas")
+
+            quietClose(source, sourcePanel)
+            quietClose(target, targetPanel)
+        }
+
+        testRunner("Editor - Annotation Copy Keeps Spotlight Rectangles And Blur Under Spotlight") {
+            let (source, sourcePanel, _) = try makeCalloutPanel()
+            let (target, targetPanel, _) = try makeCalloutPanel()
+            let clipboard = AnnotationClipboard()
+
+            let spotlight = FilterLayer(rects: [CGRect(x: 10, y: 10, width: 50, height: 50), CGRect(x: 100, y: 100, width: 50, height: 50)], filterMode: .spotlight)
+            spotlight.selectedRectIndex = 0
+            let blur = FilterLayer(rects: [CGRect(x: 300, y: 300, width: 60, height: 30)], filterMode: .gaussian)
+            source.layers = [blur, spotlight]
+            source.selectedLayerIDs = [blur.id, spotlight.id]
+            source.copySelectedLayers(to: clipboard)
+
+            // No spotlight on the target: the whole overlay arrives with every rectangle moved
+            target.pasteLayers(from: clipboard)
+            guard let pastedSpot = target.layers.first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer,
+                  let spotIndex = target.layers.firstIndex(where: { $0 === pastedSpot }),
+                  let blurIndex = target.layers.firstIndex(where: { ($0 as? FilterLayer)?.filterMode == .gaussian }) else {
+                throw NSError(domain: "EditorTests", code: 24, userInfo: [NSLocalizedDescriptionKey: "Spotlight and blur must be pasted"])
+            }
+            assert(pastedSpot.rects == [CGRect(x: 20, y: 20, width: 50, height: 50), CGRect(x: 110, y: 110, width: 50, height: 50)], "Every spotlight rectangle must move by the offset")
+            assert(blurIndex < spotIndex, "Blur must stay under the spotlight overlay")
+
+            // A second paste joins the existing overlay instead of stacking a second one
+            target.pasteLayers(from: clipboard)
+            let overlays = target.layers.filter { ($0 as? FilterLayer)?.filterMode == .spotlight }
+            assert(overlays.count == 1, "A canvas must keep a single spotlight overlay")
+            assert(pastedSpot.rects.count == 4 && pastedSpot.rects[2].origin == CGPoint(x: 30, y: 30), "Pasted rectangles must join the overlay, cascaded")
+            assert(target.selectedLayerIDs.contains(pastedSpot.id), "The overlay holding the pasted rectangles must be selected")
+            let lastSpotIndex = target.layers.firstIndex(where: { $0 === pastedSpot }) ?? -1
+            assert(target.layers.enumerated().allSatisfy { (l: (offset: Int, element: AnnotationLayer)) in (l.element as? FilterLayer)?.filterMode != .gaussian || l.offset < lastSpotIndex }, "Every blur must stay under the spotlight")
+
+            // Cut takes the whole overlay, not just its selected rectangle
+            source.selectedLayerIDs = [spotlight.id]
+            source.cutSelectedLayers(to: clipboard)
+            assert(!source.layers.contains { $0 === spotlight }, "Cut must remove the whole spotlight overlay")
+            assert((clipboard.layers.first as? FilterLayer)?.rects.count == 2, "Cut must keep every spotlight rectangle")
+
+            quietClose(source, sourcePanel)
+            quietClose(target, targetPanel)
+        }
+
+        testRunner("Editor - Annotation Shortcuts Through Canvas keyDown") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let rect = RectangleLayer(rect: CGRect(x: 100, y: 100, width: 60, height: 30))
+            doc.addLayer(rect)
+            let pasteboard = NSPasteboard.general
+
+            // ⌘C with a selection copies the annotation, not the image
+            doc.selectedLayerIDs = [rect.id]
+            let changeCount = pasteboard.changeCount
+            canvas.keyDown(with: key("c", 8, .command, window: panel))
+            assert(pasteboard.changeCount == changeCount, "⌘C with a selection must not touch the macOS pasteboard")
+            assert(AnnotationClipboard.shared.layers.map { $0.id } == [rect.id], "⌘C must fill the annotation clipboard")
+
+            // ⌘V pastes, ⌘D duplicates, plain D still picks the pen
+            canvas.keyDown(with: key("v", 9, .command, window: panel))
+            assert(doc.layers.count == 2 && (doc.layers.last as? RectangleLayer)?.rect.origin == CGPoint(x: 110, y: 110), "⌘V must paste 10px away")
+            canvas.keyDown(with: key("d", 2, .command, window: panel))
+            assert(doc.layers.count == 3 && (doc.layers.last as? RectangleLayer)?.rect.origin == CGPoint(x: 120, y: 120), "⌘D must duplicate the pasted copy")
+            assert(doc.activeTool == .select, "⌘D must not pick the pen tool")
+
+            // ⌘X cuts the duplicate; ⌘Z brings it back
+            let duplicateID = doc.layers[2].id
+            canvas.keyDown(with: key("x", 7, .command, window: panel))
+            assert(doc.layers.count == 2 && !doc.layers.contains { $0.id == duplicateID }, "⌘X must remove the selection")
+            canvas.keyDown(with: key("z", 6, .command, window: panel))
+            assert(doc.layers.count == 3, "⌘Z must restore the cut layer")
+
+            // ⌘C with nothing selected still copies the composition
+            doc.selectedLayerIDs = []
+            canvas.keyDown(with: key("c", 8, .command, window: panel))
+            assert(pasteboard.changeCount != changeCount, "⌘C without a selection must copy the composition")
+
+            // While a callout's text is edited, the annotation shortcuts leave the canvas alone
+            let (_, editor) = try createCallout(doc, canvas, at: CGPoint(x: 500, y: 400))
+            typeText(editor, "Hi")
+            let countWhileEditing = doc.layers.count
+            canvas.keyDown(with: key("v", 9, .command, window: panel))
+            canvas.keyDown(with: key("d", 2, .command, window: panel))
+            canvas.keyDown(with: key("x", 7, .command, window: panel))
+            assert(doc.layers.count == countWhileEditing && canvas.isEditingCallout, "Annotation shortcuts must not act while editing text")
+            canvas.endCalloutEditing()
+
+            quietClose(doc, panel)
+        }
+
     }
 }
-
-
-

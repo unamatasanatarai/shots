@@ -113,14 +113,17 @@ Screen capture on macOS is often trapped between two extremes: minimal system sh
 | **Spotlight** | `S` | Darkened mask with punched transparent highlight holes |
 | **Step Counter** | `C` | Auto-incrementing numbered badge with pointer tail |
 | **Callout** | `T` | Text box that sizes to its text, with a draggable tapered beak |
-| **Freehand Pen** | `P` or `D` | Opaque smooth vector ink with nib preview |
+| **Freehand Pen** | `P` | Opaque smooth vector ink with nib preview |
 | **Highlighter** | `H` | Translucent multiply-blended freehand marker |
-| **Privacy Blur** | `B` or `U` | Localized Gaussian blur with 8-point resize handles |
+| **Privacy Blur** | `B` | Localized Gaussian blur with 8-point resize handles |
 | **Ruler** | `M` | Calibrated dimension measurement marker |
 | **Zoom In / Out** | `⌘ +` / `⌘ -` | Incremental zoom (or `⌘` + Scroll / Trackpad pinch) |
 | **Actual Size / Fit** | `⌘ 0` / `⌘ 1` | Resets canvas to 100% or scales to fit window |
 | **Pan Canvas** | `Right-Drag` | Pans the document view with closed-hand cursor |
-| **Copy Composition**| `⌘ C` | Flattens composition and copies PNG to pasteboard |
+| **Copy** | `⌘ C` | Copies the selected annotations; with nothing selected, flattens the composition and copies PNG to pasteboard |
+| **Cut** | `⌘ X` | Copies the selected annotations, then removes them |
+| **Paste** | `⌘ V` | Pastes copied annotations (any editor window), cascading 10 px right and down per paste |
+| **Duplicate** | `⌘ D` | Duplicates the selection 10 px right and down; counters continue the sequence |
 | **Save Image** | `⌘ S` | Saves flattened image with auto-incremented name |
 | **Open File** | `⌘ O` | Opens an existing image in a new editor window |
 | **Undo / Redo** | `⌘ Z` / `⌘ ⇧ Z` | Full history snapshots for all layer operations |

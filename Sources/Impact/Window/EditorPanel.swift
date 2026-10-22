@@ -141,6 +141,11 @@ public final class EditorPanel: NSPanel {
             zoomOut()
             return
         }
+        if event.modifierFlags.contains(.command), let key = event.charactersIgnoringModifiers, ["c", "x", "v", "d"].contains(key) {
+            // Copy / cut / paste / duplicate reach the canvas even when it is not first responder
+            canvasView.keyDown(with: event)
+            return
+        }
         if event.keyCode == 123 || event.keyCode == 124 || event.keyCode == 125 || event.keyCode == 126 { // Arrow keys
             let isShift = event.modifierFlags.contains(.shift)
             if canvasView.nudgeSelectedLayers(keyCode: event.keyCode, isShift: isShift, isRepeat: event.isARepeat) {

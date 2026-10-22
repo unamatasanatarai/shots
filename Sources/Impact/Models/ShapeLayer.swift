@@ -197,9 +197,9 @@ public final class RectangleLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         RectangleLayer(
-            id: id,
+            id: newID,
             rect: rect,
             cornerRadius: cornerRadius,
             color: color,
@@ -400,9 +400,9 @@ public final class EllipseLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         EllipseLayer(
-            id: id,
+            id: newID,
             rect: rect,
             isPerfectCircle: isPerfectCircle,
             color: color,
@@ -538,9 +538,9 @@ public final class LineLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         LineLayer(
-            id: id,
+            id: newID,
             start: start,
             end: end,
             color: color,

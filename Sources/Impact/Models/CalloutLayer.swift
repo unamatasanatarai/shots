@@ -367,9 +367,9 @@ public final class CalloutLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         let copy = CalloutLayer(
-            id: id,
+            id: newID,
             text: text,
             origin: origin,
             tailTip: tailTip,

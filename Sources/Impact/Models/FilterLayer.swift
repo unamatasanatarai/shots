@@ -480,9 +480,9 @@ public final class FilterLayer: AnnotationLayer {
         }
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         let copy = FilterLayer(
-            id: id,
+            id: newID,
             rects: rects,
             filterMode: filterMode,
             intensity: intensity,

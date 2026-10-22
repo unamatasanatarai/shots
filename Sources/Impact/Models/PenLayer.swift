@@ -207,9 +207,9 @@ public final class PenLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         PenLayer(
-            id: id,
+            id: newID,
             points: points,
             color: color,
             strokeWidth: strokeWidth,
@@ -442,9 +442,9 @@ public final class HighlighterLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         HighlighterLayer(
-            id: id,
+            id: newID,
             points: points,
             color: color,
             strokeWidth: strokeWidth,

@@ -405,9 +405,9 @@ public final class ArrowLayer: AnnotationLayer {
         return atan2(dy, dx)
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         let cloned = ArrowLayer(
-            id: id,
+            id: newID,
             start: start,
             control: control,
             end: end,

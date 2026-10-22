@@ -171,9 +171,9 @@ public final class DimensionLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         DimensionLayer(
-            id: id,
+            id: newID,
             start: start,
             end: end,
             color: color,

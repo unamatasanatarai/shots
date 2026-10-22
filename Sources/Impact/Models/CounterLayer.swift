@@ -281,9 +281,9 @@ public final class CounterLayer: AnnotationLayer {
         context.restoreGState()
     }
 
-    public func clone() -> AnnotationLayer {
+    public func clone(withID newID: UUID) -> AnnotationLayer {
         CounterLayer(
-            id: id,
+            id: newID,
             center: center,
             radius: radius,
             value: value,
