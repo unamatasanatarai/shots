@@ -276,7 +276,7 @@ public final class RegionSelectionCoordinator {
     }
 
     private func hideSystemCursor() {
-        guard !isCursorHidden else { return }
+        guard isSelecting, !isCursorHidden else { return }
         isCursorHidden = true
 
         Self.enableBackgroundCursorControl()
@@ -390,6 +390,7 @@ public final class RegionSelectionCoordinator {
             if let src = tapRunLoopSource {
                 CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
             }
+            CFMachPortInvalidate(tap)
             eventTap = nil
             tapRunLoopSource = nil
         }
@@ -405,6 +406,10 @@ public final class RegionSelectionCoordinator {
             }
             return false
         }
+
+        // The tap can still deliver events queued before it was removed; ignore them
+        // so they cannot re-hide the cursor after the session has finished.
+        guard isSelecting else { return false }
 
         let cgPoint = event.location
 
@@ -622,6 +627,9 @@ public final class RegionSelectionCoordinator {
             panel.orderOut(nil)
         }
         CATransaction.flush()
+
+        // Give the cursor back on release; the capture below never includes the live cursor
+        showSystemCursor()
 
         let displayID = (targetScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID)
             ?? CGMainDisplayID()
