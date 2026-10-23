@@ -12,7 +12,7 @@ build_dir="build"
 target_version=""
 release_intro="${SUMMARY:-${NOTES:-}}"
 
-: "${GEMINI_MODEL:=gemini-3.8-flash}"
+: "${GEMINI_MODEL:=gemini-2.5-flash}"
 readonly GEMINI_API_URL="https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/release.XXXXXX")"
@@ -43,7 +43,7 @@ Required environment:
 
 Optional environment:
   GEMINI_MODEL        Gemini model ID.
-                      Default: gemini-3.8-flash
+                      Default: gemini-2.5-flash
 
 Dependencies:
   bash, git, curl, jq
@@ -177,6 +177,7 @@ Below is the full list of commits and file changes included in this release.
 Write a clear, structured release summary in GitHub-flavored Markdown.
 
 Guidelines:
+- Thoroughly cover all commits and changes listed below. Ensure every major feature, fix, and optimization across all commits is represented in the notes.
 - Explain meaningful changes and their user-facing or technical impact.
 - Synthesize and group related commits into concise bullet points organized under clear category headings (e.g. ### Features, ### Improvements, ### Bug Fixes).
 - ${repo_instruction}
@@ -190,20 +191,43 @@ EOF
 
 cat "$commits_file" >>"$prompt_file"
 
-jq -n --rawfile prompt "$prompt_file" '{
-    contents: [
-        {
-            role: "user",
-            parts: [{text: $prompt}]
-        }
-    ],
-    generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 2048
-    }
-}' >"$request_file"
+build_request_payload() {
+    local disable_thinking="$1"
+    if [[ "$disable_thinking" == "true" ]]; then
+        jq -n --rawfile prompt "$prompt_file" '{
+            contents: [
+                {
+                    role: "user",
+                    parts: [{text: $prompt}]
+                }
+            ],
+            generationConfig: {
+                temperature: 0.2,
+                maxOutputTokens: 8192,
+                thinkingConfig: {
+                    thinkingBudget: 0
+                }
+            }
+        }'
+    else
+        jq -n --rawfile prompt "$prompt_file" '{
+            contents: [
+                {
+                    role: "user",
+                    parts: [{text: $prompt}]
+                }
+            ],
+            generationConfig: {
+                temperature: 0.2,
+                maxOutputTokens: 8192
+            }
+        }'
+    fi
+}
 
 info "Generating release summary via Gemini (${GEMINI_MODEL})..."
+
+build_request_payload "true" >"$request_file"
 
 if ! curl \
     --silent \
@@ -217,9 +241,29 @@ if ! curl \
     --data-binary "@${request_file}" \
     -o "$response_file"; then
 
-    printf 'Gemini API request failed.\n' >&2
-    jq -r '.error.message // empty' "$response_file" >&2 2>/dev/null || true
-    die "Summarization failed; release aborted."
+    # If the model does not support thinkingConfig, retry without it
+    if grep -q "thinkingConfig" "$response_file" 2>/dev/null; then
+        build_request_payload "false" >"$request_file"
+        if ! curl \
+            --silent \
+            --show-error \
+            --fail-with-body \
+            --connect-timeout 15 \
+            --max-time 180 \
+            -X POST "$GEMINI_API_URL" \
+            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data-binary "@${request_file}" \
+            -o "$response_file"; then
+            printf 'Gemini API request failed.\n' >&2
+            jq -r '.error.message // empty' "$response_file" >&2 2>/dev/null || true
+            die "Summarization failed; release aborted."
+        fi
+    else
+        printf 'Gemini API request failed.\n' >&2
+        jq -r '.error.message // empty' "$response_file" >&2 2>/dev/null || true
+        die "Summarization failed; release aborted."
+    fi
 fi
 
 if ! jq -e '.candidates[0].content.parts' \
@@ -228,6 +272,11 @@ if ! jq -e '.candidates[0].content.parts' \
     jq -r '.error.message // .promptFeedback.blockReason // "Unknown API response"' \
         "$response_file" >&2 2>/dev/null || true
     die "Summarization failed; release aborted."
+fi
+
+finish_reason="$(jq -r '.candidates[0].finishReason // empty' "$response_file")"
+if [[ "$finish_reason" == "MAX_TOKENS" ]]; then
+    printf 'Warning: Gemini response reached maxOutputTokens limit and may be incomplete.\n' >&2
 fi
 
 response_text="$(
