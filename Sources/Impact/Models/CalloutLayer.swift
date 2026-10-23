@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 import AppKit
 
-public final class CalloutLayer: AnnotationLayer {
+public final class CalloutLayer: AnnotationLayer, TextEditableLayer {
     public let id: UUID
     public let type: LayerType = .callout
     public var zIndex: Int
@@ -37,6 +37,7 @@ public final class CalloutLayer: AnnotationLayer {
     static let minBeakLength: CGFloat = 8.0
     static let minBaseWidth: CGFloat = 16.0
     static let defaultBaseWidth: CGFloat = 18.0 // fixed beak base; never derived from the body size
+    static let maxBaseWidth: CGFloat = 50.0 // maximum base width (~60px at root with shoulder fillets)
     static let baseGrowth: CGFloat = 0.2 // k: base widening per point of beak length beyond the default gap
     static let cornerClearance: CGFloat = 2.0
     static let maxFillet: CGFloat = 6.0
@@ -169,7 +170,7 @@ public final class CalloutLayer: AnnotationLayer {
         let flatLength = max(4.0, edgeLength - 2.0 * inset)
         // Same beak at any body size: only dragging the tip further out widens it
         let growth = CalloutLayer.baseGrowth * max(0.0, tipV - CalloutLayer.defaultTipGap)
-        let base = min(flatLength, max(CalloutLayer.minBaseWidth, CalloutLayer.defaultBaseWidth + growth))
+        let base = min(flatLength, min(CalloutLayer.maxBaseWidth, max(CalloutLayer.minBaseWidth, CalloutLayer.defaultBaseWidth + growth)))
         let halfBase = base / 2.0
         let centerU = min(max(tipU, inset + halfBase), edgeLength - inset - halfBase)
         return BeakGeometry(

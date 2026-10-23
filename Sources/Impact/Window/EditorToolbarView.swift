@@ -567,6 +567,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         ToolDefinition(type: .spotlight, title: "Spotlight", iconName: "camera.metering.spot", shortcut: "s"),
         ToolDefinition(type: .counter, title: "Counter", iconName: "number.circle.fill", shortcut: "c"),
         ToolDefinition(type: .callout, title: "Callout", iconName: "text.bubble", shortcut: "t"),
+        ToolDefinition(type: .text, title: "Text", iconName: "textformat", shortcut: "x"),
         ToolDefinition(type: .pen, title: "Pen", iconName: "pencil.tip", shortcut: "p"),
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b"),
@@ -581,6 +582,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         ToolDefinition(type: .spotlight, title: "Spotlight", iconName: "camera.metering.spot", shortcut: "s"),
         ToolDefinition(type: .counter, title: "Counter", iconName: "number.circle.fill", shortcut: "c"),
         ToolDefinition(type: .callout, title: "Callout", iconName: "text.bubble", shortcut: "t"),
+        ToolDefinition(type: .text, title: "Text", iconName: "textformat", shortcut: "x"),
         ToolDefinition(type: .pen, title: "Pen", iconName: "pencil.tip", shortcut: "p"),
         ToolDefinition(type: .highlighter, title: "Highlighter", iconName: "highlighter", shortcut: "h"),
         ToolDefinition(type: .blur, title: "Blur", iconName: "drop.fill", shortcut: "b"),
@@ -882,25 +884,27 @@ public final class EditorToolbarView: NSVisualEffectView {
         undoButton?.isHidden = !showUndo
         actionSeparatorView?.isHidden = isColorVisible || !showUndo
 
-        // 4. Collapsible tools (Arrow, Line, Rectangle, Oval, Spotlight, Counter, Callout, Pen, Highlighter, Blur, Ruler)
+        // 4. Collapsible tools (Arrow, Line, Rectangle, Oval, Spotlight, Counter, Callout, Text, Pen, Highlighter, Blur, Ruler)
         // Calibrated from the measured layout so each rung adds exactly one tool and nothing is ever clipped.
         // Every tool slot is a 30pt button plus 3pt stack spacing (33pt). Rungs assume the widest case
         // (color picker and Undo visible, overflow shown): 481pt of fixed chrome with zoom, 369pt without.
-        // All 11 tools need one extra slot over 10 so Ruler collapses on its own rung (the overflow
+        // All 12 tools need one extra slot over 11 so Ruler collapses on its own rung (the overflow
         // button takes its place). Below the 740pt zoom cutoff the count stays capped at 7 so tools
         // never reappear when the zoom capsule hides.
         let totalCount = collapsibleToolDefinitions.count
         let visibleCount: Int
-        if totalW >= 844.0 {
+        if totalW >= 877.0 {
             visibleCount = totalCount // All tools visible, overflow button hidden
+        } else if totalW >= 844.0 {
+            visibleCount = 11 // Ruler in dropdown
         } else if totalW >= 811.0 {
-            visibleCount = 10 // Ruler in dropdown
+            visibleCount = 10 // Ruler, Blur in dropdown
         } else if totalW >= 778.0 {
-            visibleCount = 9 // Ruler, Blur in dropdown
+            visibleCount = 9 // Ruler, Blur, Highlighter in dropdown, Pen visible
         } else if totalW >= 745.0 {
-            visibleCount = 8 // Ruler, Blur, Highlighter in dropdown, Pen visible
+            visibleCount = 8 // Pen in dropdown, Text visible
         } else if totalW >= 600.0 {
-            visibleCount = 7 // Pen in dropdown, Callout visible (zoom capsule hidden below 740pt)
+            visibleCount = 7 // Text in dropdown, Callout visible (zoom capsule hidden below 740pt)
         } else if totalW >= 567.0 {
             visibleCount = 6 // Callout in dropdown, Counter visible
         } else if totalW >= 534.0 {

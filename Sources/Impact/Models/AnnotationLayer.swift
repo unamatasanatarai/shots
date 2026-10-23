@@ -18,6 +18,7 @@ public enum LayerType: String, Codable, CaseIterable {
     case blur = "Blur"
     case highlighter = "Highlighter"
     case callout = "Callout"
+    case text = "Text"
 }
 
 // MARK: - Arrow Head Types
@@ -66,6 +67,15 @@ public protocol AnnotationLayer: AnyObject {
 
     /// Clones layer under the given id (copy, cut, paste and duplicate need fresh ids)
     func clone(withID newID: UUID) -> AnnotationLayer
+}
+
+// MARK: - Text Editable Protocol
+
+public protocol TextEditableLayer: AnnotationLayer {
+    var text: String { get set }
+    var textColor: NSColor { get }
+    var isTextHidden: Bool { get set }
+    var bodyRect: CGRect { get }
 }
 
 public extension AnnotationLayer {

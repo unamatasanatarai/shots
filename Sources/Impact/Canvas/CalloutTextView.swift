@@ -54,12 +54,20 @@ final class CalloutTextView: NSTextView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Text, caret and selection follow the callout's text color (white, or dark on the white swatch)
-    func apply(textColor color: NSColor) {
+    /// Text, caret and selection follow the text color
+    func apply(textColor color: NSColor, withShadow: Bool = false) {
         textColor = color
         insertionPointColor = color
         selectedTextAttributes = [.backgroundColor: color.withAlphaComponent(0.35)]
-        typingAttributes = [.font: CalloutTextLayout.font, .foregroundColor: color]
+        if withShadow {
+            let shadow = NSShadow()
+            shadow.shadowOffset = NSSize(width: 0, height: -1.0)
+            shadow.shadowBlurRadius = 2.5
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
+            typingAttributes = [.font: CalloutTextLayout.font, .foregroundColor: color, .shadow: shadow]
+        } else {
+            typingAttributes = [.font: CalloutTextLayout.font, .foregroundColor: color]
+        }
     }
 
     // The app has no Edit menu, so standard editing shortcuts are mapped here

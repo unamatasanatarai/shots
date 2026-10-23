@@ -1468,6 +1468,7 @@ public enum EditorTests {
             assert(toolbar.toolButtons[.spotlight]?.isHidden == false, "Spotlight must be visible when wide")
             assert(toolbar.toolButtons[.counter]?.isHidden == false, "Counter must be visible when wide")
             assert(toolbar.toolButtons[.callout]?.isHidden == false, "Callout must be visible when wide")
+            assert(toolbar.toolButtons[.text]?.isHidden == false, "Text must be visible when wide")
             assert(toolbar.toolButtons[.pen]?.isHidden == false, "Pen must be visible when wide")
             assert(toolbar.toolButtons[.highlighter]?.isHidden == false, "Highlighter must be visible when wide")
             assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur must be visible when wide")
@@ -1479,24 +1480,25 @@ public enum EditorTests {
             assert(toolbar.pinButton?.isHidden == false, "Pin must be visible")
 
             // Progressive one-by-one collapse:
-            // Width 830pt: exactly 1 tool (Ruler, rightmost) moves to dropdown, 10 tools remain
-            toolbar.frame = NSRect(x: 0, y: 0, width: 830, height: 44)
+            // Width 860pt: exactly 1 tool (Ruler, rightmost) moves to dropdown, 11 tools remain
+            toolbar.frame = NSRect(x: 0, y: 0, width: 860, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown first")
-            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur still on toolbar at 830pt")
+            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur still on toolbar at 860pt")
             assert(toolbar.overflowButton?.isHidden == false, "Overflow button appears when 1 tool moves to dropdown")
 
-            // Width 770pt: Ruler, Blur, Highlighter moved to dropdown, 8 tools remain
+            // Width 770pt: Ruler, Blur, Highlighter, Pen moved to dropdown, 8 tools remain
             toolbar.frame = NSRect(x: 0, y: 0, width: 770, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown as space narrows")
             assert(toolbar.toolButtons[.blur]?.isHidden == true, "Blur moves to dropdown as space narrows")
             assert(toolbar.toolButtons[.highlighter]?.isHidden == true, "Highlighter moves to dropdown as space narrows")
-            assert(toolbar.toolButtons[.pen]?.isHidden == false, "Pen still on toolbar at 770pt")
+            assert(toolbar.toolButtons[.pen]?.isHidden == true, "Pen moves to dropdown as space narrows")
+            assert(toolbar.toolButtons[.text]?.isHidden == false, "Text still on toolbar at 770pt")
 
             // Every rung collapses exactly one more tool, from the end of the collapsible list
             let rungs: [(width: CGFloat, visible: Int)] = [
-                (844, 11), (811, 10), (778, 9), (745, 8), (740, 7), (600, 7), (567, 6),
+                (877, 12), (844, 11), (811, 10), (778, 9), (745, 8), (740, 7), (600, 7), (567, 6),
                 (534, 5), (501, 4), (468, 3), (435, 2), (402, 1), (401, 0)
             ]
             for rung in rungs {
@@ -1506,13 +1508,14 @@ public enum EditorTests {
                     let expectedHidden = index >= rung.visible
                     assert(toolbar.toolButtons[def.type]?.isHidden == expectedHidden, "\(def.title) hidden must be \(expectedHidden) at \(rung.width)pt")
                 }
-                assert(toolbar.overflowButton?.isHidden == (rung.visible == 11), "Overflow button shows whenever a tool is collapsed (\(rung.width)pt)")
+                assert(toolbar.overflowButton?.isHidden == (rung.visible == 12), "Overflow button shows whenever a tool is collapsed (\(rung.width)pt)")
             }
 
-            // Callout collapses after Pen, Highlighter, Blur, and Ruler and stays reachable from the overflow menu
+            // Callout collapses after Text, Pen, Highlighter, Blur, and Ruler and stays reachable from the overflow menu
             toolbar.frame = NSRect(x: 0, y: 0, width: 600, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.callout]?.isHidden == false, "Callout still on toolbar at 600pt")
+            assert(toolbar.toolButtons[.text]?.isHidden == true, "Text moves to dropdown before Callout")
             assert(toolbar.toolButtons[.pen]?.isHidden == true, "Pen moves to dropdown before Callout")
             toolbar.frame = NSRect(x: 0, y: 0, width: 580, height: 44)
             toolbar.layout()
@@ -1520,6 +1523,7 @@ public enum EditorTests {
             assert(toolbar.toolButtons[.counter]?.isHidden == false, "Counter still on toolbar at 580pt")
             let narrowMenuTitles = toolbar.buildOverflowMenu().items.map { $0.title }
             assert(narrowMenuTitles.contains("Callout"), "Collapsed Callout must be listed in the overflow menu")
+            assert(narrowMenuTitles.contains("Text"), "Collapsed Text must be listed in the overflow menu")
             assert(!narrowMenuTitles.contains("Counter"), "Visible Counter must not be repeated in the overflow menu")
 
             // 2. Narrow window (450pt): Rightmost tools hide under 3-dots
@@ -1548,7 +1552,7 @@ public enum EditorTests {
             assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible at 340pt")
 
             // 4. Overflow menu tool activation & dropdown items matching reference image
-            assert(toolbar.dropdownToolDefinitions.count == 11, "Dropdown must contain full suite of remaining tools")
+            assert(toolbar.dropdownToolDefinitions.count == 12, "Dropdown must contain full suite of remaining tools")
             let titles = toolbar.dropdownToolDefinitions.map { $0.title }
             assert(titles.contains("Arrow"), "Dropdown must contain Arrow")
             assert(!titles.contains("Speech Bubble"), "Dropdown must NOT contain removed Speech Bubble")
@@ -1558,7 +1562,7 @@ public enum EditorTests {
             assert(titles.contains("Pen"), "Dropdown must contain Pen")
             assert(!titles.contains("Magnifier"), "Dropdown must NOT contain removed Magnifier")
             assert(!titles.contains("Add Capture"), "Dropdown must NOT contain removed Add Capture")
-            assert(!titles.contains("Text"), "Dropdown must NOT contain removed Text")
+            assert(titles.contains("Text"), "Dropdown must contain Text")
             assert(titles.contains("Blur"), "Dropdown must contain renamed Blur")
             assert(!titles.contains("Blur/Erase"), "Dropdown must NOT contain Blur/Erase")
             assert(titles.contains("Highlighter"), "Dropdown must contain Highlighter")
@@ -1568,11 +1572,19 @@ public enum EditorTests {
             if let counterIdx = titles.firstIndex(of: "Counter"), let calloutIdx = titles.firstIndex(of: "Callout") {
                 assert(calloutIdx == counterIdx + 1, "Callout must sit right after Counter in the dropdown")
             }
+            if let calloutIdx = titles.firstIndex(of: "Callout"), let textIdx = titles.firstIndex(of: "Text") {
+                assert(textIdx == calloutIdx + 1, "Text must sit right after Callout in the dropdown")
+            }
             let collapsibleTitles = toolbar.collapsibleToolDefinitions.map { $0.title }
             if let counterIdx = collapsibleTitles.firstIndex(of: "Counter"), let calloutIdx = collapsibleTitles.firstIndex(of: "Callout") {
                 assert(calloutIdx == counterIdx + 1, "Callout must sit right after Counter in the toolbar")
             } else {
                 assert(false, "Toolbar must contain Counter and Callout")
+            }
+            if let calloutIdx = collapsibleTitles.firstIndex(of: "Callout"), let textIdx = collapsibleTitles.firstIndex(of: "Text") {
+                assert(textIdx == calloutIdx + 1, "Text must sit right after Callout in the toolbar")
+            } else {
+                assert(false, "Toolbar must contain Callout and Text")
             }
             assert(titles.contains("Oval"), "Dropdown must contain Oval")
             assert(titles.contains("Line"), "Dropdown must contain Line")
@@ -2699,6 +2711,12 @@ public enum EditorTests {
                 assert(abs(callout.bodyRect.midX - tip.x) < 0.001, "Default beak must stay centered under the body for \(text.debugDescription)")
                 assert(callout.tailTip == tip, "Typing must never move the tip")
             }
+
+            // Beak base width is clamped to maxBaseWidth (~60 px at the root) even when the tip is pulled very far
+            let longBeak = CalloutLayer(tip: CGPoint(x: 300, y: 300), text: "THE BEAK GETS MUCH TOO WIDE AT THE ROOT")
+            longBeak.tailTip = CGPoint(x: 300, y: 1000)
+            let longWidth = beakWidth(longBeak)
+            assert(longWidth <= 60.5, "Beak base width must be clamped to ~60 px max (got \(longWidth))")
         }
 
         testRunner("Editor - Callout Text Changes Re-Anchor The Body Around A Fixed Beak") {
@@ -3656,5 +3674,78 @@ public enum EditorTests {
             quietClose(doc, panel)
         }
 
+        testRunner("Editor - Text Annotation Tool (Shortcut X, Click/Drag Placement, Live Sizing & Shadow)") {
+            guard let img = CGImageSourceCreateImageAtIndex(CGImageSourceCreateWithURL(resolveTestImageURL()! as CFURL, nil)!, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test image"])
+            }
+            let doc = EditorDocument(image: img)
+            let panel = EditorPanel(document: doc)
+            let canvas = panel.canvasView
+
+            // 1. Tool selection via shortcut 'x'
+            canvas.keyDown(with: key("x", 7, window: panel))
+            assert(doc.activeTool == .text, "Pressing 'x' must activate .text tool")
+            assert(panel.toolbarView.toolButtons[.text]?.isActive == true, "Text tool button on toolbar must be active")
+
+            // 2. Click placement: text appears at click point
+            let clickPt = CGPoint(x: 200, y: 150)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, clickPt))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, clickPt))
+
+            assert(canvas.isEditingCallout, "Clicking with text tool must begin editing immediately")
+            guard let textLayer = doc.layers.first as? TextLayer, let editor = canvas.calloutEditor else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "TextLayer must be created and editing"])
+            }
+            assert(abs(textLayer.center.x - clickPt.x) < 0.1 && abs(textLayer.center.y - clickPt.y) < 0.1, "Text layer must be centered at click point")
+
+            // 3. Live growth in both directions around center anchor
+            let initialMidX = textLayer.bodyRect.midX
+            let initialWidth = textLayer.bodyRect.width
+
+            typeText(editor, "Hello")
+            let midHello = textLayer.bodyRect.midX
+            let widthHello = textLayer.bodyRect.width
+            assert(abs(midHello - initialMidX) < 0.01, "Text layer must remain centered horizontally (got \(midHello), expected \(initialMidX))")
+            assert(widthHello > initialWidth, "Text layer must widen as text is typed")
+            assert(textLayer.bodyRect.minX < clickPt.x && textLayer.bodyRect.maxX > clickPt.x, "Text must grow in both directions around anchor")
+
+            typeText(editor, " World, this is a much longer line of text")
+            let midLonger = textLayer.bodyRect.midX
+            assert(abs(midLonger - initialMidX) < 0.01, "Text layer must continue growing in both directions around anchor")
+
+            // 4. Commit and verify rendering
+            canvas.endCalloutEditing()
+            assert(!canvas.isEditingCallout, "endCalloutEditing must finish editing")
+            assert(doc.layers.count == 1, "Committed text layer must remain in document")
+            assert(textLayer.text == "Hello World, this is a much longer line of text", "Committed text must match typed text")
+
+            // Test draw runs cleanly with drop shadow
+            let ctx = CGContext(
+                data: nil, width: 400, height: 400, bitsPerComponent: 8, bytesPerRow: 400 * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            textLayer.draw(in: ctx, scale: 1.0)
+
+            // 5. Drag placement: text appears where mouse is released
+            doc.activeTool = .text
+            let startPt = CGPoint(x: 100, y: 100)
+            let releasePt = CGPoint(x: 350, y: 450)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, startPt))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, releasePt))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, releasePt))
+
+            assert(canvas.isEditingCallout, "Releasing drag must open editor")
+            guard let draggedLayer = doc.layers.last as? TextLayer, canvas.calloutEditor != nil else {
+                throw NSError(domain: "EditorTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "Dragged TextLayer must be created"])
+            }
+            assert(abs(draggedLayer.center.x - releasePt.x) < 0.1 && abs(draggedLayer.center.y - releasePt.y) < 0.1, "Text must appear where release happened")
+
+            // 6. Empty cancellation: Esc removes empty layer
+            canvas.handleEscapeKey()
+            assert(!canvas.isEditingCallout, "Esc must end editing")
+            assert(!doc.layers.contains { $0.id == draggedLayer.id }, "Empty dragged text layer must be discarded")
+
+            quietClose(doc, panel)
+        }
     }
 }

@@ -28,9 +28,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var isRightPanning: Bool = false
     private var rightPanStartWindowPoint: NSPoint = .zero
 
-    // In-place callout text editing
+    // In-place callout/text editing
     private struct CalloutEditSession {
-        let layer: CalloutLayer
+        let layer: TextEditableLayer
         let isNew: Bool
         let preSession: [AnnotationLayer] // clones taken before the layer was appended (new) or before editing
         let originalText: String
@@ -40,8 +40,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private(set) var calloutEditor: CalloutTextView?
     public var isEditingCallout: Bool { calloutSession != nil }
     private var isEndingCalloutEditing = false
-    // A click on the already-selected callout's body: edits on mouse-up unless it turns into a drag
-    private var pendingEditCallout: CalloutLayer?
+    // A click on the already-selected callout/text body: edits on mouse-up unless it turns into a drag
+    private var pendingEditCallout: TextEditableLayer?
 
     public init(document: EditorDocument) {
         self.document = document
@@ -67,7 +67,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // Switching to any other tool finishes the session; the new tool stays active
         document.onActiveToolChanged = { [weak self] tool in
-            guard let self = self, !self.isEndingCalloutEditing, tool != .callout, self.isEditingCallout else { return }
+            guard let self = self, !self.isEndingCalloutEditing, tool != .callout, tool != .text, self.isEditingCallout else { return }
             self.finishCalloutEditing(switchToSelect: false)
         }
     }
@@ -305,6 +305,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let callout = layer as? CalloutLayer {
                 // Handles are hidden while the callout's text is being edited
                 handlePoints = callout.id == calloutSession?.layer.id ? [] : [callout.tailTip]
+            } else if layer is TextLayer {
+                handlePoints = []
             } else if let counter = layer as? CounterLayer {
                 // Square rounded handle located on the tip of the peak
                 let p = counter.getPeakPoint()
@@ -431,15 +433,15 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
         }
 
-        // Callout body (tip handle already handled above): a double-click edits any callout,
+        // Callout or Text body (tip handle already handled above): a double-click edits any callout/text,
         // a click on the selected one edits on mouse-up unless it becomes a drag
-        if let hitCallout = document.layers.reversed().first(where: { $0.isVisible && ($0 as? CalloutLayer)?.bodyRect.contains(point) == true }) as? CalloutLayer {
+        if let hitEditable = document.layers.reversed().first(where: { $0.isVisible && ($0 as? TextEditableLayer)?.bodyRect.contains(point) == true }) as? TextEditableLayer {
             if event.clickCount >= 2 {
-                beginCalloutEditing(hitCallout, isNew: false, caretAt: point)
+                beginCalloutEditing(hitEditable, isNew: false, caretAt: point)
                 return
             }
-            if document.selectedLayerIDs == [hitCallout.id] {
-                pendingEditCallout = hitCallout
+            if document.selectedLayerIDs == [hitEditable.id] {
+                pendingEditCallout = hitEditable
             }
         }
 
@@ -622,6 +624,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             let callout = CalloutLayer(tip: point, color: document.activeColor)
             calloutGrabOffset = CGPoint(x: point.x - callout.origin.x, y: point.y - callout.origin.y)
             activeCreatingLayer = callout
+
+        case .text:
+            let textLayer = TextLayer(center: point, color: document.activeColor)
+            activeCreatingLayer = textLayer
         }
 
         needsDisplay = true
@@ -859,6 +865,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 dim.end = point
             } else if let callout = creating as? CalloutLayer {
                 callout.origin = CGPoint(x: point.x - calloutGrabOffset.x, y: point.y - calloutGrabOffset.y)
+            } else if let textLayer = creating as? TextLayer {
+                textLayer.center = point
             } else if creating is CounterLayer {
                 // Peak direction is fixed at default (7:30pm) upon placement.
                 // Changing peak direction can only happen when grabbing the point located on the tip of the peak.
@@ -899,6 +907,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 activeCreatingLayer = nil
                 document.computeElasticBounds()
                 beginCalloutEditing(callout, isNew: true, preSession: preSession)
+            } else if let textLayer = creating as? TextLayer {
+                let preSession = document.layers.map { $0.clone() }
+                document.layers.append(textLayer)
+                activeCreatingLayer = nil
+                document.computeElasticBounds()
+                beginCalloutEditing(textLayer, isNew: true, preSession: preSession)
             } else {
                 var isValidSize = true
 
@@ -1073,6 +1087,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return path.isEmpty ? nil : path
         } else if let callout = layer as? CalloutLayer {
             return callout.pathForCallout()
+        } else if let textLayer = layer as? TextLayer {
+            return CGPath(roundedRect: textLayer.bodyRect, cornerWidth: 4.0, cornerHeight: 4.0, transform: nil)
         } else if let dim = layer as? DimensionLayer {
             let path = CGMutablePath()
             path.move(to: dim.start)
@@ -1278,7 +1294,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         switch document.activeTool {
         case .select:
             NSCursor.arrow.set()
-        case .callout:
+        case .callout, .text:
             NSCursor.iBeam.set()
         default:
             NSCursor.crosshair.set()
@@ -1470,6 +1486,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 document.activeTool = .callout
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
+            } else if key == "x" {
+                document.activeTool = .text
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
             } else {
                 super.keyDown(with: event)
             }
@@ -1613,23 +1633,23 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     // MARK: - Callout Text Editing
 
-    /// Opens a transparent editor over the callout body; the layer draws only the bubble meanwhile
-    func beginCalloutEditing(_ callout: CalloutLayer, isNew: Bool, preSession: [AnnotationLayer]? = nil, caretAt point: CGPoint? = nil) {
+    /// Opens a transparent editor over the callout/text body; the layer draws only the bubble/shadow meanwhile
+    func beginCalloutEditing(_ layer: TextEditableLayer, isNew: Bool, preSession: [AnnotationLayer]? = nil, caretAt point: CGPoint? = nil) {
         endCalloutEditing()
 
         calloutSession = CalloutEditSession(
-            layer: callout,
+            layer: layer,
             isNew: isNew,
             preSession: preSession ?? document.layers.map { $0.clone() },
-            originalText: callout.text,
-            originalColor: callout.color
+            originalText: layer.text,
+            originalColor: layer.color
         )
-        callout.isTextHidden = true
-        document.selectedLayerIDs = [callout.id]
+        layer.isTextHidden = true
+        document.selectedLayerIDs = [layer.id]
 
         let editor = CalloutTextView()
-        editor.string = callout.text
-        editor.apply(textColor: callout.textColor)
+        editor.string = layer.text
+        editor.apply(textColor: layer.textColor, withShadow: layer is TextLayer)
         editor.session = self
         editor.delegate = self
         calloutEditor = editor
@@ -1735,10 +1755,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
     }
 
-    /// Re-applies the editing callout's text color after a recolor (white text flips to dark on white)
+    /// Re-applies the editing text color after a recolor (white text flips to dark on white)
     public func syncCalloutEditorAppearance() {
         guard let editor = calloutEditor, let session = calloutSession else { return }
-        editor.apply(textColor: session.layer.textColor)
+        editor.apply(textColor: session.layer.textColor, withShadow: session.layer is TextLayer)
         editor.needsDisplay = true
     }
 
