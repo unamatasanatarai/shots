@@ -6,6 +6,7 @@ public struct LastCaptureRecord: Equatable {
         case fullscreen
         case region(rect: NSRect, screenFrame: NSRect, displayID: CGDirectDisplayID)
         case scrolling(rect: NSRect, screenFrame: NSRect, displayID: CGDirectDisplayID)
+        case ocr(rect: NSRect, screenFrame: NSRect, displayID: CGDirectDisplayID)
     }
 
     public let mode: Mode
@@ -165,7 +166,7 @@ public final class CaptureManager {
         }
     }
 
-    public func repeatPreviousScreenshot() {
+    public func repeatPreviousScreenshot(ocrCompletion: ((RecognitionItem?) -> Void)? = nil) {
         guard PermissionsManager.shared.ensurePermissions(for: "Repeat Screenshot") else { return }
         guard let last = lastCapture else {
             return
@@ -177,19 +178,19 @@ public final class CaptureManager {
                 switch last.mode {
                 case .fullscreen:
                     return CaptureService.shared.activeScreen() ?? NSScreen.main
-                case .region(_, let screenFrame, _), .scrolling(_, let screenFrame, _):
+                case .region(_, let screenFrame, _), .scrolling(_, let screenFrame, _), .ocr(_, let screenFrame, _):
                     return NSScreen.screens.first { $0.frame == screenFrame } ?? NSScreen.main
                 }
             }()
             CountdownHUDController.shared.startCountdown(seconds: delaySeconds, screen: targetScreen) { [weak self] in
-                self?.executeRepeatCapture(last)
+                self?.executeRepeatCapture(last, ocrCompletion: ocrCompletion)
             }
         } else {
-            executeRepeatCapture(last)
+            executeRepeatCapture(last, ocrCompletion: ocrCompletion)
         }
     }
 
-    private func executeRepeatCapture(_ record: LastCaptureRecord) {
+    private func executeRepeatCapture(_ record: LastCaptureRecord, ocrCompletion: ((RecognitionItem?) -> Void)? = nil) {
         guard PermissionsManager.shared.ensurePermissions(for: "Repeat Screenshot") else { return }
         switch record.mode {
         case .fullscreen:
@@ -220,6 +221,29 @@ public final class CaptureManager {
             }
             let region = SelectedRegionInfo(rect: selRect, screen: targetScreen, displayID: displayID)
             AutoscrollCaptureCoordinator.shared.repeatAutoscrollCapture(region: region)
+
+        case .ocr(let selRect, let screenFrame, let displayID):
+            guard let fullImage = CGDisplayCreateImage(displayID) else {
+                NSLog("Failed to capture display for repeated OCR")
+                ocrCompletion?(nil)
+                return
+            }
+
+            let image = CaptureService.shared.cropImage(fullImage, to: selRect, in: screenFrame.size) ?? fullImage
+            RecognitionService.shared.recognizeUnifiedAsync(in: image) { result in
+                switch result {
+                case .success(let item):
+                    if let recognized = item {
+                        RecognitionService.shared.copyPayloadToPasteboard(recognized)
+                        OCRNotificationController.shared.show(snippet: recognized.payload)
+                        NSLog("Repeated OCR Recognition succeeded (%@): %@", recognized.type.rawValue, recognized.payload)
+                    }
+                    ocrCompletion?(item)
+                case .failure(let err):
+                    NSLog("Repeated OCR Recognition error: %@", err.localizedDescription)
+                    ocrCompletion?(nil)
+                }
+            }
         }
     }
 

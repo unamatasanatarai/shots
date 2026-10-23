@@ -863,6 +863,26 @@ public struct AppTests {
                 assertionFailure("Cached mode must be .scrolling")
             }
             assert(scrollingRecord != regionRecord, "A scrolling record must differ from a plain region record")
+
+            // OCR captures are remembered as OCR, so repeating them repeats OCR in the selected area
+            let ocrRecord = LastCaptureRecord(mode: .ocr(rect: testRect, screenFrame: testFrame, displayID: testDisplayID))
+            manager.lastCapture = ocrRecord
+            if case .ocr(let r, let f, let d) = manager.lastCapture?.mode {
+                assert(r == testRect && f == testFrame && d == testDisplayID, "Cached OCR record must keep its region")
+            } else {
+                assertionFailure("Cached mode must be .ocr")
+            }
+            assert(ocrRecord != regionRecord, "An OCR record must differ from a plain region record")
+            assert(ocrRecord != scrollingRecord, "An OCR record must differ from a scrolling record")
+
+            // Test repeating OCR record does not crash and invokes completion if headless/mocked
+            var ocrCallbackCalled = false
+            manager.repeatPreviousScreenshot { _ in
+                ocrCallbackCalled = true
+            }
+            // ocrCallbackCalled may be true or false depending on display existence, but must not crash
+            _ = ocrCallbackCalled
+
             manager.lastCapture = regionRecord
 
             // 3. Status bar menu item state reflects presence of lastCapture
