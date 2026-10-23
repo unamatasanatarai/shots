@@ -67,7 +67,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // Switching to any other tool finishes the session; the new tool stays active
         document.onActiveToolChanged = { [weak self] tool in
-            guard let self = self, !self.isEndingCalloutEditing, tool != .callout, tool != .text, self.isEditingCallout else { return }
+            guard let self = self, !self.isEndingCalloutEditing, tool != .callout, tool != .text, tool != .arrowText, self.isEditingCallout else { return }
             self.finishCalloutEditing(switchToSelect: false)
         }
     }
@@ -520,7 +520,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
             }
 
-        case .arrow:
+        case .arrow, .arrowText:
             if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }) {
                 document.saveSnapshot()
                 document.selectLayer(hit)
@@ -805,10 +805,18 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // 2. Interactive creation sizing
         if let creating = activeCreatingLayer {
             if let arrow = creating as? ArrowLayer {
-                arrow.end = point
-                // Always start with straight: control point is collinear midpoint
-                arrow.control = CGPoint(x: (arrow.start.x + point.x) / 2.0, y: (arrow.start.y + point.y) / 2.0)
-                arrow.updateRelativeControl()
+                if document.activeTool == .arrowText {
+                    // Head stays locked at initial click point; base/tail tracks cursor
+                    arrow.end = dragStartPoint
+                    arrow.start = point
+                    arrow.control = CGPoint(x: (arrow.start.x + arrow.end.x) / 2.0, y: (arrow.start.y + arrow.end.y) / 2.0)
+                    arrow.updateRelativeControl()
+                } else {
+                    arrow.end = point
+                    // Always start with straight: control point is collinear midpoint
+                    arrow.control = CGPoint(x: (arrow.start.x + point.x) / 2.0, y: (arrow.start.y + point.y) / 2.0)
+                    arrow.updateRelativeControl()
+                }
             } else if let rect = creating as? RectangleLayer {
                 rect.rect = CGRect(
                     x: min(dragStartPoint.x, point.x),
@@ -919,7 +927,45 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 if let arrow = creating as? ArrowLayer {
                     let dx = arrow.end.x - arrow.start.x
                     let dy = arrow.end.y - arrow.start.y
-                    isValidSize = dx * dx + dy * dy >= 100.0
+                    let distSq = dx * dx + dy * dy
+                    isValidSize = distSq >= 100.0
+
+                    if isValidSize && document.activeTool == .arrowText {
+                        let preSession = document.layers.map { $0.clone() }
+                        document.layers.append(arrow)
+
+                        let len = sqrt(distSq)
+                        let ux = dx / len
+                        let uy = dy / len
+                        let oppX = -ux
+                        let oppY = -uy
+
+                        let bodySize = TextLayer.bodySize(for: "")
+                        let hw = bodySize.width / 2.0
+                        let hh = bodySize.height / 2.0
+                        let gap: CGFloat = 12.0
+                        let rayDist = min(hw / max(abs(oppX), 0.0001), hh / max(abs(oppY), 0.0001))
+                        let totalDist = rayDist + gap
+                        let textCenter = CGPoint(
+                            x: arrow.start.x + oppX * totalDist,
+                            y: arrow.start.y + oppY * totalDist
+                        )
+
+                        let textLayer = TextLayer(center: textCenter, color: document.activeColor)
+                        document.layers.append(textLayer)
+                        activeCreatingLayer = nil
+                        document.computeElasticBounds()
+                        beginCalloutEditing(textLayer, isNew: true, preSession: preSession)
+                        (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                        activeDraggingLayer = nil
+                        activeHandleIndex = nil
+                        activeDraggingRectIndex = nil
+                        initialRectForDrag = nil
+                        currentMouseCanvasPoint = canvasPoint(from: event)
+                        updateCursorForPoint(canvasPoint(from: event))
+                        needsDisplay = true
+                        return
+                    }
                 } else if let rect = creating as? RectangleLayer {
                     isValidSize = rect.rect.width >= 6.0 && rect.rect.height >= 6.0
                 } else if let ellipse = creating as? EllipseLayer {
@@ -1438,7 +1484,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             (window as? EditorPanel)?.resetZoom()
         } else if !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) {
             let key = (event.charactersIgnoringModifiers ?? "").lowercased()
-            if key == "v" {
+            let isShift = event.modifierFlags.contains(.shift)
+            if isShift && key == "a" {
+                document.activeTool = .arrowText
+                (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                needsDisplay = true
+            } else if key == "v" {
                 document.activeTool = .select
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                 needsDisplay = true
@@ -1757,7 +1808,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if removed {
             document.layers.removeAll { $0.id == callout.id }
         }
-        if calloutSessionChanged(session, text: callout.text) {
+        if calloutSessionChanged(session, text: callout.text) || (removed && document.layers.count > session.preSession.count) {
             document.pushSnapshot(session.preSession)
             document.isModified = true
         }
@@ -1792,9 +1843,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     func revertCalloutSession() {
         guard let session = calloutSession else { return }
         let changed = calloutSessionChanged(session, text: calloutEditor?.string ?? session.layer.text)
+        let preCount = session.preSession.count
         endCalloutEditing()
         if changed {
             document.undo()
+        } else if document.layers.count > preCount {
+            document.layers = session.preSession.map { $0.clone() }
+            document.computeElasticBounds()
+            needsDisplay = true
         }
     }
 

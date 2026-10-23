@@ -8,6 +8,7 @@ import os
 public enum LayerType: String, Codable, CaseIterable {
     case select = "Select"
     case arrow = "Arrow"
+    case arrowText = "Arrow + Text"
     case rectangle = "Rectangle"
     case ellipse = "Ellipse"
     case pen = "Pen"

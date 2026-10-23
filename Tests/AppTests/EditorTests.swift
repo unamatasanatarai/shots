@@ -1498,8 +1498,8 @@ public enum EditorTests {
 
             // Every rung collapses exactly one more tool, from the end of the collapsible list
             let rungs: [(width: CGFloat, visible: Int)] = [
-                (877, 12), (844, 11), (811, 10), (778, 9), (745, 8), (740, 7), (600, 7), (567, 6),
-                (534, 5), (501, 4), (468, 3), (435, 2), (402, 1), (401, 0)
+                (877, 13), (844, 12), (811, 11), (778, 10), (745, 9), (740, 8), (600, 8), (567, 7),
+                (534, 6), (501, 5), (468, 4), (435, 3), (402, 2), (369, 1), (368, 0)
             ]
             for rung in rungs {
                 toolbar.frame = NSRect(x: 0, y: 0, width: rung.width, height: 44)
@@ -1508,7 +1508,7 @@ public enum EditorTests {
                     let expectedHidden = index >= rung.visible
                     assert(toolbar.toolButtons[def.type]?.isHidden == expectedHidden, "\(def.title) hidden must be \(expectedHidden) at \(rung.width)pt")
                 }
-                assert(toolbar.overflowButton?.isHidden == (rung.visible == 12), "Overflow button shows whenever a tool is collapsed (\(rung.width)pt)")
+                assert(toolbar.overflowButton?.isHidden == (rung.visible == 13), "Overflow button shows whenever a tool is collapsed (\(rung.width)pt)")
             }
 
             // Callout collapses after Text, Pen, Highlighter, Blur, and Ruler and stays reachable from the overflow menu
@@ -1552,9 +1552,10 @@ public enum EditorTests {
             assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible at 340pt")
 
             // 4. Overflow menu tool activation & dropdown items matching reference image
-            assert(toolbar.dropdownToolDefinitions.count == 12, "Dropdown must contain full suite of remaining tools")
+            assert(toolbar.dropdownToolDefinitions.count == 13, "Dropdown must contain full suite of remaining tools")
             let titles = toolbar.dropdownToolDefinitions.map { $0.title }
             assert(titles.contains("Arrow"), "Dropdown must contain Arrow")
+            assert(titles.contains("Arrow + Text"), "Dropdown must contain Arrow + Text")
             assert(!titles.contains("Speech Bubble"), "Dropdown must NOT contain removed Speech Bubble")
             assert(titles.contains("Ruler"), "Dropdown must contain Ruler")
             assert(titles.contains("Rectangle"), "Dropdown must contain Rectangle")
@@ -3921,6 +3922,173 @@ public enum EditorTests {
             editor.magnify(with: editorPinch)
             assert(sv.magnification > magBeforeEditorPinch, "Pinch on CalloutTextView must zoom")
             assert(canvas.zoomScale == sv.magnification, "zoomScale must track magnification during callout editing")
+            canvas.endCalloutEditing()
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Arrow + Text Tool Combo (A+X)") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+            let panel = EditorPanel(document: doc)
+            panel.setFrame(NSRect(x: 100, y: 100, width: 900, height: 700), display: true)
+            let canvas = panel.canvasView
+            guard let sv = panel.scrollView else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "ScrollView required"])
+            }
+
+            // 1. Activation via Shift+A shortcut
+            doc.activeTool = .select
+            let shiftAEvent = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [.shift],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                characters: "A",
+                charactersIgnoringModifiers: "a",
+                isARepeat: false,
+                keyCode: 0
+            )!
+            canvas.keyDown(with: shiftAEvent)
+            assert(doc.activeTool == .arrowText, "Shift+A must activate .arrowText tool")
+
+            // 2. Reverse arrow dragging: Click at (200, 200), drag to (400, 400)
+            let clickOrigin = CGPoint(x: 200, y: 200)
+            let dragTarget = CGPoint(x: 400, y: 400)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, clickOrigin))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, dragTarget))
+
+            guard let activeArrow = canvas.activeCreatingLayer as? ArrowLayer else {
+                throw NSError(domain: "EditorTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "ArrowLayer must be creating"])
+            }
+            // In reverse dragging: head is locked at clickOrigin (200, 200); base/tail tracks cursor (400, 400)
+            assert(activeArrow.end == clickOrigin, "Arrow head must anchor at the initial click point")
+            assert(activeArrow.start == dragTarget, "Arrow base must follow the mouse drag position")
+
+            // 3. Mouse up: Arrow finalized, Text appears at base oriented clock-opposite + gap
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, dragTarget))
+            assert(canvas.activeCreatingLayer == nil, "Creating layer must be finalized on mouseUp")
+
+            guard let finalizedArrow = doc.layers.first(where: { $0 is ArrowLayer }) as? ArrowLayer,
+                  let finalizedText = doc.layers.first(where: { $0 is TextLayer }) as? TextLayer else {
+                throw NSError(domain: "EditorTests", code: 4, userInfo: [NSLocalizedDescriptionKey: "Both ArrowLayer and TextLayer must exist"])
+            }
+            assert(finalizedArrow.end == clickOrigin, "Finalized arrow head must remain at initial click")
+            assert(finalizedArrow.start == dragTarget, "Finalized arrow base must remain at drag release point")
+
+            // Arrow points towards (200, 200) from (400, 400) (Up-Left).
+            // Clock-opposite direction is Down-Right (oppX > 0, oppY > 0 in AppKit coords where Y grows upward or downward).
+            // The text center must be offset from arrow.start away from the head:
+            let textOffsetFromBaseX = finalizedText.center.x - finalizedArrow.start.x
+            let textOffsetFromBaseY = finalizedText.center.y - finalizedArrow.start.y
+            let arrowVecX = finalizedArrow.end.x - finalizedArrow.start.x
+            let arrowVecY = finalizedArrow.end.y - finalizedArrow.start.y
+            // Dot product between text offset and arrow direction must be negative (opposite directions!)
+            let dotProduct = textOffsetFromBaseX * arrowVecX + textOffsetFromBaseY * arrowVecY
+            assert(dotProduct < 0, "Text center must be positioned clock-opposite to arrow direction")
+
+            // Text editor must be active and focused
+            assert(canvas.isEditingCallout, "Text editor must immediately open on mouseUp")
+            guard let editor = canvas.calloutEditor else {
+                throw NSError(domain: "EditorTests", code: 5, userInfo: [NSLocalizedDescriptionKey: "Callout editor required"])
+            }
+            typeText(editor, "Label Here")
+            canvas.endCalloutEditing()
+            assert(finalizedText.text == "Label Here", "Typed text must be saved into TextLayer")
+
+            // 4. Atomic Undo: Cmd+Z removes both arrow and text in one step
+            let layersBeforeUndo = doc.layers.count
+            doc.undo()
+            assert(doc.layers.count == layersBeforeUndo - 2, "Undo must remove both Arrow and Text in a single step")
+            assert(!doc.layers.contains(where: { $0.id == finalizedArrow.id }), "Arrow must be undone")
+            assert(!doc.layers.contains(where: { $0.id == finalizedText.id }), "Text must be undone")
+
+            // 5. Four Cardinal Clock Orientations:
+            // 5a. Arrow points straight UP: head=(500, 600), base=(500, 400) -> Text at 6 o'clock (below base: text.center.y < 400 in Y-down context or oppY < 0)
+            doc.activeTool = .arrowText
+            let upHead = CGPoint(x: 500, y: 600)
+            let upBase = CGPoint(x: 500, y: 400)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, upHead))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, upBase))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, upBase))
+            guard let upText = doc.layers.last as? TextLayer else {
+                throw NSError(domain: "EditorTests", code: 6, userInfo: [NSLocalizedDescriptionKey: "TextLayer expected"])
+            }
+            assert(abs(upText.center.x - upBase.x) < 0.1, "UP arrow must produce vertically aligned text")
+            assert(upText.center.y < upBase.y, "UP arrow (12 o'clock) must position text at 6 o'clock (below base)")
+            canvas.endCalloutEditing()
+
+            // 5b. Arrow points straight RIGHT: head=(700, 300), base=(500, 300) -> Text at 9 o'clock (left of base: text.center.x < 500)
+            doc.activeTool = .arrowText
+            let rightHead = CGPoint(x: 700, y: 300)
+            let rightBase = CGPoint(x: 500, y: 300)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, rightHead))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, rightBase))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, rightBase))
+            guard let rightText = doc.layers.last as? TextLayer else {
+                throw NSError(domain: "EditorTests", code: 7, userInfo: [NSLocalizedDescriptionKey: "TextLayer expected"])
+            }
+            assert(abs(rightText.center.y - rightBase.y) < 0.1, "RIGHT arrow must produce horizontally aligned text")
+            assert(rightText.center.x < rightBase.x, "RIGHT arrow (3 o'clock) must position text at 9 o'clock (left of base)")
+            canvas.endCalloutEditing()
+
+            // 5c. Arrow points straight DOWN: head=(500, 200), base=(500, 400) -> Text at 12 o'clock (above base: text.center.y > 400)
+            doc.activeTool = .arrowText
+            let downHead = CGPoint(x: 500, y: 200)
+            let downBase = CGPoint(x: 500, y: 400)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, downHead))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, downBase))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, downBase))
+            guard let downText = doc.layers.last as? TextLayer else {
+                throw NSError(domain: "EditorTests", code: 8, userInfo: [NSLocalizedDescriptionKey: "TextLayer expected"])
+            }
+            assert(abs(downText.center.x - downBase.x) < 0.1, "DOWN arrow must produce vertically aligned text")
+            assert(downText.center.y > downBase.y, "DOWN arrow (6 o'clock) must position text at 12 o'clock (above base)")
+            canvas.endCalloutEditing()
+
+            // 5d. Arrow points straight LEFT: head=(300, 300), base=(500, 300) -> Text at 3 o'clock (right of base: text.center.x > 500)
+            doc.activeTool = .arrowText
+            let leftHead = CGPoint(x: 300, y: 300)
+            let leftBase = CGPoint(x: 500, y: 300)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, leftHead))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, leftBase))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, leftBase))
+            guard let leftText = doc.layers.last as? TextLayer else {
+                throw NSError(domain: "EditorTests", code: 9, userInfo: [NSLocalizedDescriptionKey: "TextLayer expected"])
+            }
+            assert(abs(leftText.center.y - leftBase.y) < 0.1, "LEFT arrow must produce horizontally aligned text")
+            assert(leftText.center.x > leftBase.x, "LEFT arrow (9 o'clock) must position text at 3 o'clock (right of base)")
+            canvas.endCalloutEditing()
+
+            // 6. Keep arrow when text is left empty
+            let countBeforeEmpty = doc.layers.count
+            doc.activeTool = .arrowText
+            let headPt = CGPoint(x: 100, y: 100)
+            let basePt = CGPoint(x: 200, y: 200)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, headPt))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, basePt))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, basePt))
+            assert(canvas.isEditingCallout, "Text editing active")
+            // Ending editing without typing text removes only TextLayer, arrow remains
+            canvas.endCalloutEditing()
+            assert(doc.layers.count == countBeforeEmpty + 1, "Only Arrow must remain when text is left empty")
+            assert(doc.layers.last is ArrowLayer, "Remaining layer must be the ArrowLayer")
+
+            // 7. Zoom < 100% resets to 100% and centers on annotation
+            panel.setZoom(scale: 0.5)
+            assert(abs(sv.magnification - 0.5) < 0.01, "Magnification must be 50%")
+            doc.activeTool = .arrowText
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 600, y: 400)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 750, y: 550)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 750, y: 550)))
+            assert(abs(sv.magnification - 1.0) < 0.001, "Creating Arrow+Text at <100% zoom must reset magnification to 100%")
+            assert(abs(canvas.zoomScale - 1.0) < 0.001, "Canvas zoomScale must be 1.0")
             canvas.endCalloutEditing()
 
             quietClose(doc, panel)

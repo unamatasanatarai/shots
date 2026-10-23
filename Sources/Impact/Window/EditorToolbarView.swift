@@ -561,6 +561,7 @@ public final class EditorToolbarView: NSVisualEffectView {
     /// Full suite of tools presented in the dropdown menu when narrow
     public let dropdownToolDefinitions: [ToolDefinition] = [
         ToolDefinition(type: .arrow, title: "Arrow", iconName: "arrow.up.right", shortcut: "a"),
+        ToolDefinition(type: .arrowText, title: "Arrow + Text", iconName: "arrow.up.right.square", shortcut: "a", shortcutModifiers: [.shift], tooltip: "Arrow + Text [Shift A]"),
         ToolDefinition(type: .line, title: "Line", iconName: "line.diagonal", shortcut: "l"),
         ToolDefinition(type: .rectangle, title: "Rectangle", iconName: "square", shortcut: "r"),
         ToolDefinition(type: .ellipse, title: "Oval", iconName: "circle", shortcut: "o"),
@@ -576,6 +577,7 @@ public final class EditorToolbarView: NSVisualEffectView {
 
     public let collapsibleToolDefinitions: [ToolDefinition] = [
         ToolDefinition(type: .arrow, title: "Arrow", iconName: "arrow.up.right", shortcut: "a"),
+        ToolDefinition(type: .arrowText, title: "Arrow + Text", iconName: "arrow.up.right.square", shortcut: "a", shortcutModifiers: [.shift], tooltip: "Arrow + Text [Shift A]"),
         ToolDefinition(type: .line, title: "Line", iconName: "line.diagonal", shortcut: "l"),
         ToolDefinition(type: .rectangle, title: "Rectangle", iconName: "square", shortcut: "r"),
         ToolDefinition(type: .ellipse, title: "Oval", iconName: "circle", shortcut: "o"),
@@ -894,31 +896,33 @@ public final class EditorToolbarView: NSVisualEffectView {
         let totalCount = collapsibleToolDefinitions.count
         let visibleCount: Int
         if totalW >= 877.0 {
-            visibleCount = totalCount // All tools visible, overflow button hidden
+            visibleCount = totalCount // All 13 tools visible, overflow button hidden
         } else if totalW >= 844.0 {
-            visibleCount = 11 // Ruler in dropdown
+            visibleCount = 12 // Ruler in dropdown
         } else if totalW >= 811.0 {
-            visibleCount = 10 // Ruler, Blur in dropdown
+            visibleCount = 11 // Ruler, Blur in dropdown
         } else if totalW >= 778.0 {
-            visibleCount = 9 // Ruler, Blur, Highlighter in dropdown, Pen visible
+            visibleCount = 10 // Ruler, Blur, Highlighter in dropdown
         } else if totalW >= 745.0 {
-            visibleCount = 8 // Pen in dropdown, Text visible
+            visibleCount = 9 // Ruler, Blur, Highlighter, Pen in dropdown, Text visible
         } else if totalW >= 600.0 {
-            visibleCount = 7 // Text in dropdown, Callout visible (zoom capsule hidden below 740pt)
+            visibleCount = 8 // Text in dropdown, Callout visible (zoom capsule hidden below 740pt)
         } else if totalW >= 567.0 {
-            visibleCount = 6 // Callout in dropdown, Counter visible
+            visibleCount = 7 // Callout in dropdown, Counter visible
         } else if totalW >= 534.0 {
-            visibleCount = 5
+            visibleCount = 6
         } else if totalW >= 501.0 {
-            visibleCount = 4 // Arrow, Line, Rectangle, Oval
+            visibleCount = 5
         } else if totalW >= 468.0 {
-            visibleCount = 3
+            visibleCount = 4
         } else if totalW >= 435.0 {
-            visibleCount = 2
+            visibleCount = 3
         } else if totalW >= 402.0 {
+            visibleCount = 2
+        } else if totalW >= 369.0 {
             visibleCount = 1
         } else {
-            visibleCount = 0 // Below 402pt: only Select and the overflow button remain
+            visibleCount = 0 // Below 369pt: only Select and the overflow button remain
         }
 
         if visibleCount >= totalCount {
