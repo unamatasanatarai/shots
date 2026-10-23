@@ -44,12 +44,16 @@ public final class RegionSelectionCoordinator {
     private var regionCompletionHandler: ((SelectedRegionInfo?) -> Void)?
     private var rulerCompletionHandler: ((String?) -> Void)?
     private var colorPickerCompletionHandler: ((String?) -> Void)?
+    public internal(set) var currentColorPickerValue: String?
+    private var colorPickerRefreshTimer: Timer?
     private var screenSnapshots: [CGDirectDisplayID: CGImage] = [:]
     private var localKeyDownMonitor: Any?
 
     private var escapeHotKeyRef: EventHotKeyRef?
+    private var tabHotKeyRef: EventHotKeyRef?
     private var escapeEventHandlerRef: EventHandlerRef?
     private let escapeHotKeyID = EventHotKeyID(signature: 0x45534350 /* 'ESCP' */, id: 99)
+    private let tabHotKeyID = EventHotKeyID(signature: 0x5441424B /* 'TABK' */, id: 98)
 
     /// Active consuming event tap that swallows clicks/drags so menus stay open
     /// and background windows are never activated.
@@ -130,13 +134,18 @@ public final class RegionSelectionCoordinator {
             _ = AXIsProcessTrustedWithOptions(options)
         }
 
-        // Install global Escape hotkey so Escape cancels immediately without needing window focus
-        installEscapeHotKey()
+        // Install global hotkeys so Escape cancels and Tab copies color immediately without needing window focus
+        installHotKeys()
 
-        // Local monitor for Escape fallback
+        // Local monitor for Escape and Tab fallback
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self else { return event }
             if event.keyCode == 53 { // Escape
-                self?.finish(with: nil)
+                self.finish(with: nil)
+                return nil
+            }
+            if self.activeMode == .colorPicker && event.keyCode == 48 { // Tab (kVK_Tab)
+                self.copyCurrentColorPickerValue()
                 return nil
             }
             return event
@@ -154,15 +163,7 @@ public final class RegionSelectionCoordinator {
 
         for screen in screens {
             let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
-            let snapshot: CGImage?
-            if activeMode == .colorPicker {
-                snapshot = CGDisplayCreateImage(displayID) ?? CaptureService.shared.captureFullscreen(displayID: displayID)
-                if let snap = snapshot {
-                    screenSnapshots[displayID] = snap
-                }
-            } else {
-                snapshot = nil
-            }
+            let snapshot: CGImage? = nil
 
             if let pooled = panelPool[displayID], pooled.frame == screen.frame,
                let pooledView = pooled.contentView as? RegionSelectionView {
@@ -186,6 +187,7 @@ public final class RegionSelectionCoordinator {
             panel.hasShadow = false
             panel.hidesOnDeactivate = false
             panel.isReleasedWhenClosed = false
+            panel.sharingType = .none
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
             panel.ignoresMouseEvents = false
@@ -216,6 +218,10 @@ public final class RegionSelectionCoordinator {
         }
         hideSystemCursor()
 
+        if activeMode == .colorPicker {
+            startLiveColorPickerTimer()
+        }
+
         updateOverlays(globalCGPoint: initialCGLocation)
     }
 
@@ -231,7 +237,10 @@ public final class RegionSelectionCoordinator {
 
         showSystemCursor()
 
-        removeEscapeHotKey()
+        stopLiveColorPickerTimer()
+        currentColorPickerValue = nil
+
+        removeHotKeys()
         removeEventTap()
 
         liveStartPoint = nil
@@ -354,7 +363,8 @@ public final class RegionSelectionCoordinator {
             eventMask(for: .rightMouseDown) |
             eventMask(for: .rightMouseUp) |
             eventMask(for: .otherMouseDown) |
-            eventMask(for: .scrollWheel)
+            eventMask(for: .scrollWheel) |
+            eventMask(for: .keyDown)
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
@@ -466,13 +476,7 @@ public final class RegionSelectionCoordinator {
 
         case .leftMouseDown:
             if activeMode == .colorPicker {
-                if let sampled = sampleColorAtGlobalPoint(cgPoint) {
-                    copyToPasteboard(sampled.hex)
-                    OCRNotificationController.shared.show(snippet: "Color copied: \(sampled.hex)")
-                    finish(with: nil, measurement: nil, colorHex: sampled.hex)
-                } else {
-                    finish(with: nil)
-                }
+                copyCurrentColorPickerValue()
                 return true
             }
 
@@ -484,12 +488,8 @@ public final class RegionSelectionCoordinator {
 
         case .leftMouseUp:
             if activeMode == .colorPicker {
-                if let sampled = sampleColorAtGlobalPoint(cgPoint) {
-                    copyToPasteboard(sampled.hex)
-                    OCRNotificationController.shared.show(snippet: "Color copied: \(sampled.hex)")
-                    finish(with: nil, measurement: nil, colorHex: sampled.hex)
-                } else {
-                    finish(with: nil)
+                if isSelecting {
+                    copyCurrentColorPickerValue()
                 }
                 return true
             }
@@ -523,6 +523,18 @@ public final class RegionSelectionCoordinator {
         case .scrollWheel, .rightMouseUp, .otherMouseDown:
             return true // consume
 
+        case .keyDown:
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            if keyCode == 53 { // Escape
+                finish(with: nil)
+                return true
+            }
+            if activeMode == .colorPicker && keyCode == 48 { // Tab (kVK_Tab)
+                copyCurrentColorPickerValue()
+                return true
+            }
+            return false
+
         default:
             return false
         }
@@ -534,7 +546,108 @@ public final class RegionSelectionCoordinator {
         pb.setString(text, forType: .string)
     }
 
+    /// Copies the current color picker value to the pasteboard, displays HUD, and finishes session.
+    public func copyCurrentColorPickerValue() {
+        guard isSelecting, activeMode == .colorPicker else { return }
+        let currentCG = liveCurrentPoint ?? CGEvent(source: nil)?.location ?? .zero
+        let sampled = sampleColorAtGlobalPoint(currentCG)
+        let hex = sampled?.hex ?? currentColorPickerValue
+        if let hex = hex {
+            copyToPasteboard(hex)
+            OCRNotificationController.shared.show(snippet: "Color copied: \(hex)")
+            finish(with: nil, measurement: nil, colorHex: hex)
+        } else {
+            finish(with: nil)
+        }
+    }
+
+    /// Captures a live pixel patch and center color around a global CoreGraphics point.
+    public func sampleLiveColorAndPatch(at globalCGPoint: CGPoint) -> (hex: String, rgb: (r: Int, g: Int, b: Int), color: NSColor, patch: CGImage?)? {
+        let halfPoints: CGFloat = 8.0
+        let captureRect = CGRect(
+            x: floor(globalCGPoint.x) - halfPoints,
+            y: floor(globalCGPoint.y) - halfPoints,
+            width: halfPoints * 2 + 1,
+            height: halfPoints * 2 + 1
+        )
+
+        let targetScreen = CaptureService.shared.screen(containingCGPoint: globalCGPoint)
+            ?? NSScreen.main ?? NSScreen.screens.first
+        let displayID = targetScreen.flatMap {
+            $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        } ?? CGMainDisplayID()
+
+        // 1. Live capture from window list (which excludes our overlay panels because sharingType == .none)
+        let capturedImage = CGWindowListCreateImage(
+            captureRect,
+            .optionOnScreenOnly,
+            kCGNullWindowID,
+            .bestResolution
+        )
+
+        // 2. Fallback to display rect capture if needed
+        let rawImage: CGImage? = capturedImage ?? {
+            guard let screen = targetScreen else { return nil }
+            let screenFrame = screen.frame
+            let primaryHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
+            let screenTop = primaryHeight - screenFrame.maxY
+            let localX = captureRect.origin.x - screenFrame.minX
+            let localY = captureRect.origin.y - screenTop
+            let displayRect = CGRect(x: localX, y: localY, width: captureRect.width, height: captureRect.height)
+            return CGDisplayCreateImage(displayID, rect: displayRect)
+        }()
+
+        guard let image = rawImage else { return nil }
+
+        let scaleX = CGFloat(image.width) / captureRect.width
+        let scaleY = CGFloat(image.height) / captureRect.height
+
+        let centerPixelX = max(0, min(Int(round((globalCGPoint.x - captureRect.origin.x) * scaleX)), image.width - 1))
+        let centerPixelY = max(0, min(Int(round((globalCGPoint.y - captureRect.origin.y) * scaleY)), image.height - 1))
+
+        let cropRect = CGRect(x: centerPixelX - 4, y: centerPixelY - 4, width: 9, height: 9)
+        let patch = image.cropping(to: cropRect)
+
+        guard let sampled = extractColor(from: image, x: centerPixelX, y: centerPixelY) else { return nil }
+
+        let color = NSColor(
+            srgbRed: CGFloat(sampled.rgb.r) / 255.0,
+            green: CGFloat(sampled.rgb.g) / 255.0,
+            blue: CGFloat(sampled.rgb.b) / 255.0,
+            alpha: 1.0
+        )
+
+        currentColorPickerValue = sampled.hex
+        return (hex: sampled.hex, rgb: sampled.rgb, color: color, patch: patch)
+    }
+
+    private func startLiveColorPickerTimer() {
+        colorPickerRefreshTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.033, repeats: true) { [weak self] _ in
+            guard let self = self, self.isSelecting, self.activeMode == .colorPicker else { return }
+            self.refreshLiveColorPicker()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        colorPickerRefreshTimer = timer
+    }
+
+    private func stopLiveColorPickerTimer() {
+        colorPickerRefreshTimer?.invalidate()
+        colorPickerRefreshTimer = nil
+    }
+
+    private func refreshLiveColorPicker() {
+        guard isSelecting, activeMode == .colorPicker else { return }
+        for panel in overlayPanels {
+            guard let view = panel.contentView as? RegionSelectionView else { continue }
+            view.refreshLiveSample()
+        }
+    }
+
     public func sampleColorAtGlobalPoint(_ globalCGPoint: CGPoint) -> (hex: String, rgb: (r: Int, g: Int, b: Int))? {
+        if let live = sampleLiveColorAndPatch(at: globalCGPoint) {
+            return (live.hex, live.rgb)
+        }
         let targetScreen = CaptureService.shared.screen(containingCGPoint: globalCGPoint)
             ?? NSScreen.main ?? NSScreen.screens.first
         guard let screen = targetScreen else { return nil }
@@ -705,8 +818,8 @@ public final class RegionSelectionCoordinator {
         }
 
         if delay > 0 && activeMode == .area {
-            // Remove event tap, escape hotkey, and restore system mouse cursor so the user can interact freely during countdown
-            removeEscapeHotKey()
+            // Remove event tap, hotkeys, and restore system mouse cursor so the user can interact freely during countdown
+            removeHotKeys()
             removeEventTap()
             if let monitor = localKeyDownMonitor {
                 NSEvent.removeMonitor(monitor)
@@ -727,9 +840,9 @@ public final class RegionSelectionCoordinator {
         }
     }
 
-    // MARK: - Escape HotKey Handling
+    // MARK: - HotKey Handling (Escape & Tab)
 
-    private func installEscapeHotKey() {
+    private func installHotKeys() {
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
@@ -750,10 +863,17 @@ public final class RegionSelectionCoordinator {
                     nil,
                     &hkID
                 )
-                if paramStatus == noErr && hkID.id == 99 {
-                    DispatchQueue.main.async {
-                        let coordinator = Unmanaged<RegionSelectionCoordinator>.fromOpaque(userData).takeUnretainedValue()
-                        coordinator.finish(with: nil)
+                if paramStatus == noErr {
+                    if hkID.id == 99 { // Escape
+                        DispatchQueue.main.async {
+                            let coordinator = Unmanaged<RegionSelectionCoordinator>.fromOpaque(userData).takeUnretainedValue()
+                            coordinator.finish(with: nil)
+                        }
+                    } else if hkID.id == 98 { // Tab
+                        DispatchQueue.main.async {
+                            let coordinator = Unmanaged<RegionSelectionCoordinator>.fromOpaque(userData).takeUnretainedValue()
+                            coordinator.copyCurrentColorPickerValue()
+                        }
                     }
                 }
                 return noErr
@@ -773,13 +893,28 @@ public final class RegionSelectionCoordinator {
                 0,
                 &escapeHotKeyRef
             )
+
+            if activeMode == .colorPicker {
+                RegisterEventHotKey(
+                    UInt32(kVK_Tab),
+                    0,
+                    tabHotKeyID,
+                    GetApplicationEventTarget(),
+                    0,
+                    &tabHotKeyRef
+                )
+            }
         }
     }
 
-    private func removeEscapeHotKey() {
+    private func removeHotKeys() {
         if let ref = escapeHotKeyRef {
             UnregisterEventHotKey(ref)
             escapeHotKeyRef = nil
+        }
+        if let ref = tabHotKeyRef {
+            UnregisterEventHotKey(ref)
+            tabHotKeyRef = nil
         }
         if let handler = escapeEventHandlerRef {
             RemoveEventHandler(handler)
@@ -803,6 +938,16 @@ public final class RegionSelectionCoordinator {
 private final class RegionOverlayPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    override init(
+        contentRect: NSRect,
+        styleMask style: NSWindow.StyleMask,
+        backing backingStoreType: NSWindow.BackingStoreType,
+        defer flag: Bool
+    ) {
+        super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
+        sharingType = .none
+    }
 }
 
 // MARK: - Region Selection View
@@ -858,6 +1003,15 @@ private final class RegionSelectionView: NSView {
         isDragging = false
         screenImage = nil
         needsDisplay = true
+    }
+
+    /// Triggers a repaint of the color picker loupe and badge when the underlying live screen changes
+    func refreshLiveSample() {
+        guard mode == .colorPicker else { return }
+        guard let pt = currentPoint ?? currentMousePoint, bounds.contains(pt) else { return }
+        for rect in dirtyRects() {
+            setNeedsDisplay(rect)
+        }
     }
 
     // MARK: - External Updates from Event Tap
@@ -1123,17 +1277,26 @@ private final class RegionSelectionView: NSView {
         context.fillEllipse(in: loupeCircleRect)
         context.restoreGState()
 
-        // 2. Draw Magnified 9x9 Pixel Grid
-        let scaleX = screenImage != nil ? CGFloat(screenImage!.width) / bounds.width : targetScreen.backingScaleFactor
-        let scaleY = screenImage != nil ? CGFloat(screenImage!.height) / bounds.height : targetScreen.backingScaleFactor
-        let imgX = Int(round(pt.x * scaleX))
-        let imgY = Int(round((bounds.height - pt.y) * scaleY))
+        // 2. Draw Magnified 9x9 Pixel Grid (Live Screen Sample)
+        let appKitGlobal = NSPoint(x: targetScreen.frame.origin.x + pt.x, y: targetScreen.frame.origin.y + pt.y)
+        let globalCGPoint = CaptureService.shared.coreGraphicsPoint(from: appKitGlobal)
 
         var centerColor = NSColor.black
         var centerHex = "#000000"
         var centerRGB = "rgb(0, 0, 0)"
+        var patchImage: CGImage?
 
-        if let img = screenImage {
+        if let sample = RegionSelectionCoordinator.shared.sampleLiveColorAndPatch(at: globalCGPoint) {
+            centerHex = sample.hex
+            centerRGB = "rgb(\(sample.rgb.r), \(sample.rgb.g), \(sample.rgb.b))"
+            centerColor = sample.color
+            patchImage = sample.patch
+            RegionSelectionCoordinator.shared.currentColorPickerValue = sample.hex
+        } else if let img = screenImage {
+            let scaleX = CGFloat(img.width) / bounds.width
+            let scaleY = CGFloat(img.height) / bounds.height
+            let imgX = Int(round(pt.x * scaleX))
+            let imgY = Int(round((bounds.height - pt.y) * scaleY))
             if let sampled = RegionSelectionCoordinator.shared.extractColor(from: img, x: imgX, y: imgY) {
                 centerHex = sampled.hex
                 centerRGB = "rgb(\(sampled.rgb.r), \(sampled.rgb.g), \(sampled.rgb.b))"
@@ -1143,50 +1306,52 @@ private final class RegionSelectionView: NSView {
                     blue: CGFloat(sampled.rgb.b) / 255.0,
                     alpha: 1.0
                 )
+                RegionSelectionCoordinator.shared.currentColorPickerValue = sampled.hex
             }
-
-            context.saveGState()
-            context.addEllipse(in: loupeCircleRect)
-            context.clip()
-
             let cropRect = CGRect(x: imgX - 4, y: imgY - 4, width: 9, height: 9)
-            if let cropped = img.cropping(to: cropRect) {
-                context.interpolationQuality = .none
-                context.draw(cropped, in: loupeCircleRect)
-            } else {
-                context.setFillColor(centerColor.cgColor)
-                context.fill(loupeCircleRect)
-            }
-
-            // Gridlines
-            let cellSize = diameter / 9.0
-            context.setStrokeColor(CGColor(gray: 1.0, alpha: 0.18))
-            context.setLineWidth(0.75)
-            for i in 1..<9 {
-                let cellOffset = CGFloat(i) * cellSize
-                context.move(to: CGPoint(x: loupeCircleRect.minX + cellOffset, y: loupeCircleRect.minY))
-                context.addLine(to: CGPoint(x: loupeCircleRect.minX + cellOffset, y: loupeCircleRect.maxY))
-                context.move(to: CGPoint(x: loupeCircleRect.minX, y: loupeCircleRect.minY + cellOffset))
-                context.addLine(to: CGPoint(x: loupeCircleRect.maxX, y: loupeCircleRect.minY + cellOffset))
-            }
-            context.strokePath()
-
-            // Center pixel highlight (cell 4, 4)
-            let centerCell = CGRect(
-                x: loupeCircleRect.minX + 4.0 * cellSize,
-                y: loupeCircleRect.minY + 4.0 * cellSize,
-                width: cellSize,
-                height: cellSize
-            )
-            context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.65))
-            context.setLineWidth(2.2)
-            context.stroke(centerCell)
-            context.setStrokeColor(CGColor(gray: 1.0, alpha: 1.0))
-            context.setLineWidth(1.2)
-            context.stroke(centerCell)
-
-            context.restoreGState()
+            patchImage = img.cropping(to: cropRect)
         }
+
+        context.saveGState()
+        context.addEllipse(in: loupeCircleRect)
+        context.clip()
+
+        if let patch = patchImage {
+            context.interpolationQuality = .none
+            context.draw(patch, in: loupeCircleRect)
+        } else {
+            context.setFillColor(centerColor.cgColor)
+            context.fill(loupeCircleRect)
+        }
+
+        // Gridlines
+        let cellSize = diameter / 9.0
+        context.setStrokeColor(CGColor(gray: 1.0, alpha: 0.18))
+        context.setLineWidth(0.75)
+        for i in 1..<9 {
+            let cellOffset = CGFloat(i) * cellSize
+            context.move(to: CGPoint(x: loupeCircleRect.minX + cellOffset, y: loupeCircleRect.minY))
+            context.addLine(to: CGPoint(x: loupeCircleRect.minX + cellOffset, y: loupeCircleRect.maxY))
+            context.move(to: CGPoint(x: loupeCircleRect.minX, y: loupeCircleRect.minY + cellOffset))
+            context.addLine(to: CGPoint(x: loupeCircleRect.maxX, y: loupeCircleRect.minY + cellOffset))
+        }
+        context.strokePath()
+
+        // Center pixel highlight (cell 4, 4)
+        let centerCell = CGRect(
+            x: loupeCircleRect.minX + 4.0 * cellSize,
+            y: loupeCircleRect.minY + 4.0 * cellSize,
+            width: cellSize,
+            height: cellSize
+        )
+        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.65))
+        context.setLineWidth(2.2)
+        context.stroke(centerCell)
+        context.setStrokeColor(CGColor(gray: 1.0, alpha: 1.0))
+        context.setLineWidth(1.2)
+        context.stroke(centerCell)
+
+        context.restoreGState()
 
         // 3. Loupe Outer Ring
         context.setStrokeColor(CGColor(gray: 1.0, alpha: 0.95))
@@ -1574,6 +1739,29 @@ private final class RegionSelectionView: NSView {
         let rgbStr = (rgbText as NSString)
         hexStr.draw(at: NSPoint(x: textX, y: rect.minY + 18), withAttributes: hexAttr)
         rgbStr.draw(at: NSPoint(x: textX, y: rect.minY + 5), withAttributes: rgbAttr)
+
+        // Subtle Tab key shortcut keycap hint on the right
+        let tabKeyRect = CGRect(x: rect.maxX - 24, y: rect.minY + 19, width: 17, height: 11)
+        let tabKeyPath = NSBezierPath(roundedRect: tabKeyRect, xRadius: 2.5, yRadius: 2.5)
+        NSColor(white: 0.28, alpha: 0.90).setFill()
+        tabKeyPath.fill()
+        NSColor(white: 1.0, alpha: 0.30).setStroke()
+        tabKeyPath.lineWidth = 0.5
+        tabKeyPath.stroke()
+
+        let tabAttr: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 7.5, weight: .semibold),
+            .foregroundColor: NSColor(white: 0.90, alpha: 1.0)
+        ]
+        let tabSymbol = "⇥" as NSString
+        let tabSymbolSize = tabSymbol.size(withAttributes: tabAttr)
+        tabSymbol.draw(
+            at: NSPoint(
+                x: tabKeyRect.midX - tabSymbolSize.width / 2.0,
+                y: tabKeyRect.midY - tabSymbolSize.height / 2.0
+            ),
+            withAttributes: tabAttr
+        )
 
         context.restoreGState()
     }

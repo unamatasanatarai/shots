@@ -1598,6 +1598,74 @@ public struct AppTests {
             assert(pickerItem?.image != nil, "Color Picker item must have an icon")
         }
 
+        // MARK: - Live Color Picker & Tab Key Suite
+        testRunner("Live Color Picker - Live Sampling, Dynamic Screen Updates & Tab Key Copy") {
+            PermissionsManager.shared.screenRecordingOverride = true
+            PermissionsManager.shared.accessibilityOverride = true
+            defer {
+                PermissionsManager.shared.resetTestingState()
+            }
+
+            let coordinator = RegionSelectionCoordinator.shared
+
+            // 1. Live Sample & Patch Verification
+            let screen = NSScreen.screens.first ?? NSScreen()
+            let testPoint = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
+            if let liveSample = coordinator.sampleLiveColorAndPatch(at: testPoint) {
+                assert(!liveSample.hex.isEmpty, "Live sample hex must not be empty")
+                assert(liveSample.hex.hasPrefix("#"), "Live sample hex must begin with #")
+                assert(liveSample.hex.count == 7, "Hex must be #RRGGBB format")
+                assert(liveSample.patch != nil, "9x9 patch image must be created")
+                assert(liveSample.patch?.width == 9 && liveSample.patch?.height == 9, "Patch must be exactly 9x9 pixels")
+                assert(coordinator.currentColorPickerValue == liveSample.hex, "currentColorPickerValue must update with live sample")
+            }
+
+            // 2. Start Color Picker Session (No invisible screenshots)
+            var pickedHex: String?
+            coordinator.startColorPicker { result in
+                pickedHex = result
+            }
+            assert(coordinator.isSelecting, "Coordinator must be selecting after startColorPicker")
+            assert(coordinator.activeMode == .colorPicker, "Active mode must be colorPicker")
+
+            // Set mock/sample value to verify Tab key copies the current value
+            coordinator.currentColorPickerValue = "#123456"
+
+            // 3. Tab Key Event Dispatch (simulate hitting the Tab key, keyCode 48)
+            let tabEvent = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: "\t",
+                charactersIgnoringModifiers: "\t",
+                isARepeat: false,
+                keyCode: 48
+            )
+            if let evt = tabEvent {
+                _ = NSApp.sendEvent(evt)
+            }
+
+            // Verify Tab copied the color and finished the session
+            assert(!coordinator.isSelecting, "Session must finish after hitting Tab key")
+            let pbString = NSPasteboard.general.string(forType: .string)
+            assert(pbString != nil && pbString!.hasPrefix("#"), "Pasteboard must contain copied color hex after Tab key")
+            assert(pickedHex != nil && pickedHex!.hasPrefix("#"), "Completion handler must receive copied hex value")
+
+            // 4. Direct invocation of copyCurrentColorPickerValue
+            coordinator.startColorPicker { result in
+                pickedHex = result
+            }
+            assert(coordinator.isSelecting, "Must be selecting")
+            coordinator.copyCurrentColorPickerValue()
+            assert(!coordinator.isSelecting, "copyCurrentColorPickerValue must finish selection")
+            let pb = NSPasteboard.general.string(forType: .string)
+            assert(pb != nil && pb!.hasPrefix("#") && pb!.count == 7, "Pasteboard must contain valid #RRGGBB hex")
+            assert(pickedHex == pb, "Completion handler must receive exact hex copied to pasteboard")
+        }
+
         // MARK: - System Permissions Enforcement Suite
         testRunner("System Permissions - Screen Recording & Accessibility Enforcement") {
             let perm = PermissionsManager.shared
