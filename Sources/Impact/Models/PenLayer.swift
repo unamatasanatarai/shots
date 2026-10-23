@@ -2,6 +2,54 @@ import Foundation
 import CoreGraphics
 import AppKit
 
+// MARK: - Smoothed Freehand Path
+
+/// The smoothed path through a stroke's points (quad curves through the midpoints), cached so that
+/// appending a point while drawing extends it instead of rebuilding the whole stroke
+struct SmoothedStrokePath {
+    private var curve: CGMutablePath?
+    private var curvePointCount = 0
+
+    mutating func reset() {
+        curve = nil
+        curvePointCount = 0
+    }
+
+    /// Path through two or more points
+    mutating func path(through points: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        if points.count == 2 {
+            path.move(to: points[0])
+            path.addLine(to: points[1])
+            return path
+        }
+        if curve == nil || curvePointCount > points.count {
+            let fresh = CGMutablePath()
+            fresh.move(to: points[0])
+            curve = fresh
+            curvePointCount = 1
+        }
+        guard let curve = curve else { return path }
+        for i in curvePointCount..<points.count {
+            let mid = CGPoint(
+                x: (points[i - 1].x + points[i].x) / 2.0,
+                y: (points[i - 1].y + points[i].y) / 2.0
+            )
+            curve.addQuadCurve(to: mid, control: points[i - 1])
+        }
+        curvePointCount = points.count
+        path.addPath(curve)
+        path.addLine(to: points[points.count - 1])
+        return path
+    }
+
+    mutating func translate(by delta: CGPoint) {
+        guard let current = curve else { return }
+        var transform = CGAffineTransform(translationX: delta.x, y: delta.y)
+        curve = current.mutableCopy(using: &transform)
+    }
+}
+
 // MARK: - Pen Layer (Freehand)
 
 public final class PenLayer: AnnotationLayer {
@@ -17,8 +65,12 @@ public final class PenLayer: AnnotationLayer {
     }
 
     public var points: [CGPoint] {
-        didSet { invalidateCache() }
+        didSet {
+            if !isAppendingPoint { invalidateCache() }
+        }
     }
+    private var isAppendingPoint = false
+    private var smoothedPath = SmoothedStrokePath()
 
     private var _cachedBoundingBox: CGRect?
     private var _cachedStrokeColor: CGColor?
@@ -30,6 +82,7 @@ public final class PenLayer: AnnotationLayer {
         _cachedBoundingBox = nil
         _cachedPath = nil
         _cachedHoverPath = nil
+        smoothedPath.reset()
     }
 
     public func pathForStroke() -> CGPath {
@@ -45,21 +98,9 @@ public final class PenLayer: AnnotationLayer {
             _cachedPath = path
             return path
         }
-        path.move(to: points[0])
-        if points.count == 2 {
-            path.addLine(to: points[1])
-        } else {
-            for i in 1..<points.count {
-                let mid = CGPoint(
-                    x: (points[i - 1].x + points[i].x) / 2.0,
-                    y: (points[i - 1].y + points[i].y) / 2.0
-                )
-                path.addQuadCurve(to: mid, control: points[i - 1])
-            }
-            path.addLine(to: points.last!)
-        }
-        _cachedPath = path
-        return path
+        let stroke = smoothedPath.path(through: points)
+        _cachedPath = stroke
+        return stroke
     }
 
     public func hoverOutlinePath() -> CGPath? {
@@ -91,6 +132,8 @@ public final class PenLayer: AnnotationLayer {
         self.zIndex = zIndex
     }
 
+    private var boundingBoxPadding: CGFloat { strokeWidth + 6.0 }
+
     public func getBoundingBox() -> CGRect {
         if let cached = _cachedBoundingBox { return cached }
         guard !points.isEmpty else { return .zero }
@@ -102,7 +145,7 @@ public final class PenLayer: AnnotationLayer {
             if p.y < minY { minY = p.y }
             else if p.y > maxY { maxY = p.y }
         }
-        let pad = strokeWidth + 6.0
+        let pad = boundingBoxPadding
         let box = CGRect(x: minX - pad, y: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2)
         _cachedBoundingBox = box
         return box
@@ -149,21 +192,32 @@ public final class PenLayer: AnnotationLayer {
     }
 
     public func move(by delta: CGPoint) {
-        for i in 0..<points.count {
-            points[i].x += delta.x
-            points[i].y += delta.y
-        }
-        if var box = _cachedBoundingBox {
-            box.origin.x += delta.x
-            box.origin.y += delta.y
-            _cachedBoundingBox = box
-        }
+        // Translate the caches instead of rebuilding them: assigning points would invalidate them
         var transform = CGAffineTransform(translationX: delta.x, y: delta.y)
-        if let path = _cachedPath {
-            _cachedPath = path.copy(using: &transform)
-        }
-        if let hover = _cachedHoverPath {
-            _cachedHoverPath = hover.copy(using: &transform)
+        let box = _cachedBoundingBox?.offsetBy(dx: delta.x, dy: delta.y)
+        let path = _cachedPath?.copy(using: &transform)
+        let hover = _cachedHoverPath?.copy(using: &transform)
+        var smoothed = smoothedPath
+        smoothed.translate(by: delta)
+
+        points = points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) }
+
+        _cachedBoundingBox = box
+        _cachedPath = path
+        _cachedHoverPath = hover
+        smoothedPath = smoothed
+    }
+
+    /// Adds a point while drawing: the smoothed path and the bounds are extended, not rebuilt
+    public func appendPoint(_ point: CGPoint) {
+        isAppendingPoint = true
+        points.append(point)
+        isAppendingPoint = false
+        _cachedPath = nil
+        _cachedHoverPath = nil
+        if let box = _cachedBoundingBox {
+            let pad = boundingBoxPadding
+            _cachedBoundingBox = box.union(CGRect(x: point.x - pad, y: point.y - pad, width: pad * 2, height: pad * 2))
         }
     }
 
@@ -236,8 +290,12 @@ public final class HighlighterLayer: AnnotationLayer {
     }
 
     public var points: [CGPoint] {
-        didSet { invalidateCache() }
+        didSet {
+            if !isAppendingPoint { invalidateCache() }
+        }
     }
+    private var isAppendingPoint = false
+    private var smoothedPath = SmoothedStrokePath()
 
     private var _cachedBoundingBox: CGRect?
     private var _cachedPath: CGPath?
@@ -250,6 +308,7 @@ public final class HighlighterLayer: AnnotationLayer {
         _cachedBoundingBox = nil
         _cachedPath = nil
         _cachedHoverPath = nil
+        smoothedPath.reset()
     }
 
     public func pathForStroke() -> CGPath {
@@ -265,21 +324,9 @@ public final class HighlighterLayer: AnnotationLayer {
             _cachedPath = path
             return path
         }
-        path.move(to: points[0])
-        if points.count == 2 {
-            path.addLine(to: points[1])
-        } else {
-            for i in 1..<points.count {
-                let mid = CGPoint(
-                    x: (points[i - 1].x + points[i].x) / 2.0,
-                    y: (points[i - 1].y + points[i].y) / 2.0
-                )
-                path.addQuadCurve(to: mid, control: points[i - 1])
-            }
-            path.addLine(to: points.last!)
-        }
-        _cachedPath = path
-        return path
+        let stroke = smoothedPath.path(through: points)
+        _cachedPath = stroke
+        return stroke
     }
 
     public func hoverOutlinePath() -> CGPath? {
@@ -311,6 +358,8 @@ public final class HighlighterLayer: AnnotationLayer {
         self.zIndex = zIndex
     }
 
+    private var boundingBoxPadding: CGFloat { strokeWidth / 2.0 + 4.0 }
+
     public func getBoundingBox() -> CGRect {
         if let cached = _cachedBoundingBox { return cached }
         guard !points.isEmpty else { return .zero }
@@ -322,7 +371,7 @@ public final class HighlighterLayer: AnnotationLayer {
             if p.y < minY { minY = p.y }
             else if p.y > maxY { maxY = p.y }
         }
-        let pad = strokeWidth / 2.0 + 4.0
+        let pad = boundingBoxPadding
         let box = CGRect(x: minX - pad, y: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2)
         _cachedBoundingBox = box
         return box
@@ -369,21 +418,32 @@ public final class HighlighterLayer: AnnotationLayer {
     }
 
     public func move(by delta: CGPoint) {
-        for i in 0..<points.count {
-            points[i].x += delta.x
-            points[i].y += delta.y
-        }
-        if var box = _cachedBoundingBox {
-            box.origin.x += delta.x
-            box.origin.y += delta.y
-            _cachedBoundingBox = box
-        }
+        // Translate the caches instead of rebuilding them: assigning points would invalidate them
         var transform = CGAffineTransform(translationX: delta.x, y: delta.y)
-        if let path = _cachedPath {
-            _cachedPath = path.copy(using: &transform)
-        }
-        if let hover = _cachedHoverPath {
-            _cachedHoverPath = hover.copy(using: &transform)
+        let box = _cachedBoundingBox?.offsetBy(dx: delta.x, dy: delta.y)
+        let path = _cachedPath?.copy(using: &transform)
+        let hover = _cachedHoverPath?.copy(using: &transform)
+        var smoothed = smoothedPath
+        smoothed.translate(by: delta)
+
+        points = points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) }
+
+        _cachedBoundingBox = box
+        _cachedPath = path
+        _cachedHoverPath = hover
+        smoothedPath = smoothed
+    }
+
+    /// Adds a point while drawing: the smoothed path and the bounds are extended, not rebuilt
+    public func appendPoint(_ point: CGPoint) {
+        isAppendingPoint = true
+        points.append(point)
+        isAppendingPoint = false
+        _cachedPath = nil
+        _cachedHoverPath = nil
+        if let box = _cachedBoundingBox {
+            let pad = boundingBoxPadding
+            _cachedBoundingBox = box.union(CGRect(x: point.x - pad, y: point.y - pad, width: pad * 2, height: pad * 2))
         }
     }
 

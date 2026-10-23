@@ -169,15 +169,8 @@ public final class SaveService {
         lock.lock()
         defer { lock.unlock() }
 
-        let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-        let pb = NSPasteboard.general
-        pb.clearContents()
-
-        pb.writeObjects([nsImage])
-
-        if let data = pngData ?? encodePNG(image: image) {
-            pb.setData(data, forType: .png)
-        }
+        // PNG (when not already encoded) and TIFF are produced only if something pastes
+        LazyImagePasteboard.write(image: image, pngData: pngData)
     }
 
     // MARK: - Reveal & Latest File Resolution

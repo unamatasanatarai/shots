@@ -14,6 +14,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var dragStartPoint: CGPoint = .zero
     private var calloutGrabOffset: CGPoint = .zero
     private var lastDragPoint: CGPoint = .zero
+    // A press that never drags leaves the layers unchanged: its snapshot is dropped on mouse-up
+    private var snapshotSerialAtMouseDown = 0
+    private var didDragSinceMouseDown = false
     private var isSpacePressed: Bool = false
     private var isShiftPressed: Bool = false
     var hoveredLayer: AnnotationLayer?
@@ -43,13 +46,76 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     // A click on the already-selected callout/text body: edits on mouse-up unless it turns into a drag
     private var pendingEditCallout: TextEditableLayer?
 
+    // Layered rendering: the checkerboard is the canvas layer's pattern background, the original image
+    // is GPU-composited layer contents, and only filters, annotations and editing UI are drawn on the CPU
+    private let imageView = CanvasImageView()
+    private var annotationView: CanvasAnnotationView!
+
     public init(document: EditorDocument) {
         self.document = document
         super.init(frame: NSRect(origin: .zero, size: document.activeCanvasBounds.size))
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
 
+        annotationView = CanvasAnnotationView(canvas: self)
+        addSubview(imageView)
+        addSubview(annotationView)
+        imageView.image = document.originalImage
+        layoutCanvasSubviews()
+
         setupDocumentCallbacks()
+    }
+
+    override public var wantsUpdateLayer: Bool { true }
+
+    override public func updateLayer() {
+        layer?.backgroundColor = Self.checkerboardPatternColor
+    }
+
+    /// Redraw requests go to the annotation surface; the canvas layer itself only shows the checkerboard
+    override public var needsDisplay: Bool {
+        get { annotationView?.needsDisplay ?? super.needsDisplay }
+        set {
+            guard let annotationView = annotationView else {
+                super.needsDisplay = newValue
+                return
+            }
+            annotationView.needsDisplay = newValue
+        }
+    }
+
+    override public func setNeedsDisplay(_ invalidRect: NSRect) {
+        guard let annotationView = annotationView else {
+            super.setNeedsDisplay(invalidRect)
+            return
+        }
+        annotationView.setNeedsDisplay(invalidRect)
+    }
+
+    override public func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutCanvasSubviews()
+    }
+
+    private func layoutCanvasSubviews() {
+        annotationView?.frame = bounds
+        let canvasOrigin = document.activeCanvasBounds.origin
+        imageView.frame = document.originalImageBounds.offsetBy(dx: -canvasOrigin.x, dy: -canvasOrigin.y)
+    }
+
+    /// Follows the document's elastic bounds: resizes the canvas and keeps the image and editor in place
+    public func canvasBoundsDidChange() {
+        frame = NSRect(origin: .zero, size: document.activeCanvasBounds.size)
+        layoutCanvasSubviews()
+        // The elastic origin shifts when the canvas grows left/up; keep the editor on its bubble
+        positionCalloutEditor()
+        needsDisplay = true
+    }
+
+    /// Repaints the area of a canvas-space rect (e.g. a moving brush preview)
+    private func setNeedsDisplay(canvasRect rect: CGRect) {
+        let origin = document.activeCanvasBounds.origin
+        setNeedsDisplay(rect.offsetBy(dx: -origin.x, dy: -origin.y))
     }
 
     private func setupDocumentCallbacks() {
@@ -57,12 +123,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             self?.needsDisplay = true
         }
 
-        document.onBoundsChanged = { [weak self] newBounds in
-            guard let self = self else { return }
-            self.frame = NSRect(origin: .zero, size: newBounds.size)
-            // The elastic origin shifts when the canvas grows left/up; keep the editor on its bubble
-            self.positionCalloutEditor()
-            self.needsDisplay = true
+        document.onBoundsChanged = { [weak self] _ in
+            self?.canvasBoundsDidChange()
         }
 
         // Switching to any other tool finishes the session; the new tool stays active
@@ -86,6 +148,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         self.hoverOutlineLayer = nil
         self.zoomScale = 1.0
         self.frame = NSRect(origin: .zero, size: newDoc.activeCanvasBounds.size)
+        imageView.image = newDoc.originalImage
+        layoutCanvasSubviews()
         setupDocumentCallbacks()
         self.needsDisplay = true
     }
@@ -114,25 +178,18 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     // MARK: - Drawing Pipeline (Section 6)
 
-    override public func draw(_ dirtyRect: NSRect) {
+    /// Draws everything above the image (which is layer contents underneath): filters, annotations, editing UI
+    fileprivate func drawAnnotations(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
         context.saveGState()
-
-        // Checkerboard background for transparent canvas padding
-        drawCheckerboard(in: context, rect: dirtyRect.intersection(bounds))
 
         // Translate origin according to activeCanvasBounds to anchor image
         let offsetX = -document.activeCanvasBounds.origin.x
         let offsetY = -document.activeCanvasBounds.origin.y
         context.translateBy(x: offsetX, y: offsetY)
-
-        // 1. Draw originalImage right-side up in flipped context
-        context.saveGState()
-        context.translateBy(x: 0, y: document.originalImageBounds.height)
-        context.scaleBy(x: 1.0, y: -1.0)
-        context.draw(document.originalImage, in: CGRect(x: document.originalImageBounds.origin.x, y: 0, width: document.originalImageBounds.width, height: document.originalImageBounds.height))
-        context.restoreGState()
+        // Layers entirely outside the repainted area are skipped (with room for shadows)
+        let visibleCanvasRect = dirtyRect.offsetBy(dx: -offsetX, dy: -offsetY).insetBy(dx: -12, dy: -12)
 
         // 2a. Draw Blur / Pixelate Layers (always UNDER spotlight overlay)
         for layer in document.layers where layer.isVisible {
@@ -178,6 +235,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // 3. Sort AnnotationLayer array by zIndex & draw vector layers
         var allLayers = document.layers.filter { layer in
             if !layer.isVisible { return false }
+            if !layer.getBoundingBox().intersects(visibleCanvasRect) { return false }
             if layer.id == activeDraggingLayer?.id, let f = layer as? FilterLayer, f.filterMode != .spotlight {
                 return false
             }
@@ -218,12 +276,16 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // 6. Draw Brush Outline Preview (Highlighter or Pen)
         if (document.activeTool == .highlighter || document.activeTool == .pen), activeCreatingLayer == nil, let pt = currentMouseCanvasPoint {
-            let width = (document.activeTool == .highlighter) ? 20.0 : document.activeStrokeWidth
-            drawBrushOutline(at: pt, in: context, strokeWidth: width)
+            drawBrushOutline(at: pt, in: context, strokeWidth: brushPreviewWidth)
         }
 
         context.restoreGState()
     }
+
+    private static let checkerboardPatternColor: CGColor = {
+        let tile = NSImage(cgImage: checkerboardTile, size: NSSize(width: 32, height: 32))
+        return NSColor(patternImage: tile).cgColor
+    }()
 
     private static let checkerboardTile: CGImage = {
         let size = 32
@@ -251,10 +313,6 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private static let blurHighlightFillCGColor = CGColor(srgbRed: 0.15, green: 0.55, blue: 0.95, alpha: 0.28)
     private static let brushDarkOutlineCGColor = CGColor(gray: 0.0, alpha: 0.60)
     private static let brushLightOutlineCGColor = CGColor(gray: 1.0, alpha: 0.95)
-
-    private func drawCheckerboard(in context: CGContext, rect: CGRect) {
-        context.draw(Self.checkerboardTile, in: rect, byTiling: true)
-    }
 
     private func drawSelectionHandles(in context: CGContext) {
         let selectedLayers = document.getSelectedLayers()
@@ -381,6 +439,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         dragStartPoint = point
         lastDragPoint = point
         pendingEditCallout = nil
+        snapshotSerialAtMouseDown = document.snapshotSerial
+        didDragSinceMouseDown = false
 
         clearHoverStateImmediately()
 
@@ -641,6 +701,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             if hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y) <= 3.0 { return }
             pendingEditCallout = nil
         }
+        didDragSinceMouseDown = true
 
         let delta = CGPoint(x: point.x - lastDragPoint.x, y: point.y - lastDragPoint.y)
 
@@ -854,20 +915,20 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     let dpx = point.x - last.x
                     let dpy = point.y - last.y
                     if dpx * dpx + dpy * dpy >= 4.0 {
-                        pen.points.append(point)
+                        pen.appendPoint(point)
                     }
                 } else {
-                    pen.points.append(point)
+                    pen.appendPoint(point)
                 }
             } else if let hl = creating as? HighlighterLayer {
                 if let last = hl.points.last {
                     let dpx = point.x - last.x
                     let dpy = point.y - last.y
                     if dpx * dpx + dpy * dpy >= 4.0 {
-                        hl.points.append(point)
+                        hl.appendPoint(point)
                     }
                 } else {
-                    hl.points.append(point)
+                    hl.appendPoint(point)
                 }
             } else if let dim = creating as? DimensionLayer {
                 dim.end = point
@@ -1010,6 +1071,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             activeCreatingLayer = nil
             (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
         }
+        if activeDraggingLayer != nil, !didDragSinceMouseDown,
+           document.snapshotSerial == snapshotSerialAtMouseDown + 1 {
+            document.discardLastSnapshot()
+        }
         activeDraggingLayer = nil
         activeHandleIndex = nil
         activeDraggingRectIndex = nil
@@ -1055,31 +1120,37 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     override public func mouseEntered(with event: NSEvent) {
-        currentMouseCanvasPoint = canvasPoint(from: event)
-        if document.activeTool == .highlighter || document.activeTool == .pen {
-            needsDisplay = true
-        }
+        moveBrushPreview(to: canvasPoint(from: event))
     }
 
     override public func mouseExited(with event: NSEvent) {
-        currentMouseCanvasPoint = nil
+        moveBrushPreview(to: nil)
         updateHoverState(to: nil)
-        if document.activeTool == .highlighter || document.activeTool == .pen {
-            needsDisplay = true
-        }
     }
 
     override public func mouseMoved(with event: NSEvent) {
         let point = canvasPoint(from: event)
-        currentMouseCanvasPoint = point
+        moveBrushPreview(to: point)
         let newlyHovered = document.layers.reversed().first { layer in
             layer.isVisible && (layer.contains(point: point) || layer.hitTestHandle(point: point) != nil)
         }
         updateHoverState(to: newlyHovered)
         updateCursorForPoint(point)
-        if document.activeTool == .highlighter || document.activeTool == .pen {
-            needsDisplay = true
+    }
+
+    /// Tracks the mouse; with the pen or highlighter, repaints only the old and new brush outline areas
+    private func moveBrushPreview(to point: CGPoint?) {
+        let previous = currentMouseCanvasPoint
+        currentMouseCanvasPoint = point
+        guard document.activeTool == .highlighter || document.activeTool == .pen else { return }
+        let radius = brushPreviewWidth / 2.0 + 4.0
+        for p in [previous, point].compactMap({ $0 }) {
+            setNeedsDisplay(canvasRect: CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
         }
+    }
+
+    private var brushPreviewWidth: CGFloat {
+        document.activeTool == .highlighter ? 20.0 : document.activeStrokeWidth
     }
 
     func updateHoverState(to newLayer: AnnotationLayer?) {
@@ -1350,8 +1421,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     // MARK: - Keyboard Modifiers & Shortcuts (Section 3)
 
     override public func flagsChanged(with event: NSEvent) {
-        isShiftPressed = event.modifierFlags.contains(.shift)
-        needsDisplay = true
+        let shift = event.modifierFlags.contains(.shift)
+        guard shift != isShiftPressed else { return }
+        isShiftPressed = shift
+        // Shift only changes what is drawn while a gesture is in progress
+        if activeCreatingLayer != nil || activeDraggingLayer != nil {
+            needsDisplay = true
+        }
     }
 
     public func handleEscapeKey() {
@@ -1661,16 +1737,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     public func copyCompositionToClipboard() {
         endCalloutEditingIfNeeded()
-        guard let rendered = document.renderComposition() else { return }
-        let rep = NSBitmapImageRep(cgImage: rendered)
-        let nsImage = NSImage(cgImage: rendered, size: NSSize(width: rendered.width, height: rendered.height))
-
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([nsImage])
-        if let pngData = rep.representation(using: .png, properties: [:]) {
-            pasteboard.setData(pngData, forType: .png)
-        }
+        // Copies the current annotations; rendering and PNG/TIFF encoding happen only when something pastes
+        let snapshot = document.compositionSnapshot()
+        LazyImagePasteboard.write { snapshot.renderComposition() }
     }
 
     public func saveCompositionToFile(url: URL, format: NSBitmapImageRep.FileType = .png) {
@@ -1900,4 +1969,60 @@ extension EditorCanvasView: CalloutEditingSession, NSTextViewDelegate {
         }
         return false
     }
+}
+
+// MARK: - Canvas Layers
+
+/// Shows the original image as layer contents: composited by the GPU, never redrawn on the CPU
+private final class CanvasImageView: NSView {
+    var image: CGImage? {
+        didSet { needsDisplay = true }
+    }
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        guard let layer = layer else { return }
+        layer.contents = image
+        layer.contentsGravity = .resize
+        layer.minificationFilter = .trilinear
+    }
+
+    // Mouse events belong to the canvas
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Transparent surface the canvas draws filters, annotations and editing UI into
+private final class CanvasAnnotationView: NSView {
+    private weak var canvas: EditorCanvasView?
+
+    init(canvas: EditorCanvasView) {
+        self.canvas = canvas
+        super.init(frame: canvas.bounds)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        canvas?.drawAnnotations(dirtyRect)
+    }
+
+    // Mouse events belong to the canvas
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -26,6 +26,9 @@ public final class PreferencesWindow: NSWindow {
 public final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     public static let shared = PreferencesWindowController()
 
+    /// Re-checks missing permissions while the window is open; stopped on close so a hidden window never wakes the app
+    private var permissionPollTimer: Timer?
+
     private init() {
         let hostingController = NSHostingController(rootView: PreferencesView())
         let window = PreferencesWindow(
@@ -64,6 +67,28 @@ public final class PreferencesWindowController: NSWindowController, NSWindowDele
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        startPermissionPolling()
+    }
+
+    private func startPermissionPolling() {
+        permissionPollTimer?.invalidate()
+        permissionPollTimer = nil
+        guard !PermissionsManager.shared.hasRequiredPermissions else { return }
+        let timer = Timer(timeInterval: 2.5, repeats: true) { [weak self] timer in
+            NotificationCenter.default.post(name: NSNotification.Name("PreferencesViewRefreshPermissions"), object: nil)
+            if PermissionsManager.shared.hasRequiredPermissions {
+                timer.invalidate()
+                self?.permissionPollTimer = nil
+            }
+        }
+        timer.tolerance = 0.5
+        RunLoop.main.add(timer, forMode: .default)
+        permissionPollTimer = timer
+    }
+
+    public func windowWillClose(_ notification: Notification) {
+        permissionPollTimer?.invalidate()
+        permissionPollTimer = nil
     }
 
     public func windowDidBecomeKey(_ notification: Notification) {

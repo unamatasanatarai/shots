@@ -37,6 +37,10 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    public func applicationWillTerminate(_ notification: Notification) {
+        LazyImagePasteboard.resolveBeforeTermination()
+    }
+
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             ImpactAppCoordinator.shared.openEmptyEditor()

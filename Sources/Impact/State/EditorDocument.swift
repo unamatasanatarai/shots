@@ -93,6 +93,7 @@ public final class EditorDocument {
     }
 
     private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
+    private static let colorSpaceSRGB = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
     /// Creates a minimal 1x1 placeholder document when EditorPanel opens without an image
     public static func makePlaceholder() -> EditorDocument {
@@ -299,7 +300,11 @@ public final class EditorDocument {
 
     // MARK: - Undo / Redo
 
+    /// Counts saveSnapshot calls, so a gesture can tell whether the latest snapshot is its own
+    public private(set) var snapshotSerial = 0
+
     public func saveSnapshot() {
+        snapshotSerial += 1
         let snapshot = layers.map { $0.clone() }
         undoStack.append(snapshot)
         if undoStack.count > 50 { undoStack.removeFirst() }
@@ -386,6 +391,13 @@ public final class EditorDocument {
 
     // MARK: - Composition Rendering (Section 6)
 
+    /// An independent copy (same image, cloned layers) that renders the composition as it is now
+    public func compositionSnapshot() -> EditorDocument {
+        let snapshot = EditorDocument(image: originalImage)
+        snapshot.layers = layers.map { $0.clone() }
+        return snapshot
+    }
+
     public func renderComposition() -> CGImage? {
         computeElasticBounds()
 
@@ -393,14 +405,17 @@ public final class EditorDocument {
         let height = Int(ceil(activeCanvasBounds.height))
         guard width > 0 && height > 0 else { return nil }
 
+        // The image's own color space (a capture's display profile stays intact) and native BGRA layout,
+        // so drawing the original is a plain copy rather than a per-pixel conversion
+        let colorSpace = originalImage.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? Self.colorSpaceSRGB
         guard let context = CGContext(
             data: nil,
             width: width,
             height: height,
             bitsPerComponent: 8,
-            bytesPerRow: width * 4,
-            space: Self.colorSpaceRGB,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         ) else { return nil }
 
         // 1. Clear active bounds to transparent

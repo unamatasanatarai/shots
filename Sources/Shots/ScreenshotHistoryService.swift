@@ -162,6 +162,13 @@ public final class ScreenshotHistoryService {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return false
         }
+        // A PNG file already holds the pasteboard's PNG data: no decode, and TIFF only if a paste asks for it
+        if fileURL.pathExtension.lowercased() == "png", let pngData = try? Data(contentsOf: fileURL) {
+            LazyImagePasteboard.write(pngData: pngData) {
+                CGImageSourceCreateWithData(pngData as CFData, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+            }
+            return true
+        }
         if let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
            let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
             SaveService.shared.copyToPasteboard(image: cgImage, fileURL: fileURL)

@@ -3,7 +3,7 @@ import CoreGraphics
 
 public final class CaptureService {
     public static let shared = CaptureService()
-    private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
+    private static let colorSpaceSRGB = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
     public init() {}
 
@@ -66,6 +66,39 @@ public final class CaptureService {
         let targetDisplayID = displayID(for: screen) ?? CGMainDisplayID()
         let image = CGDisplayCreateImage(targetDisplayID) ?? CGDisplayCreateImage(CGMainDisplayID())
         return (image, screen, targetDisplayID)
+    }
+
+    // MARK: - Region Capture
+
+    /// Captures only the selected region of a display (selRect in view coordinates, origin bottom-left).
+    /// Unlike capturing the full display and cropping, no full-display buffer is allocated or kept alive
+    /// by the cropped image. Falls back to crop-from-full-display if the region capture fails.
+    public func captureRegion(displayID: CGDirectDisplayID, selRect: NSRect, in viewSize: NSSize) -> CGImage? {
+        guard viewSize.width > 0 && viewSize.height > 0 && selRect.width > 0 && selRect.height > 0 else { return nil }
+        // Display space: points relative to the display, origin top-left
+        let displayRect = CGRect(
+            x: selRect.minX,
+            y: viewSize.height - selRect.maxY,
+            width: selRect.width,
+            height: selRect.height
+        ).intersection(CGRect(origin: .zero, size: viewSize))
+        guard !displayRect.isNull && displayRect.width > 0 && displayRect.height > 0 else { return nil }
+        // Whole points are captured; trackpad selections can be fractional, so the result is then cropped to
+        // the exact pixels the full-display crop would give (the crop only retains this small capture)
+        let pointRect = displayRect.integral
+        if let captured = CGDisplayCreateImage(displayID, rect: pointRect) {
+            guard pointRect != displayRect else { return captured }
+            let scaleX = CGFloat(captured.width) / pointRect.width
+            let scaleY = CGFloat(captured.height) / pointRect.height
+            let pixelRect = CGRect(
+                x: (displayRect.minX - pointRect.minX) * scaleX,
+                y: (displayRect.minY - pointRect.minY) * scaleY,
+                width: displayRect.width * scaleX,
+                height: displayRect.height * scaleY
+            )
+            return captured.cropping(to: pixelRect) ?? captured
+        }
+        return CGDisplayCreateImage(displayID).flatMap { cropImage($0, to: selRect, in: viewSize) }
     }
 
     // MARK: - Area & Region Cropping
@@ -134,16 +167,18 @@ public final class CaptureService {
 
         let width = baseImage.width
         let height = baseImage.height
-        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        // Keep the capture's color space and native BGRA layout: drawing the base is then a plain copy
+        let colorSpace = baseImage.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CaptureService.colorSpaceSRGB
+        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
 
         guard let context = CGContext(
             data: nil,
             width: width,
             height: height,
             bitsPerComponent: 8,
-            bytesPerRow: width * 4,
-            space: CaptureService.colorSpaceRGB,
-            bitmapInfo: bitmapInfo.rawValue
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
         ) else {
             return baseImage
         }

@@ -107,8 +107,8 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             }
 
             // 1. Initial Frame Capture
-            guard let initialDisplay = CGDisplayCreateImage(displayID),
-                  let firstFrame = CaptureService.shared.cropImage(initialDisplay, to: regionRect, in: screenSize) else {
+            // Region-only captures: frames never pin a full-display buffer
+            guard let firstFrame = CaptureService.shared.captureRegion(displayID: displayID, selRect: regionRect, in: screenSize) else {
                 DispatchQueue.main.async {
                     self.dismissHUD()
                     completion?(nil)
@@ -116,11 +116,11 @@ public final class AutoscrollCaptureCoordinator: NSObject {
                 return
             }
 
-            var frames: [CGImage] = [firstFrame]
-            var lastFrame = firstFrame
-            var consecutiveIdenticalCount = 0
-            var accumulatedHeight = firstFrame.height
+            // Only the newly revealed rows of each frame are kept; the frames themselves are released
             let maxHeight = ScrollingCaptureService.maxAllowedHeight
+            let stitcher = ScrollStitcher(firstFrame: firstFrame, maxHeight: maxHeight)
+            var lastPixels = FramePixels(firstFrame)
+            var consecutiveIdenticalCount = 0
             let maxSteps = 80 // Safety ceiling: prevents runaway loops on infinite feeds
             let speedConfig = AppSettings.shared.scrollingCaptureSpeed
             let scrollPixels = speedConfig.scrollDeltaPixels(forRegionHeight: regionRect.height)
@@ -137,30 +137,27 @@ public final class AutoscrollCaptureCoordinator: NSObject {
 
                 guard !self.isAborted && !self.isFinishedEarly else { break }
 
-                // Capture next display frame
-                guard let currentDisplay = CGDisplayCreateImage(displayID),
-                  let currentFrame = CaptureService.shared.cropImage(currentDisplay, to: regionRect, in: screenSize) else {
-                    break
-                }
-
-                // Detect vertical pixel offset
-                let shift = ScrollingCaptureService.shared.detectVerticalOffset(between: lastFrame, and: currentFrame)
-
-                if shift == 0 {
-                    consecutiveIdenticalCount += 1
-                    // If content didn't move 2 consecutive times, bottom of page is reached
-                    if consecutiveIdenticalCount >= 2 {
-                        break
+                let reachedEnd: Bool = autoreleasepool {
+                    // Capture next frame
+                    guard let currentFrame = CaptureService.shared.captureRegion(displayID: displayID, selRect: regionRect, in: screenSize) else {
+                        return true
                     }
-                } else {
+
+                    // Detect vertical pixel offset
+                    let currentPixels = FramePixels(currentFrame)
+                    let shift = ScrollingCaptureService.shared.detectVerticalOffset(between: lastPixels, and: currentPixels)
+
+                    if shift == 0 {
+                        consecutiveIdenticalCount += 1
+                        // If content didn't move 2 consecutive times, bottom of page is reached
+                        return consecutiveIdenticalCount >= 2
+                    }
                     consecutiveIdenticalCount = 0
-                    frames.append(currentFrame)
-                    lastFrame = currentFrame
-                    accumulatedHeight += shift
-                    if accumulatedHeight >= maxHeight {
-                        break
-                    }
+                    stitcher.append(currentFrame, newRows: shift)
+                    lastPixels = currentPixels
+                    return stitcher.isFull
                 }
+                if reachedEnd { break }
             }
 
             // Dismiss floating HUD
@@ -177,23 +174,15 @@ public final class AutoscrollCaptureCoordinator: NSObject {
                 return
             }
 
-            // Stitch frames or fallback to single frame
-            let finalImage: CGImage?
-            if frames.count > 1 {
-                finalImage = ScrollingCaptureService.shared.stitchFrames(frames, maxHeight: maxHeight)
-            } else {
-                finalImage = frames.first
-            }
+            let finalImage = stitcher.makeImage() ?? firstFrame
 
-            if let result = finalImage {
-                let lastRecord = LastCaptureRecord(
-                    mode: .scrolling(rect: regionRect, screenFrame: screenFrame, displayID: displayID)
-                )
-                DispatchQueue.main.async {
-                    CaptureManager.shared.lastCapture = lastRecord
-                }
-                CaptureManager.shared.processCapturedImage(result)
+            let lastRecord = LastCaptureRecord(
+                mode: .scrolling(rect: regionRect, screenFrame: screenFrame, displayID: displayID)
+            )
+            DispatchQueue.main.async {
+                CaptureManager.shared.lastCapture = lastRecord
             }
+            CaptureManager.shared.processCapturedImage(finalImage)
 
             DispatchQueue.main.async {
                 completion?(finalImage)

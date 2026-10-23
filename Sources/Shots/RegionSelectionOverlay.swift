@@ -34,6 +34,11 @@ public final class RegionSelectionCoordinator {
     public private(set) var activeMode: CaptureOverlayMode = .area
     public private(set) var activeDelaySeconds: Int = 0
     private var overlayPanels: [NSPanel] = []
+    /// Overlay panels kept between sessions (one per display) so starting a selection skips window creation
+    private var panelPool: [CGDirectDisplayID: NSPanel] = [:]
+    /// Pooled panels hold full-screen backing stores: they are released after a while without captures
+    private var panelPoolPurge: DispatchWorkItem?
+    private static let panelPoolLifetime: TimeInterval = 30
     public private(set) var isSelecting = false
     private var completionHandler: ((CGImage?) -> Void)?
     private var regionCompletionHandler: ((SelectedRegionInfo?) -> Void)?
@@ -140,6 +145,13 @@ public final class RegionSelectionCoordinator {
         overlayPanels.removeAll()
         screenSnapshots.removeAll()
 
+        panelPoolPurge?.cancel()
+        panelPoolPurge = nil
+
+        // Drop pooled panels of displays that are gone
+        let connectedIDs = Set(screens.compactMap { $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID })
+        panelPool = panelPool.filter { connectedIDs.contains($0.key) }
+
         for screen in screens {
             let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) ?? CGMainDisplayID()
             let snapshot: CGImage?
@@ -150,6 +162,13 @@ public final class RegionSelectionCoordinator {
                 }
             } else {
                 snapshot = nil
+            }
+
+            if let pooled = panelPool[displayID], pooled.frame == screen.frame,
+               let pooledView = pooled.contentView as? RegionSelectionView {
+                pooledView.configure(screen: screen, mode: activeMode, screenImage: snapshot)
+                overlayPanels.append(pooled)
+                continue
             }
 
             let panel = RegionOverlayPanel(
@@ -166,6 +185,7 @@ public final class RegionSelectionCoordinator {
             panel.backgroundColor = .clear
             panel.hasShadow = false
             panel.hidesOnDeactivate = false
+            panel.isReleasedWhenClosed = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
             panel.ignoresMouseEvents = false
@@ -179,6 +199,7 @@ public final class RegionSelectionCoordinator {
             )
 
             panel.contentView = selectionView
+            panelPool[displayID] = panel
             overlayPanels.append(panel)
         }
 
@@ -224,9 +245,16 @@ public final class RegionSelectionCoordinator {
 
         for panel in overlayPanels {
             panel.orderOut(nil)
+            (panel.contentView as? RegionSelectionView)?.reset()
         }
         overlayPanels.removeAll()
         screenSnapshots.removeAll()
+        let purge = DispatchWorkItem { [weak self] in
+            guard let self = self, !self.isSelecting else { return }
+            self.panelPool.removeAll()
+        }
+        panelPoolPurge = purge
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.panelPoolLifetime, execute: purge)
         CATransaction.flush()
 
         let handler = completionHandler
@@ -652,8 +680,7 @@ public final class RegionSelectionCoordinator {
                     ? .ocr(rect: selRect, screenFrame: screenFrame, displayID: displayID)
                     : .region(rect: selRect, screenFrame: screenFrame, displayID: displayID)
                 CaptureManager.shared.lastCapture = LastCaptureRecord(mode: mode)
-                let fullImage = CGDisplayCreateImage(displayID)
-                var cropped = fullImage.flatMap { self.cropImage($0, to: selRect, in: viewSize) }
+                var cropped = CaptureService.shared.captureRegion(displayID: displayID, selRect: selRect, in: viewSize)
                 if AppSettings.shared.includeCursor, let validCrop = cropped {
                     cropped = CaptureService.shared.compositeCursor(
                         on: validCrop,
@@ -661,7 +688,7 @@ public final class RegionSelectionCoordinator {
                         cropRect: selRect
                     )
                 }
-                self.finish(with: cropped ?? fullImage)
+                self.finish(with: cropped ?? CGDisplayCreateImage(displayID))
             } else {
                 let fullDisplayRect = NSRect(origin: .zero, size: screenFrame.size)
                 let mode: LastCaptureRecord.Mode = (self.activeMode == .ocr)
@@ -781,9 +808,9 @@ private final class RegionOverlayPanel: NSPanel {
 // MARK: - Region Selection View
 
 private final class RegionSelectionView: NSView {
-    fileprivate let targetScreen: NSScreen
-    fileprivate let mode: CaptureOverlayMode
-    fileprivate let screenImage: CGImage?
+    fileprivate private(set) var targetScreen: NSScreen
+    fileprivate private(set) var mode: CaptureOverlayMode
+    fileprivate private(set) var screenImage: CGImage?
 
     private var startPoint: NSPoint?
     private var currentPoint: NSPoint?
@@ -815,6 +842,24 @@ private final class RegionSelectionView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Prepares a pooled view for a new session
+    func configure(screen: NSScreen, mode: CaptureOverlayMode, screenImage: CGImage?) {
+        targetScreen = screen
+        self.mode = mode
+        self.screenImage = screenImage
+        needsDisplay = true
+    }
+
+    /// Clears the session state and releases the color picker snapshot while the panel is pooled
+    func reset() {
+        startPoint = nil
+        currentPoint = nil
+        currentMousePoint = nil
+        isDragging = false
+        screenImage = nil
+        needsDisplay = true
+    }
+
     // MARK: - External Updates from Event Tap
 
     func externalUpdate(
@@ -829,11 +874,33 @@ private final class RegionSelectionView: NSView {
                       (currentPoint != selectionCurrent)
         guard changed else { return }
 
+        // Repaint only what changed: the previous and the new crosshair/badge/marquee areas
+        let oldDirty = dirtyRects()
         currentMousePoint = mousePoint
         isDragging = dragging
         startPoint = selectionStart
         currentPoint = selectionCurrent
-        needsDisplay = true
+        for rect in oldDirty + dirtyRects() {
+            setNeedsDisplay(rect)
+        }
+    }
+
+    /// Bounds of everything drawn for the current state. Badges and the loupe sit next to the
+    /// active point (flipped or clamped at screen edges), so a fixed neighbourhood covers them.
+    private func dirtyRects() -> [NSRect] {
+        var rects: [NSRect] = []
+        if let pt = currentPoint ?? currentMousePoint {
+            rects.append(NSRect(x: pt.x - 420, y: pt.y - 280, width: 840, height: 560))
+            if mode == .ruler {
+                // Full-screen alignment guidelines
+                rects.append(NSRect(x: 0, y: round(pt.y) - 2, width: bounds.width, height: 4))
+                rects.append(NSRect(x: round(pt.x) - 2, y: 0, width: 4, height: bounds.height))
+            }
+        }
+        if isDragging, let start = startPoint, let current = currentPoint {
+            rects.append(normalizedRect(from: start, to: current).insetBy(dx: -6, dy: -6))
+        }
+        return rects
     }
 
     override var acceptsFirstResponder: Bool { false }

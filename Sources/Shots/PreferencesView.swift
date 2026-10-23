@@ -150,12 +150,6 @@ public struct PreferencesView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PreferencesWindowDidResignKey"))) { _ in
             stopRecording()
         }
-        .onReceive(Timer.publish(every: 2.5, on: .main, in: .default).autoconnect()) { _ in
-            // Non-blocking background check in default mode only if permissions remain missing
-            if !screenCaptureGranted || !accessibilityGranted {
-                updatePermissions()
-            }
-        }
         .onDisappear {
             stopRecording()
         }

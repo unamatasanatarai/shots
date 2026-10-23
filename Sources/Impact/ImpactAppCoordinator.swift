@@ -11,13 +11,32 @@ public final class ImpactAppCoordinator {
 
     private init() {}
 
+    /// After the last window closes, Impact stays running without a Dock icon instead of quitting,
+    /// so the next capture opens instantly rather than paying a cold launch. The delay avoids reacting
+    /// during window swaps (old panel closed before the new one is shown).
+    private func idleIfNoEditorSoon() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard self.activePanel == nil else { return }
+            FilterLayer.clearSharedCaches()
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Brings Impact back to a regular app (Dock icon, menu bar) before showing a window
+    private func activate() {
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     /// Opens the single main window in empty/welcome state with "Drag or click to open"
     public func openEmptyEditor() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             if let existing = self.activePanel, existing.isVisible {
                 existing.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                self.activate()
                 return
             }
 
@@ -28,15 +47,11 @@ public final class ImpactAppCoordinator {
                 if self?.activePanel === panel {
                     self?.activePanel = nil
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    if ImpactAppCoordinator.shared.activePanel == nil {
-                        NSApp.terminate(nil)
-                    }
-                }
+                self?.idleIfNoEditorSoon()
             }
 
             panel.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            self.activate()
         }
     }
 
@@ -53,7 +68,7 @@ public final class ImpactAppCoordinator {
             if let existing = self.activePanel, existing.isVisible {
                 existing.loadImage(image: image, title: title, sourceFileURL: sourceFileURL)
                 existing.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
+                self.activate()
                 return
             }
 
@@ -65,16 +80,11 @@ public final class ImpactAppCoordinator {
                 if self?.activePanel === panel {
                     self?.activePanel = nil
                 }
-                // If no replacement panel appears shortly after close, terminate the app.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    if ImpactAppCoordinator.shared.activePanel == nil {
-                        NSApp.terminate(nil)
-                    }
-                }
+                self?.idleIfNoEditorSoon()
             }
 
             panel.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            self.activate()
             panel.scaleToFit()
 
             if EditorPanel.isCopyToClipboardEnabled {
@@ -85,12 +95,16 @@ public final class ImpactAppCoordinator {
     }
 
     public func openImageFile(url: URL) {
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            NSLog("ImpactAppCoordinator: Failed to load image from %@", url.path)
-            return
+        // Decode off the main thread, up front: a lazily decoded image would decode during the first paint
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let decodeOptions = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+            guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, decodeOptions) else {
+                NSLog("ImpactAppCoordinator: Failed to load image from %@", url.path)
+                return
+            }
+            self?.openEditor(with: cgImage, title: url.lastPathComponent, sourceFileURL: url)
         }
-        openEditor(with: cgImage, title: url.lastPathComponent, sourceFileURL: url)
     }
 
     public func openImageFileDialog() {
@@ -108,7 +122,7 @@ public final class ImpactAppCoordinator {
             openPanel.allowedContentTypes = types
             openPanel.prompt = "Open in Impact"
 
-            NSApp.activate(ignoringOtherApps: true)
+            self.activate()
             if openPanel.runModal() == .OK, let selectedURL = openPanel.url {
                 self.openImageFile(url: selectedURL)
             }

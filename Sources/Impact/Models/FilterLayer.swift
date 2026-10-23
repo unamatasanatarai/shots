@@ -14,17 +14,11 @@ public final class FilterLayer: AnnotationLayer {
         didSet { _cachedBoundingBox = nil }
     }
     public var cornerRadius: CGFloat = 6.0 {
-        didSet {
-            _cachedBoundingBox = nil
-            cachedSpotlightMask = nil
-        }
+        didSet { _cachedBoundingBox = nil }
     }
 
     public var rects: [CGRect] {
-        didSet {
-            _cachedBoundingBox = nil
-            cachedSpotlightMask = nil
-        }
+        didSet { _cachedBoundingBox = nil }
     }
     public var filterMode: FilterMode // .gaussian, .pixelate, .spotlight
     public var intensity: CGFloat
@@ -231,118 +225,85 @@ public final class FilterLayer: AnnotationLayer {
     }
 
     // MARK: - Performance Caching
-    private var cachedSpotlightMask: (bounds: CGRect, rects: [CGRect], image: CGImage)?
 
-    private struct FilterCacheKey: Hashable {
-        let x: Double
-        let y: Double
-        let width: Double
-        let height: Double
+    /// A filtered image of `rect` (in image coordinates). Rects are filtered with a margin, so nudging or
+    /// slightly resizing an area reuses the cached result instead of re-running the filter.
+    private struct FilterCacheEntry {
+        let rect: CGRect
         let mode: FilterMode
-        let intensity: Double
-
-        init(rect: CGRect, mode: FilterMode, intensity: CGFloat) {
-            self.x = Double(rect.origin.x)
-            self.y = Double(rect.origin.y)
-            self.width = Double(rect.size.width)
-            self.height = Double(rect.size.height)
-            self.mode = mode
-            self.intensity = Double(intensity)
-        }
+        let intensity: CGFloat
+        let image: CGImage
     }
-    private var filterCache: [FilterCacheKey: CGImage] = [:]
+    private var filterCache: [FilterCacheEntry] = []
+    private static let filterCacheLimit = 8
+
+    private static let colorSpaceSRGB = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+    private static let spotlightDarkMaskColor = CGColor(gray: 0.0, alpha: 0.50)
 
     // MARK: - Multi-Spotlight Masking Logic (Section 6)
 
-    private static var scratchSpotlightContext: CGContext?
-    private static var scratchContextWidth: Int = 0
-    private static var scratchContextHeight: Int = 0
-    private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
-    private static let spotlightDarkMaskColor = CGColor(gray: 0.0, alpha: 0.50)
-
+    /// Darkens the canvas outside the spotlight holes. Drawn as a path: no canvas-sized mask bitmap.
     private func drawSpotlightMask(canvasBounds: CGRect, in context: CGContext) {
-        let width = Int(ceil(canvasBounds.width))
-        let height = Int(ceil(canvasBounds.height))
-        guard width > 0 && height > 0 else { return }
-
-        let maskImage: CGImage
-        if let cached = cachedSpotlightMask, cached.bounds == canvasBounds && cached.rects == rects {
-            maskImage = cached.image
-        } else {
-            let maskContext: CGContext
-            if let existing = Self.scratchSpotlightContext, Self.scratchContextWidth == width, Self.scratchContextHeight == height {
-                maskContext = existing
-                maskContext.setBlendMode(.copy)
-                maskContext.setFillColor(Self.spotlightDarkMaskColor)
-                maskContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            } else {
-                guard let newCtx = CGContext(
-                    data: nil,
-                    width: width,
-                    height: height,
-                    bitsPerComponent: 8,
-                    bytesPerRow: width * 4,
-                    space: Self.colorSpaceRGB,
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-                ) else { return }
-                Self.scratchSpotlightContext = newCtx
-                Self.scratchContextWidth = width
-                Self.scratchContextHeight = height
-                maskContext = newCtx
-                maskContext.setFillColor(Self.spotlightDarkMaskColor)
-                maskContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            }
-
-            // 2. Set blend mode to .clear to punch holes in flipped coordinates
-            maskContext.setBlendMode(.clear)
-            for r in rects {
-                guard r.width > 0 && r.height > 0 else { continue }
-                // Adjust to maskContext coordinates where (0,0) is bottom-left of canvasBounds
-                let localY = canvasBounds.height - (r.origin.y - canvasBounds.origin.y) - r.height
-                let localRect = CGRect(
-                    x: r.origin.x - canvasBounds.origin.x,
-                    y: localY,
-                    width: r.width,
-                    height: r.height
-                )
-                let effectiveRadius = max(0.0, min(cornerRadius, min(r.width / 2.0, r.height / 2.0)))
-                let path = CGPath(roundedRect: localRect, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
-                maskContext.addPath(path)
-                maskContext.fillPath()
-            }
-
-            guard let generated = maskContext.makeImage() else { return }
-            cachedSpotlightMask = (bounds: canvasBounds, rects: rects, image: generated)
-            maskImage = generated
+        guard canvasBounds.width > 0 && canvasBounds.height > 0 else { return }
+        let holes: [CGPath] = rects.compactMap { r in
+            guard r.width > 0 && r.height > 0 else { return nil }
+            let effectiveRadius = max(0.0, min(cornerRadius, min(r.width / 2.0, r.height / 2.0)))
+            return CGPath(roundedRect: r, cornerWidth: effectiveRadius, cornerHeight: effectiveRadius, transform: nil)
         }
 
-        // 3. Draw buffer back onto main context right-side up
         context.saveGState()
-        context.translateBy(x: canvasBounds.origin.x, y: canvasBounds.origin.y + canvasBounds.height)
-        context.scaleBy(x: 1.0, y: -1.0)
-        context.draw(maskImage, in: CGRect(x: 0, y: 0, width: canvasBounds.width, height: canvasBounds.height))
+        context.setFillColor(Self.spotlightDarkMaskColor)
+        if Self.hasOverlap(rects) {
+            // Even-odd would re-darken where holes overlap: punch the holes out of a transparency layer instead
+            context.beginTransparencyLayer(in: canvasBounds, auxiliaryInfo: nil)
+            context.fill(canvasBounds)
+            context.setBlendMode(.clear)
+            for hole in holes {
+                context.addPath(hole)
+            }
+            context.fillPath()
+            context.endTransparencyLayer()
+        } else {
+            let path = CGMutablePath()
+            path.addRect(canvasBounds)
+            for hole in holes {
+                path.addPath(hole)
+            }
+            context.addPath(path)
+            context.fillPath(using: .evenOdd)
+        }
         context.restoreGState()
+    }
+
+    private static func hasOverlap(_ rects: [CGRect]) -> Bool {
+        guard rects.count > 1 else { return false }
+        for i in 0..<(rects.count - 1) {
+            for j in (i + 1)..<rects.count where rects[i].intersects(rects[j]) {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Blur & Pixelate Filter
 
-    private static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
+    private static let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false, .cacheIntermediates: false])
+
+    /// Releases Core Image's GPU caches (when the editor closes)
+    public static func clearSharedCaches() {
+        sharedCIContext.clearCaches()
+    }
 
     private func drawBlurOrPixelate(originalImage: CGImage, canvasBounds: CGRect, in context: CGContext) {
         let targetRects = isTextOnlyMode && !detectedTextRects.isEmpty ? detectedTextRects : rects
         guard !targetRects.isEmpty else { return }
 
-        let imgW = CGFloat(originalImage.width)
-        let imgH = CGFloat(originalImage.height)
+        let imageBounds = CGRect(x: 0, y: 0, width: CGFloat(originalImage.width), height: CGFloat(originalImage.height))
 
         for rect in targetRects {
-            let intersect = rect.intersection(CGRect(x: 0, y: 0, width: imgW, height: imgH))
+            let intersect = rect.intersection(imageBounds)
             guard intersect.width > 2 && intersect.height > 2 else { continue }
-
-            // In CoreGraphics CGImage, row 0 is at the top (y=0).
-            // In canvas coordinates, y=0 is also at the top of the image.
-            // Therefore, the crop rect in originalImage maps 1:1 with intersect.
-            let imageCropRect = intersect
+            guard let entry = filteredImage(covering: intersect, of: originalImage, imageBounds: imageBounds) else { continue }
 
             context.saveGState()
 
@@ -351,84 +312,71 @@ public final class FilterLayer: AnnotationLayer {
             context.addPath(clipPath)
             context.clip()
 
-            let cacheKey = FilterCacheKey(rect: intersect, mode: filterMode, intensity: intensity)
-            if let cached = filterCache[cacheKey] {
-                context.saveGState()
-                context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
-                context.scaleBy(x: 1.0, y: -1.0)
-                context.interpolationQuality = (filterMode == .pixelate) ? .none : .high
-                context.draw(cached, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
-                context.restoreGState()
-            } else if filterMode == .pixelate {
-                // Mosaic pixelation: downscale cropped region then upscale with nearest neighbor
-                let factor = max(4.0, intensity)
-                let lowW = max(1, Int(intersect.width / factor))
-                let lowH = max(1, Int(intersect.height / factor))
-
-                if let crop = originalImage.cropping(to: imageCropRect),
-                   let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: Self.colorSpaceRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
-                    lowCtx.interpolationQuality = .none
-                    lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
-                    if let pixelatedImage = lowCtx.makeImage() {
-                        if filterCache.count > 50 { filterCache.removeAll(keepingCapacity: true) }
-                        filterCache[cacheKey] = pixelatedImage
-                        context.saveGState()
-                        context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
-                        context.scaleBy(x: 1.0, y: -1.0)
-                        context.interpolationQuality = .none
-                        context.draw(pixelatedImage, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
-                        context.restoreGState()
-                    }
-                }
-            } else {
-                // Gaussian blur using CoreImage with fallback
-                if let crop = originalImage.cropping(to: imageCropRect) {
-                    var rendered = false
-                    let ciImage = CIImage(cgImage: crop).clampedToExtent()
-                    if let blurFilter = CIFilter(name: "CIGaussianBlur") {
-                        blurFilter.setValue(ciImage, forKey: kCIInputImageKey)
-                        blurFilter.setValue(max(2.0, intensity), forKey: kCIInputRadiusKey)
-                        if let output = blurFilter.outputImage,
-                           let blurredCG = FilterLayer.sharedCIContext.createCGImage(output, from: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height)) {
-                            if filterCache.count > 50 { filterCache.removeAll(keepingCapacity: true) }
-                            filterCache[cacheKey] = blurredCG
-                            context.saveGState()
-                            context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
-                            context.scaleBy(x: 1.0, y: -1.0)
-                            context.interpolationQuality = .high
-                            context.draw(blurredCG, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
-                            context.restoreGState()
-                            rendered = true
-                        }
-                    }
-
-                    if !rendered {
-                        // High-speed downscale/upscale blur fallback
-                        let factor: CGFloat = 8.0
-                        let lowW = max(1, Int(intersect.width / factor))
-                        let lowH = max(1, Int(intersect.height / factor))
-                        if let lowCtx = CGContext(data: nil, width: lowW, height: lowH, bitsPerComponent: 8, bytesPerRow: lowW * 4, space: Self.colorSpaceRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
-                            lowCtx.interpolationQuality = .low
-                            lowCtx.draw(crop, in: CGRect(x: 0, y: 0, width: lowW, height: lowH))
-                            if let lowImage = lowCtx.makeImage() {
-                                if filterCache.count > 50 { filterCache.removeAll(keepingCapacity: true) }
-                                filterCache[cacheKey] = lowImage
-                                context.saveGState()
-                                context.translateBy(x: intersect.origin.x, y: intersect.origin.y + intersect.height)
-                                context.scaleBy(x: 1.0, y: -1.0)
-                                context.interpolationQuality = .high
-                                context.draw(lowImage, in: CGRect(x: 0, y: 0, width: intersect.width, height: intersect.height))
-                                context.restoreGState()
-                            }
-                        }
-                    }
-                }
-            }
+            // In CoreGraphics CGImage, row 0 is at the top (y=0), as in canvas coordinates:
+            // the cached rect maps 1:1 onto the canvas. Draw it right-side up in the flipped context.
+            context.translateBy(x: entry.rect.origin.x, y: entry.rect.origin.y + entry.rect.height)
+            context.scaleBy(x: 1.0, y: -1.0)
+            context.interpolationQuality = (filterMode == .pixelate) ? .none : .high
+            context.draw(entry.image, in: CGRect(x: 0, y: 0, width: entry.rect.width, height: entry.rect.height))
 
             // Blur tool has zero outline. Never outline.
 
             context.restoreGState()
         }
+    }
+
+    /// Returns a cached filtered image whose rect contains `area`, filtering a padded rect on a miss
+    private func filteredImage(covering area: CGRect, of originalImage: CGImage, imageBounds: CGRect) -> FilterCacheEntry? {
+        if let hit = filterCache.lastIndex(where: { $0.mode == filterMode && $0.intensity == intensity && $0.rect.contains(area) }) {
+            let entry = filterCache.remove(at: hit)
+            filterCache.append(entry)
+            return entry
+        }
+
+        let margin = max(32.0, min(area.width, area.height) * 0.15)
+        let padded = area.insetBy(dx: -margin, dy: -margin).intersection(imageBounds).integral.intersection(imageBounds)
+        guard padded.width >= 1, padded.height >= 1, let crop = originalImage.cropping(to: padded) else { return nil }
+        let colorSpace = originalImage.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? Self.colorSpaceSRGB
+
+        let filtered: CGImage?
+        if filterMode == .pixelate {
+            // Mosaic pixelation: downscale cropped region then upscale with nearest neighbor
+            let factor = max(4.0, intensity)
+            filtered = Self.downscale(crop, width: max(1, Int(padded.width / factor)), height: max(1, Int(padded.height / factor)), colorSpace: colorSpace, quality: .none)
+        } else {
+            // Gaussian blur using CoreImage, with a downscale/upscale fallback
+            let ciImage = CIImage(cgImage: crop).clampedToExtent()
+            if let blurFilter = CIFilter(name: "CIGaussianBlur") {
+                blurFilter.setValue(ciImage, forKey: kCIInputImageKey)
+                blurFilter.setValue(max(2.0, intensity), forKey: kCIInputRadiusKey)
+                filtered = blurFilter.outputImage.flatMap {
+                    Self.sharedCIContext.createCGImage($0, from: CGRect(x: 0, y: 0, width: padded.width, height: padded.height))
+                } ?? Self.downscale(crop, width: max(1, Int(padded.width / 8.0)), height: max(1, Int(padded.height / 8.0)), colorSpace: colorSpace, quality: .low)
+            } else {
+                filtered = Self.downscale(crop, width: max(1, Int(padded.width / 8.0)), height: max(1, Int(padded.height / 8.0)), colorSpace: colorSpace, quality: .low)
+            }
+        }
+        guard let image = filtered else { return nil }
+
+        let entry = FilterCacheEntry(rect: padded, mode: filterMode, intensity: intensity, image: image)
+        if filterCache.count >= Self.filterCacheLimit { filterCache.removeFirst() }
+        filterCache.append(entry)
+        return entry
+    }
+
+    private static func downscale(_ image: CGImage, width: Int, height: Int, colorSpace: CGColorSpace, quality: CGInterpolationQuality) -> CGImage? {
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return nil }
+        ctx.interpolationQuality = quality
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return ctx.makeImage()
     }
 
     // MARK: - Vision OCR Text-Only Identification (Section 3)
@@ -439,6 +387,8 @@ public final class FilterLayer: AnnotationLayer {
             return
         }
 
+        // Read on the calling (main) thread: the rects may change while recognition runs
+        let areaRects = rects
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             let request = VNRecognizeTextRequest { request, error in
@@ -461,7 +411,7 @@ public final class FilterLayer: AnnotationLayer {
                         height: box.height * imgH
                     )
                     // Check if inside any of our filter rectangles
-                    if self.rects.contains(where: { $0.intersects(textRect) }) {
+                    if areaRects.contains(where: { $0.intersects(textRect) }) {
                         detected.append(textRect)
                     }
                 }

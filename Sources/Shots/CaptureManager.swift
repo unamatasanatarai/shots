@@ -197,12 +197,12 @@ public final class CaptureManager {
             executeFullscreenCapture(screen: nil)
 
         case .region(let selRect, let screenFrame, let displayID):
-            guard let fullImage = CGDisplayCreateImage(displayID) else {
+            guard var image = CaptureService.shared.captureRegion(displayID: displayID, selRect: selRect, in: screenFrame.size)
+                    ?? CGDisplayCreateImage(displayID) else {
                 NSLog("Failed to capture display for repeated region")
                 return
             }
 
-            var image = CaptureService.shared.cropImage(fullImage, to: selRect, in: screenFrame.size) ?? fullImage
             if AppSettings.shared.includeCursor {
                 let screen = NSScreen.screens.first {
                     ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
@@ -223,13 +223,12 @@ public final class CaptureManager {
             AutoscrollCaptureCoordinator.shared.repeatAutoscrollCapture(region: region)
 
         case .ocr(let selRect, let screenFrame, let displayID):
-            guard let fullImage = CGDisplayCreateImage(displayID) else {
+            guard let image = CaptureService.shared.captureRegion(displayID: displayID, selRect: selRect, in: screenFrame.size)
+                    ?? CGDisplayCreateImage(displayID) else {
                 NSLog("Failed to capture display for repeated OCR")
                 ocrCompletion?(nil)
                 return
             }
-
-            let image = CaptureService.shared.cropImage(fullImage, to: selRect, in: screenFrame.size) ?? fullImage
             RecognitionService.shared.recognizeUnifiedAsync(in: image) { result in
                 switch result {
                 case .success(let item):

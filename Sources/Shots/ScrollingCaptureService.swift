@@ -1,9 +1,99 @@
 import Cocoa
 import CoreGraphics
 
+/// A frame's pixel bytes, copied out of its data provider once
+struct FramePixels {
+    let width: Int
+    let height: Int
+    let bytesPerRow: Int
+    private let data: CFData?
+
+    init(_ image: CGImage) {
+        width = image.width
+        height = image.height
+        bytesPerRow = image.bytesPerRow
+        data = image.dataProvider?.data
+    }
+
+    var bytes: UnsafePointer<UInt8>? { data.flatMap { CFDataGetBytePtr($0) } }
+    var length: Int { data.map { CFDataGetLength($0) } ?? 0 }
+}
+
+/// Builds a scrolling capture incrementally: each frame contributes only its newly revealed rows,
+/// copied out immediately, so captured frames can be released as soon as they are compared
+final class ScrollStitcher {
+    private let width: Int
+    private let maxHeight: Int
+    private let colorSpace: CGColorSpace
+    private var slices: [CGImage] = []
+    private(set) var height = 0
+
+    var isFull: Bool { height >= maxHeight }
+
+    init(firstFrame: CGImage, maxHeight: Int) {
+        self.width = firstFrame.width
+        self.maxHeight = maxHeight
+        if let space = firstFrame.colorSpace, space.model == .rgb {
+            self.colorSpace = space
+        } else {
+            self.colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        }
+        appendRows(of: firstFrame, from: 0, count: firstFrame.height)
+    }
+
+    /// Appends the bottom `newRows` rows of the frame (the content scrolled into view)
+    func append(_ frame: CGImage, newRows: Int) {
+        let count = min(newRows, frame.height)
+        appendRows(of: frame, from: frame.height - count, count: count)
+    }
+
+    private func appendRows(of frame: CGImage, from sourceY: Int, count: Int) {
+        let rows = min(count, maxHeight - height)
+        guard rows > 0 else { return }
+        let sliceWidth = min(width, frame.width)
+        guard let crop = frame.cropping(to: CGRect(x: 0, y: sourceY, width: sliceWidth, height: rows)),
+              let ctx = Self.makeContext(width: width, height: rows, colorSpace: colorSpace) else { return }
+        if sliceWidth < width {
+            ctx.setFillColor(CGColor(gray: 1.0, alpha: 1.0))
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: rows))
+        }
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: sliceWidth, height: rows))
+        // Owns its own pixels: the source frame is not retained
+        guard let slice = ctx.makeImage() else { return }
+        slices.append(slice)
+        height += rows
+    }
+
+    func makeImage() -> CGImage? {
+        guard height > 0 else { return nil }
+        if slices.count == 1 { return slices[0] }
+        guard let ctx = Self.makeContext(width: width, height: height, colorSpace: colorSpace) else { return nil }
+        // Bitmap origin is bottom-left: lay slices out top to bottom
+        var top = 0
+        for slice in slices {
+            ctx.draw(slice, in: CGRect(x: 0, y: height - top - slice.height, width: slice.width, height: slice.height))
+            top += slice.height
+        }
+        slices.removeAll()
+        return ctx.makeImage()
+    }
+
+    /// Native BGRA (the display capture layout), so drawing captured frames is a plain copy
+    private static func makeContext(width: Int, height: Int, colorSpace: CGColorSpace) -> CGContext? {
+        CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        )
+    }
+}
+
 public final class ScrollingCaptureService {
     public static let shared = ScrollingCaptureService()
-    private static let colorSpaceRGB = CGColorSpaceCreateDeviceRGB()
 
     /// The maximum allowed output height for scrolling captures (enforced at 20,000 px).
     public static let maxAllowedHeight: Int = 20_000
@@ -15,6 +105,11 @@ public final class ScrollingCaptureService {
     /// Detects vertical scroll offset (pixels scrolled) between consecutive frames.
     /// Returns the number of new vertical pixels introduced in frame2, or nil if no valid shift found.
     public func detectVerticalOffset(between frame1: CGImage, and frame2: CGImage) -> Int {
+        return detectVerticalOffset(between: FramePixels(frame1), and: FramePixels(frame2))
+    }
+
+    /// Same as above on pixel buffers fetched once, so a frame compared twice is copied only once
+    func detectVerticalOffset(between frame1: FramePixels, and frame2: FramePixels) -> Int {
         guard frame1.width > 0 && frame1.height > 0 && frame2.width > 0 && frame2.height > 0 else {
             return frame2.height
         }
@@ -22,13 +117,12 @@ public final class ScrollingCaptureService {
         let width = frame1.width
         let height = frame1.height
 
-        guard let data1 = frame1.dataProvider?.data, let ptr1 = CFDataGetBytePtr(data1),
-              let data2 = frame2.dataProvider?.data, let ptr2 = CFDataGetBytePtr(data2) else {
+        guard let ptr1 = frame1.bytes, let ptr2 = frame2.bytes else {
             return height
         }
 
-        let len1 = CFDataGetLength(data1)
-        let len2 = CFDataGetLength(data2)
+        let len1 = frame1.length
+        let len2 = frame2.length
         let bpr1 = frame1.bytesPerRow
         let bpr2 = frame2.bytesPerRow
 
@@ -171,94 +265,20 @@ public final class ScrollingCaptureService {
             return clampImageHeight(firstFrame, maxHeight: maxHeight)
         }
 
-        let width = firstFrame.width
-        var slices: [(image: CGImage, sourceY: Int, sliceHeight: Int)] = []
-
-        // Initial slice is full first frame
-        slices.append((image: firstFrame, sourceY: 0, sliceHeight: firstFrame.height))
-        var accumulatedHeight = firstFrame.height
-
+        let stitcher = ScrollStitcher(firstFrame: firstFrame, maxHeight: maxHeight)
+        var previous = FramePixels(firstFrame)
         for i in 1..<frames.count {
-            if accumulatedHeight >= maxHeight {
-                break
-            }
-
+            if stitcher.isFull { break }
             autoreleasepool {
-                let prev = frames[i - 1]
-                let curr = frames[i]
-                let shift = detectVerticalOffset(between: prev, and: curr)
-
-                if shift == 0 {
-                    // Identical frame, skip duplicate
-                    return
-                }
-
-                // Slice out the newly revealed bottom content
-                let sliceHeight = min(shift, curr.height)
-                let sourceY = max(0, curr.height - sliceHeight)
-
-                // Check if adding this slice exceeds max allowed height
-                let remainingSpace = maxHeight - accumulatedHeight
-                let actualSliceHeight = min(sliceHeight, remainingSpace)
-
-                if actualSliceHeight > 0 {
-                    slices.append((image: curr, sourceY: sourceY, sliceHeight: actualSliceHeight))
-                    accumulatedHeight += actualSliceHeight
-                }
+                let current = FramePixels(frames[i])
+                let shift = detectVerticalOffset(between: previous, and: current)
+                previous = current
+                // Identical frame: skip duplicate
+                guard shift > 0 else { return }
+                stitcher.append(frames[i], newRows: shift)
             }
         }
-
-        // Clamp final height to exactly maxHeight if exceeded
-        let finalHeight = min(accumulatedHeight, maxHeight)
-        guard finalHeight > 0 else { return firstFrame }
-
-        // Create unified CGContext
-        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-        guard let ctx = CGContext(
-            data: nil,
-            width: width,
-            height: finalHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: width * 4,
-            space: Self.colorSpaceRGB,
-            bitmapInfo: bitmapInfo
-        ) else {
-            return clampImageHeight(firstFrame, maxHeight: maxHeight)
-        }
-
-        // Fill background
-        ctx.setFillColor(NSColor.white.cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: width, height: finalHeight))
-
-        // Draw slices top to bottom in bitmap coordinates
-        var currentYOffset = 0
-        for slice in slices {
-            let cropW = min(width, slice.image.width)
-            guard let croppedSlice = slice.image.cropping(to: CGRect(
-                x: 0,
-                y: slice.sourceY,
-                width: cropW,
-                height: slice.sliceHeight
-            )) else {
-                continue
-            }
-
-            // In CGContext (flipped coordinates), draw each slice sequentially
-            let drawRect = CGRect(
-                x: 0,
-                y: finalHeight - currentYOffset - slice.sliceHeight,
-                width: cropW,
-                height: slice.sliceHeight
-            )
-            ctx.draw(croppedSlice, in: drawRect)
-            currentYOffset += slice.sliceHeight
-
-            if currentYOffset >= finalHeight {
-                break
-            }
-        }
-
-        return ctx.makeImage()
+        return stitcher.makeImage() ?? clampImageHeight(firstFrame, maxHeight: maxHeight)
     }
 
     /// Enforces height clamping on any single image at maxAllowedHeight (20,000 px).

@@ -61,6 +61,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillTerminate(_ notification: Notification) {
         HotKeyManager.shared.unregisterHotkey()
+        LazyImagePasteboard.resolveBeforeTermination()
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

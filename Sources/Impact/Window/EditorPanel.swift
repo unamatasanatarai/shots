@@ -83,19 +83,27 @@ public final class EditorPanel: NSPanel {
             object: self,
             queue: .main
         ) { [weak self] _ in
-            self?.toolbarView.layoutSubtreeIfNeeded()
-            self?.toolbarView.updateResponsiveOverflow()
+            self?.updateToolbarForWidthChange()
         }
     }
 
     override public func setFrame(_ frameRect: NSRect, display displayFlag: Bool) {
         super.setFrame(frameRect, display: displayFlag)
-        toolbarView.layoutSubtreeIfNeeded()
-        toolbarView.updateResponsiveOverflow()
+        updateToolbarForWidthChange()
     }
 
     override public func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
         super.setFrame(frameRect, display: displayFlag, animate: animateFlag)
+        updateToolbarForWidthChange()
+    }
+
+    /// Width the toolbar overflow was last computed for: a resize reaches the window through several
+    /// hooks (each animation step, the resize notification), and only a new width needs the work
+    private var toolbarLayoutWidth: CGFloat = -1
+
+    private func updateToolbarForWidthChange() {
+        guard frame.width != toolbarLayoutWidth else { return }
+        toolbarLayoutWidth = frame.width
         toolbarView.layoutSubtreeIfNeeded()
         toolbarView.updateResponsiveOverflow()
     }
@@ -327,9 +335,9 @@ public final class EditorPanel: NSPanel {
 
         updateMetaLabel()
 
-        document.onBoundsChanged = { [weak self, weak scrollView] bounds in
+        document.onBoundsChanged = { [weak self, weak scrollView] _ in
             guard let self = self, let sv = scrollView else { return }
-            self.canvasView.frame = NSRect(origin: .zero, size: bounds.size)
+            self.canvasView.canvasBoundsDidChange()
             sv.documentView?.needsDisplay = true
             self.updateMetaLabel()
         }
@@ -415,9 +423,9 @@ public final class EditorPanel: NSPanel {
         welcomeDropView = nil
         scrollView?.isHidden = false
 
-        newDoc.onBoundsChanged = { [weak self, weak scrollView] bounds in
+        newDoc.onBoundsChanged = { [weak self, weak scrollView] _ in
             guard let self = self, let sv = scrollView else { return }
-            self.canvasView.frame = NSRect(origin: .zero, size: bounds.size)
+            self.canvasView.canvasBoundsDidChange()
             sv.documentView?.needsDisplay = true
             self.updateMetaLabel()
         }
