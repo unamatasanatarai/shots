@@ -111,4 +111,20 @@ final class CalloutTextView: NSTextView {
             return super.performKeyEquivalent(with: event)
         }
     }
+
+    override func magnify(with event: NSEvent) {
+        if let canvas = superview as? EditorCanvasView {
+            canvas.magnify(with: event)
+        } else {
+            super.magnify(with: event)
+        }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            (window as? EditorPanel)?.handleZoomWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
+    }
 }

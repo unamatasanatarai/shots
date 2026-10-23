@@ -3747,5 +3747,183 @@ public enum EditorTests {
 
             quietClose(doc, panel)
         }
+
+        testRunner("Editor - Add Callout or Text at Zoom < 100% Resets Zoom to 100% and Centers Annotation") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+            let panel = EditorPanel(document: doc)
+            panel.setFrame(NSRect(x: 100, y: 100, width: 800, height: 600), display: true)
+            let canvas = panel.canvasView
+            guard let sv = panel.scrollView else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "ScrollView required"])
+            }
+
+            // 1. Zoom down to 50%
+            panel.setZoom(scale: 0.5)
+            assert(abs(sv.magnification - 0.5) < 0.01, "Magnification must be 50%")
+            assert(abs(canvas.zoomScale - 0.5) < 0.01, "Canvas zoomScale must be 0.5")
+
+            // 2. Add Callout at canvas point (600, 450)
+            let calloutPt = CGPoint(x: 600, y: 450)
+            doc.activeTool = .callout
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, calloutPt))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, calloutPt))
+
+            // Zoom must have reset to 100% (1.0)
+            assert(abs(sv.magnification - 1.0) < 0.001, "Adding callout at <100% zoom must reset magnification to 100%")
+            assert(abs(canvas.zoomScale - 1.0) < 0.001, "Adding callout at <100% zoom must reset canvas zoomScale to 1.0")
+
+            // Viewport must be centered around callout
+            guard let callout = doc.layers.last as? CalloutLayer else {
+                throw NSError(domain: "EditorTests", code: 3, userInfo: [NSLocalizedDescriptionKey: "CalloutLayer required"])
+            }
+            let calloutCenter = CGPoint(x: callout.getBoundingBox().midX, y: callout.getBoundingBox().midY)
+            let targetViewX = calloutCenter.x - doc.activeCanvasBounds.origin.x
+            let targetViewY = calloutCenter.y - doc.activeCanvasBounds.origin.y
+            let clipView = sv.contentView
+            let expectedOrigin = clipView.constrainBoundsRect(NSRect(
+                origin: NSPoint(
+                    x: round(targetViewX - clipView.bounds.width / 2.0),
+                    y: round(targetViewY - clipView.bounds.height / 2.0)
+                ),
+                size: clipView.bounds.size
+            )).origin
+
+            assert(abs(clipView.bounds.origin.x - expectedOrigin.x) < 2.0, "Viewport X must center around callout")
+            assert(abs(clipView.bounds.origin.y - expectedOrigin.y) < 2.0, "Viewport Y must center around callout")
+
+            canvas.endCalloutEditing()
+
+            // 3. Zoom down to 40%
+            panel.setZoom(scale: 0.4)
+            assert(abs(sv.magnification - 0.4) < 0.01, "Magnification must be 40%")
+
+            // Add Text layer at canvas point (700, 300)
+            let textPt = CGPoint(x: 700, y: 300)
+            doc.activeTool = .text
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, textPt))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, textPt))
+
+            // Zoom must reset to 100%
+            assert(abs(sv.magnification - 1.0) < 0.001, "Adding text at <100% zoom must reset magnification to 100%")
+            assert(abs(canvas.zoomScale - 1.0) < 0.001, "Adding text at <100% zoom must reset canvas zoomScale to 1.0")
+
+            guard let textLayer = doc.layers.last as? TextLayer else {
+                throw NSError(domain: "EditorTests", code: 4, userInfo: [NSLocalizedDescriptionKey: "TextLayer required"])
+            }
+            let textCenter = CGPoint(x: textLayer.getBoundingBox().midX, y: textLayer.getBoundingBox().midY)
+            let textTargetX = textCenter.x - doc.activeCanvasBounds.origin.x
+            let textTargetY = textCenter.y - doc.activeCanvasBounds.origin.y
+            let expectedTextOrigin = clipView.constrainBoundsRect(NSRect(
+                origin: NSPoint(
+                    x: round(textTargetX - clipView.bounds.width / 2.0),
+                    y: round(textTargetY - clipView.bounds.height / 2.0)
+                ),
+                size: clipView.bounds.size
+            )).origin
+
+            assert(abs(clipView.bounds.origin.x - expectedTextOrigin.x) < 2.0, "Viewport X must center around text")
+            assert(abs(clipView.bounds.origin.y - expectedTextOrigin.y) < 2.0, "Viewport Y must center around text")
+
+            canvas.endCalloutEditing()
+
+            // 4. Zoom up to 150%
+            panel.setZoom(scale: 1.5)
+            assert(abs(sv.magnification - 1.5) < 0.01, "Magnification must be 150%")
+
+            // Add Callout at (400, 400)
+            let callout150Pt = CGPoint(x: 400, y: 400)
+            doc.activeTool = .callout
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, callout150Pt))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, callout150Pt))
+
+            // Zoom must NOT reset, stays 150%
+            assert(abs(sv.magnification - 1.5) < 0.001, "Zoom at >= 100% must NOT reset")
+            assert(abs(canvas.zoomScale - 1.5) < 0.001, "Canvas zoomScale must remain 1.5")
+
+            if let editor = canvas.calloutEditor {
+                typeText(editor, "Callout 150")
+            }
+            canvas.endCalloutEditing()
+
+            // 5. Editing an existing callout when zoom < 100% must NOT reset zoom
+            panel.setZoom(scale: 0.5)
+            guard let existingCallout = doc.layers.first(where: { $0 is CalloutLayer }) as? CalloutLayer else {
+                throw NSError(domain: "EditorTests", code: 5, userInfo: [NSLocalizedDescriptionKey: "Existing CalloutLayer required"])
+            }
+            let bodyMid = CGPoint(x: existingCallout.bodyRect.midX, y: existingCallout.bodyRect.midY)
+            doc.activeTool = .select
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, bodyMid, clickCount: 2))
+            assert(canvas.isEditingCallout, "Double-clicking callout body must open editor")
+            assert(abs(sv.magnification - 0.5) < 0.01, "Editing an existing callout must not reset zoom")
+            canvas.endCalloutEditing()
+
+            // 6. Headless canvas without scrollview resets canvas.zoomScale
+            let standaloneCanvas = EditorCanvasView(document: doc)
+            standaloneCanvas.zoomScale = 0.5
+            let standaloneCallout = CalloutLayer(tip: CGPoint(x: 100, y: 100))
+            standaloneCanvas.resetZoomAndCenterIfNeeded(around: standaloneCallout)
+            assert(standaloneCanvas.zoomScale == 1.0, "Headless resetZoomAndCenterIfNeeded must reset zoomScale to 1.0")
+
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Trackpad Pinch to Zoom Magnification") {
+            guard let imageURL = resolveTestImageURL(),
+                  let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                throw NSError(domain: "EditorTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to load test-image.jpg"])
+            }
+            let doc = EditorDocument(image: cgImage)
+            let panel = EditorPanel(document: doc)
+            panel.setFrame(NSRect(x: 100, y: 100, width: 800, height: 600), display: true)
+            let canvas = panel.canvasView
+            guard let sv = panel.scrollView else {
+                throw NSError(domain: "EditorTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "ScrollView required"])
+            }
+            panel.resetZoom()
+            assert(sv.magnification == 1.0, "Initial magnification must be 1.0")
+
+            final class MockPinch: NSEvent {
+                var _delta: CGFloat
+                init(delta: CGFloat) {
+                    self._delta = delta
+                    super.init()
+                }
+                required init?(coder: NSCoder) { fatalError() }
+                override var magnification: CGFloat { _delta }
+                override var locationInWindow: NSPoint { NSPoint(x: 400, y: 300) }
+                override var type: NSEvent.EventType { .magnify }
+            }
+
+            // 1. Pinch to zoom in on canvasView
+            let pinchIn = MockPinch(delta: 0.25)
+            canvas.magnify(with: pinchIn)
+            assert(sv.magnification > 1.0, "Pinch-in on canvasView must zoom in")
+            assert(canvas.zoomScale == sv.magnification, "canvasView.zoomScale must track magnification")
+
+            // 2. Pinch to zoom out on EditorScrollView
+            let pinchOut = MockPinch(delta: -0.2)
+            sv.magnify(with: pinchOut)
+            assert(sv.magnification < 1.25, "Pinch-out on EditorScrollView must zoom out")
+            assert(canvas.zoomScale == sv.magnification, "canvasView.zoomScale must track magnification")
+
+            // 3. Pinch to zoom while editing callout/text (on CalloutTextView)
+            doc.activeTool = .callout
+            let (_, editor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 300))
+            assert(canvas.isEditingCallout, "Editor must be active")
+            let magBeforeEditorPinch = sv.magnification
+            let editorPinch = MockPinch(delta: 0.1)
+            editor.magnify(with: editorPinch)
+            assert(sv.magnification > magBeforeEditorPinch, "Pinch on CalloutTextView must zoom")
+            assert(canvas.zoomScale == sv.magnification, "zoomScale must track magnification during callout editing")
+            canvas.endCalloutEditing()
+
+            quietClose(doc, panel)
+        }
     }
 }

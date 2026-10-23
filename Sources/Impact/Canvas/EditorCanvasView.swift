@@ -1511,10 +1511,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             let oldMag = sv.magnification
             let factor = 1.0 + event.magnification
             let newMag = max(sv.minMagnification, min(sv.maxMagnification, oldMag * factor))
-            
-            // Magnify centered at cursor location in clipView
-            let clipPoint = sv.contentView.convert(event.locationInWindow, from: nil)
-            sv.setMagnification(newMag, centeredAt: clipPoint)
+            guard newMag != oldMag else { return }
+
+            let clipBounds = sv.contentView.bounds
+            let location = event.locationInWindow
+            let clipPoint = sv.contentView.convert(location, from: nil)
+            let anchor = clipBounds.contains(clipPoint) ? clipPoint : NSPoint(x: clipBounds.midX, y: clipBounds.midY)
+
+            sv.setMagnification(newMag, centeredAt: anchor)
             zoomScale = sv.magnification
             (window as? EditorPanel)?.updateMetaLabel()
         } else {
@@ -1664,6 +1668,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         editor.setSelectedRange(NSRange(location: caret, length: 0))
 
+        if isNew {
+            resetZoomAndCenterIfNeeded(around: layer)
+        }
+
         // The caret must blink right away: make sure the panel is key so keystrokes reach the editor
         if let window = window {
             if window.isVisible && (!window.isKeyWindow || !NSApp.isActive) {
@@ -1675,6 +1683,41 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         if let mousePoint = currentMouseCanvasPoint {
             updateCursorForPoint(mousePoint)
+        }
+        needsDisplay = true
+    }
+
+    /// When adding a callout or text and zoom is < 100%, resets zoom to 100%
+    /// and centers around the annotation as close as the current canvas setup allows.
+    public func resetZoomAndCenterIfNeeded(around layer: AnnotationLayer) {
+        let currentZoom = enclosingScrollView?.magnification ?? zoomScale
+        guard currentZoom < 0.9999 else { return }
+
+        let box = layer.getBoundingBox()
+        let annotationCenter = CGPoint(x: box.midX, y: box.midY)
+
+        if let sv = enclosingScrollView {
+            let clipView = sv.contentView
+            sv.magnification = 1.0
+            zoomScale = sv.magnification
+
+            let canvasOrigin = document.activeCanvasBounds.origin
+            let targetViewX = annotationCenter.x - canvasOrigin.x
+            let targetViewY = annotationCenter.y - canvasOrigin.y
+            let viewportSize = clipView.bounds.size
+
+            let proposedOrigin = NSPoint(
+                x: round(targetViewX - viewportSize.width / 2.0),
+                y: round(targetViewY - viewportSize.height / 2.0)
+            )
+            let constrainedOrigin = clipView.constrainBoundsRect(NSRect(origin: proposedOrigin, size: viewportSize)).origin
+
+            clipView.scroll(to: constrainedOrigin)
+            sv.reflectScrolledClipView(clipView)
+
+            (window as? EditorPanel)?.updateMetaLabel()
+        } else {
+            zoomScale = 1.0
         }
         needsDisplay = true
     }

@@ -333,6 +333,30 @@ public final class EditorPanel: NSPanel {
             sv.documentView?.needsDisplay = true
             self.updateMetaLabel()
         }
+
+        clipView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: clipView,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, let sv = self.scrollView else { return }
+            if abs(self.canvasView.zoomScale - sv.magnification) > 0.001 {
+                self.canvasView.zoomScale = sv.magnification
+                self.updateMetaLabel()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSScrollView.didEndLiveMagnifyNotification,
+            object: scrollView,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, let sv = self.scrollView else { return }
+            self.canvasView.zoomScale = sv.magnification
+            self.updateMetaLabel()
+            self.canvasView.needsDisplay = true
+        }
     }
 
     public func setupWelcomeDropView() {
@@ -689,6 +713,22 @@ final class EditorScrollView: NSScrollView {
         addCursorRect(bounds, cursor: .arrow)
     }
 
+    override func magnify(with event: NSEvent) {
+        if let doc = documentView as? EditorCanvasView {
+            doc.magnify(with: event)
+        } else {
+            super.magnify(with: event)
+        }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            (window as? EditorPanel)?.handleZoomWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         if extractImageURL(from: sender) != nil {
             (window as? EditorPanel)?.showDropTargetOverlay(true)
@@ -719,14 +759,6 @@ final class EditorScrollView: NSScrollView {
         }
         let ext = first.pathExtension.lowercased()
         return WelcomeDropView.supportedExtensions.contains(ext) ? first : nil
-    }
-
-    override func scrollWheel(with event: NSEvent) {
-        if event.modifierFlags.contains(.command) {
-            (window as? EditorPanel)?.handleZoomWheel(with: event)
-            return
-        }
-        super.scrollWheel(with: event)
     }
 }
 
