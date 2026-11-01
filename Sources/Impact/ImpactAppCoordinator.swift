@@ -11,14 +11,13 @@ public final class ImpactAppCoordinator {
 
     private init() {}
 
-    /// After the last window closes, Impact stays running without a Dock icon instead of quitting,
-    /// so the next capture opens instantly rather than paying a cold launch. The delay avoids reacting
-    /// during window swaps (old panel closed before the new one is shown).
-    private func idleIfNoEditorSoon() {
+    /// Quits Impact once no editor window is open. The delay avoids reacting during window swaps
+    /// (old panel closed before the new one is shown) and lets a pending open-file event arrive.
+    private func terminateIfNoEditorSoon() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            guard self.activePanel == nil else { return }
-            FilterLayer.clearSharedCaches()
-            NSApp.setActivationPolicy(.accessory)
+            // isRunning is false when hosted by the test runner (no app.run()), so tests aren't killed
+            guard self.activePanel == nil, NSApp.isRunning else { return }
+            NSApp.terminate(nil)
         }
     }
 
@@ -47,7 +46,7 @@ public final class ImpactAppCoordinator {
                 if self?.activePanel === panel {
                     self?.activePanel = nil
                 }
-                self?.idleIfNoEditorSoon()
+                self?.terminateIfNoEditorSoon()
             }
 
             panel.makeKeyAndOrderFront(nil)
@@ -80,7 +79,7 @@ public final class ImpactAppCoordinator {
                 if self?.activePanel === panel {
                     self?.activePanel = nil
                 }
-                self?.idleIfNoEditorSoon()
+                self?.terminateIfNoEditorSoon()
             }
 
             panel.makeKeyAndOrderFront(nil)
@@ -101,6 +100,7 @@ public final class ImpactAppCoordinator {
             guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, decodeOptions) else {
                 NSLog("ImpactAppCoordinator: Failed to load image from %@", url.path)
+                DispatchQueue.main.async { self?.terminateIfNoEditorSoon() }
                 return
             }
             self?.openEditor(with: cgImage, title: url.lastPathComponent, sourceFileURL: url)
@@ -125,6 +125,8 @@ public final class ImpactAppCoordinator {
             self.activate()
             if openPanel.runModal() == .OK, let selectedURL = openPanel.url {
                 self.openImageFile(url: selectedURL)
+            } else {
+                self.terminateIfNoEditorSoon()
             }
         }
     }
