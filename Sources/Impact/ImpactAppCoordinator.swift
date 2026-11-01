@@ -144,10 +144,12 @@ public final class ImpactAppCoordinator {
         }
     }
 
+    /// Closes the editor now when called on the main thread (callers see it closed on return), else on the main queue
     public func closeEditor() {
-        DispatchQueue.main.async { [weak self] in
+        let close = { [weak self] in
             self?.activePanel?.close()
             self?.activePanel = nil
         }
+        if Thread.isMainThread { close() } else { DispatchQueue.main.async(execute: close) }
     }
 }

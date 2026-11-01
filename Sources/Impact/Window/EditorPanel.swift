@@ -468,6 +468,28 @@ public final class EditorPanel: NSPanel {
         }
     }
 
+    /// The window size the canvas gets on open: canvas plus margins, at least 600×400 (toolbar room), at most 85% of the screen
+    static func fittedWindowSize(canvas: CGSize, visibleFrame: CGRect) -> CGSize {
+        CGSize(width: min(visibleFrame.width * 0.85, max(600.0, canvas.width + 40.0)),
+               height: min(visibleFrame.height * 0.85, max(400.0, canvas.height + 80.0)))
+    }
+
+    /// Resizes the window (larger or smaller) to fit the canvas as when an image opens, keeping its center
+    /// on screen, then fits the canvas in it. Used when a crop, or undoing one, replaces the image.
+    public func fitWindowToCanvas() {
+        guard hasImage else { return }
+        let visibleFrame = (screen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = Self.fittedWindowSize(canvas: document.activeCanvasBounds.size, visibleFrame: visibleFrame)
+        let x = max(visibleFrame.minX, min(frame.midX - size.width / 2.0, visibleFrame.maxX - size.width))
+        let y = max(visibleFrame.minY, min(frame.midY - size.height / 2.0, visibleFrame.maxY - size.height))
+        let target = NSRect(x: x, y: y, width: size.width, height: size.height).integral
+        if target != frame {
+            setFrame(target, display: true, animate: isVisible)
+        }
+        scaleToFit()
+    }
+
     /// Scales the image: if smaller than viewport, center at 100% (1.0). If larger, scale to best fit centered.
     public func scaleToFit() {
         guard let sv = scrollView, hasImage else { return }

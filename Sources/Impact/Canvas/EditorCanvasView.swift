@@ -149,6 +149,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             self.imageView.image = image
             self.layoutCanvasSubviews()
             self.needsDisplay = true
+            // After the crop or undo finishes updating the canvas bounds, size the window to the new image
+            DispatchQueue.main.async { [weak self] in
+                (self?.window as? EditorPanel)?.fitWindowToCanvas()
+            }
         }
 
         // Switching to any other tool finishes the session; the new tool stays active
@@ -431,7 +435,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 ]
             }
 
-            for p in handlePoints {
+            for handlePoint in handlePoints {
+                let p = Self.keepOnCanvas(handlePoint, inset: handleRadius + 0.75, canvas: document.activeCanvasBounds)
                 let handleRect = CGRect(x: p.x - handleRadius, y: p.y - handleRadius, width: handleRadius * 2, height: handleRadius * 2)
                 context.setFillColor(Self.handleFillCGColor)
                 context.fillEllipse(in: handleRect)
@@ -1555,10 +1560,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             NSSound.beep()
             return true
         }
-        cropSelection = nil // the image change already cleared it; kept for clarity
-        cropGesture = nil
+        // The crop replaced the image, which already cleared the selection and resizes the window to fit
         clearHoverStateImmediately()
-        (window as? EditorPanel)?.scaleToFit()
         needsDisplay = true
         return true
     }
@@ -1683,7 +1686,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if case .creating = cropGesture {} else {
             let side = 7.0 * px
             for p in Self.cropHandlePoints(of: r) {
-                let handle = CGRect(x: p.x - side / 2.0, y: p.y - side / 2.0, width: side, height: side)
+                let c = Self.keepOnCanvas(p, inset: side / 2.0, canvas: canvas)
+                let handle = CGRect(x: c.x - side / 2.0, y: c.y - side / 2.0, width: side, height: side)
                 context.setFillColor(Self.handleFillCGColor)
                 context.fill(handle)
                 context.setStrokeColor(Self.cropLineDarkCGColor)
@@ -1719,6 +1723,13 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
+    }
+
+    /// A handle drawn at `point`, nudged inward so a handle on the canvas edge is fully visible instead of cut
+    /// in half (the canvas clips its drawing). Only the drawing moves; hit testing uses the real point.
+    static func keepOnCanvas(_ point: CGPoint, inset: CGFloat, canvas: CGRect) -> CGPoint {
+        let area = canvas.insetBy(dx: min(inset, canvas.width / 2.0), dy: min(inset, canvas.height / 2.0))
+        return CGPoint(x: min(max(point.x, area.minX), area.maxX), y: min(max(point.y, area.minY), area.maxY))
     }
 
     /// Top-center of the label block (canvas units): below the selection, else above it, else inside its

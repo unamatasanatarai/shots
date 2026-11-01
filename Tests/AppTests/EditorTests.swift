@@ -732,6 +732,7 @@ public enum EditorTests {
             assert(NSPasteboard.general.data(forType: .png) == nil, "Opening editor must NOT copy when copyToClipboard is disabled")
 
             ImpactAppCoordinator.shared.closeEditor()
+            assert(ImpactAppCoordinator.shared.activePanel == nil, "closeEditor must leave no editor open")
             EditorPanel.copyToClipboardOverride = nil
         }
 
@@ -4397,16 +4398,15 @@ public enum EditorTests {
             guard let url = resolveTestImageURL() else { throw NSError(domain: "EditorTests", code: 1) }
             EditorPanel.copyToClipboardOverride = false
             let coordinator = ImpactAppCoordinator.shared
-            coordinator.activePanel?.close() // earlier tests may leave the shared editor open
-            assert(coordinator.isIdle, "Precondition: idle")
+            assert(coordinator.isIdle, "Precondition: idle (no earlier test leaves the shared editor open)")
             coordinator.openImageFile(url: url)
             assert(!coordinator.isIdle, "Must not be idle while the image decodes, before its window exists")
             let deadline = Date(timeIntervalSinceNow: 5)
             while coordinator.activePanel == nil && Date() < deadline { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
             assert(coordinator.activePanel != nil && coordinator.pendingOpenCount == 0, "Window open, nothing pending")
-            coordinator.activePanel?.close()
-            assert(coordinator.isIdle, "Idle once the window is closed")
+            coordinator.closeEditor()
+            assert(coordinator.isIdle, "closeEditor must close the window before returning")
 
             coordinator.openImageFile(url: URL(fileURLWithPath: "/nonexistent/impact-missing.png"))
             assert(!coordinator.isIdle, "A failing open is pending until its decode fails")
@@ -4414,6 +4414,42 @@ public enum EditorTests {
             while !coordinator.isIdle && Date() < deadline2 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
             assert(coordinator.isIdle, "Idle after a failed open")
             EditorPanel.copyToClipboardOverride = nil
+        }
+        testRunner("Editor - Handles On The Canvas Edge Are Drawn Fully On The Canvas") {
+            let canvas = CGRect(x: 0, y: 0, width: 800, height: 600)
+            assert(EditorCanvasView.keepOnCanvas(CGPoint(x: 0, y: 300), inset: 3.5, canvas: canvas) == CGPoint(x: 3.5, y: 300), "Left-edge handle moves in by half its size")
+            assert(EditorCanvasView.keepOnCanvas(CGPoint(x: 800, y: 600), inset: 3.5, canvas: canvas) == CGPoint(x: 796.5, y: 596.5), "Corner handle moves in on both axes")
+            assert(EditorCanvasView.keepOnCanvas(CGPoint(x: 400, y: 300), inset: 3.5, canvas: canvas) == CGPoint(x: 400, y: 300), "Handles away from the edge stay put")
+            let tiny = CGRect(x: 0, y: 0, width: 4, height: 4)
+            assert(EditorCanvasView.keepOnCanvas(CGPoint(x: 0, y: 0), inset: 3.5, canvas: tiny) == CGPoint(x: 2, y: 2), "On a canvas smaller than a handle, it centers")
+        }
+        testRunner("Editor - Window Shrinks To Fit A Crop And Grows Back On Undo") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            panel.fitWindowToCanvas()
+            let screen = (panel.screen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+            let original = EditorPanel.fittedWindowSize(canvas: CGSize(width: 800, height: 600), visibleFrame: screen)
+            assert(panel.frame.size == original, "Precondition: window fitted to the 800×600 image, got \(panel.frame.size)")
+            let center = CGPoint(x: panel.frame.midX, y: panel.frame.midY)
+
+            canvas.setCropSelection(CGRect(x: 100, y: 100, width: 400, height: 300))
+            canvas.keyDown(with: key("\r", 36, window: panel))
+            let deadline = Date(timeIntervalSinceNow: 2)
+            while panel.frame.size == original && Date() < deadline { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
+            assert(panel.frame.size == CGSize(width: 600, height: 400), "Window must shrink to the 400×300 crop (600×400 minimum), got \(panel.frame.size)")
+            assert(abs(panel.frame.midX - center.x) <= 1 && abs(panel.frame.midY - center.y) <= 1, "Window must stay centered where it was")
+
+            let (bigDoc, bigPanel, bigCanvas) = try makeCalloutPanel()
+            bigCanvas.setCropSelection(CGRect(x: 0, y: 0, width: 700, height: 500))
+            bigCanvas.keyDown(with: key("\r", 36, window: bigPanel))
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            assert(bigPanel.frame.size == EditorPanel.fittedWindowSize(canvas: CGSize(width: 700, height: 500), visibleFrame: screen), "Window must fit a crop larger than the minimum")
+
+            canvas.keyDown(with: key("z", 6, .command, window: panel))
+            let deadline2 = Date(timeIntervalSinceNow: 2)
+            while panel.frame.size != original && Date() < deadline2 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
+            assert(panel.frame.size == original, "Undoing the crop must grow the window back, got \(panel.frame.size)")
+            quietClose(doc, panel)
+            quietClose(bigDoc, bigPanel)
         }
     }
 }
