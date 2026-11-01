@@ -11,12 +11,18 @@ public final class ImpactAppCoordinator {
 
     private init() {}
 
+    /// Images still decoding: their editor isn't open yet, so Impact must not quit meanwhile (main thread only)
+    private(set) var pendingOpenCount = 0
+
+    /// No editor open and none on the way
+    var isIdle: Bool { activePanel == nil && pendingOpenCount == 0 }
+
     /// Quits Impact once no editor window is open. The delay avoids reacting during window swaps
     /// (old panel closed before the new one is shown) and lets a pending open-file event arrive.
     private func terminateIfNoEditorSoon() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             // isRunning is false when hosted by the test runner (no app.run()), so tests aren't killed
-            guard self.activePanel == nil, NSApp.isRunning else { return }
+            guard self.isIdle, NSApp.isRunning else { return }
             NSApp.terminate(nil)
         }
     }
@@ -94,16 +100,23 @@ public final class ImpactAppCoordinator {
     }
 
     public func openImageFile(url: URL) {
+        let begin = { self.pendingOpenCount += 1 }
+        if Thread.isMainThread { begin() } else { DispatchQueue.main.sync(execute: begin) }
         // Decode off the main thread, up front: a lazily decoded image would decode during the first paint
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let decodeOptions = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
             guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, decodeOptions) else {
                 NSLog("ImpactAppCoordinator: Failed to load image from %@", url.path)
-                DispatchQueue.main.async { self?.terminateIfNoEditorSoon() }
+                DispatchQueue.main.async {
+                    self?.pendingOpenCount -= 1
+                    self?.terminateIfNoEditorSoon()
+                }
                 return
             }
             self?.openEditor(with: cgImage, title: url.lastPathComponent, sourceFileURL: url)
+            // openEditor shows the panel in a main-queue block queued just above: count down after it
+            DispatchQueue.main.async { self?.pendingOpenCount -= 1 }
         }
     }
 

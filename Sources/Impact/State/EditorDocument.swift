@@ -364,18 +364,29 @@ public final class EditorDocument {
     /// The rect a crop to `rect` would produce: snapped to whole pixels and kept inside the current canvas.
     /// Nil when too small.
     public func normalizedCropRect(_ rect: CGRect) -> CGRect? {
-        let r = rect.standardized
-        let snapped = CGRect(x: r.minX.rounded(), y: r.minY.rounded(), width: r.width.rounded(), height: r.height.rounded())
-            .intersection(activeCanvasBounds)
-        guard !snapped.isNull, snapped.width >= Self.minimumCropSize, snapped.height >= Self.minimumCropSize else { return nil }
-        return snapped
+        let clipped = rect.standardized.intersection(activeCanvasBounds)
+        guard !clipped.isNull else { return nil }
+        // Edges land on whole image pixels (the image sits at 0,0) and never past the canvas, which can
+        // itself end mid-pixel after elastic growth: a fractional crop would resample the whole image
+        let canvas = activeCanvasBounds
+        func snap(_ v: CGFloat, low: CGFloat, high: CGFloat) -> CGFloat {
+            let r = v.rounded()
+            return r < low ? low.rounded(.up) : (r > high ? high.rounded(.down) : r)
+        }
+        let minX = snap(clipped.minX, low: canvas.minX, high: canvas.maxX)
+        let maxX = snap(clipped.maxX, low: canvas.minX, high: canvas.maxX)
+        let minY = snap(clipped.minY, low: canvas.minY, high: canvas.maxY)
+        let maxY = snap(clipped.maxY, low: canvas.minY, high: canvas.maxY)
+        guard maxX - minX >= Self.minimumCropSize, maxY - minY >= Self.minimumCropSize else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
     /// Crops to `rect` (canvas coordinates) as one undo step. The result behaves exactly like a newly opened
     /// image: the selected pixels become the image (areas past the old image edge stay transparent) and
     /// annotations shift with it, so the canvas grows elastically again when something extends past the edge.
-    /// Annotations entirely outside are removed; blur and spotlight areas are trimmed to the crop; other
-    /// annotations crossing the edge are kept whole, and the canvas grows to fit them.
+    /// Annotations with no visible pixel inside are removed (a shadow or hit margin reaching in does not count);
+    /// blur and spotlight areas are trimmed to the crop; other annotations crossing the edge are kept whole,
+    /// and the canvas grows to fit them.
     @discardableResult
     public func crop(to rect: CGRect) -> Bool {
         guard let frame = normalizedCropRect(rect), frame != activeCanvasBounds,
@@ -385,8 +396,10 @@ public final class EditorDocument {
         let shift = CGPoint(x: -frame.minX, y: -frame.minY)
         layers.removeAll { layer in
             if let filter = layer as? FilterLayer {
+                // A spotlight's border is centered on its rect: trim it inside the frame so the border stays whole
+                let limit = filter.filterMode == .spotlight ? frame.insetBy(dx: filter.strokeWidth / 2.0, dy: filter.strokeWidth / 2.0) : frame
                 filter.rects = filter.rects.compactMap { r in
-                    let kept = r.standardized.intersection(frame)
+                    let kept = r.standardized.intersection(limit)
                     return kept.isNull || kept.width < 1 || kept.height < 1 ? nil : kept.offsetBy(dx: shift.x, dy: shift.y)
                 }
                 filter.detectedTextRects = filter.detectedTextRects.compactMap { r in
@@ -398,7 +411,7 @@ public final class EditorDocument {
                 }
                 return filter.rects.isEmpty
             }
-            guard layer.getBoundingBox().intersects(frame) else { return true }
+            guard Self.layer(layer, visiblyIntersects: frame) else { return true }
             layer.move(by: shift)
             return false
         }
@@ -409,6 +422,32 @@ public final class EditorDocument {
         computeElasticBounds()
         onNeedsDisplay?()
         return true
+    }
+
+    /// Whether `layer` paints a clearly visible pixel inside `frame`. Bounding boxes include shadows, arrowhead
+    /// slack and hit margins, so they report overlap for annotations that sit visibly outside. Threshold ~31%:
+    /// above every drop shadow (25% black) and below the faintest stroke (the 40% highlighter).
+    static func layer(_ layer: AnnotationLayer, visiblyIntersects frame: CGRect) -> Bool {
+        let region = layer.getBoundingBox().intersection(frame).integral
+        guard !region.isNull, region.width >= 1, region.height >= 1 else { return false }
+        let width = Int(region.width), height = Int(region.height)
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: colorSpaceRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = context.data else { return true } // can't tell: keep it
+        // Same flipped canvas coordinates the layers draw in
+        context.translateBy(x: 0, y: region.height)
+        context.scaleBy(x: 1, y: -1)
+        context.translateBy(x: -region.minX, y: -region.minY)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        layer.draw(in: context, scale: 1.0)
+        NSGraphicsContext.restoreGraphicsState()
+
+        let bytes = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+        for i in stride(from: 3, to: width * height * 4, by: 4) where bytes[i] >= 80 {
+            return true
+        }
+        return false
     }
 
     /// The pixels of `frame` (top-left image coordinates); parts outside the image are transparent
@@ -431,6 +470,9 @@ public final class EditorDocument {
     private func replaceImage(_ image: CGImage) {
         originalImage = image
         originalImageBounds = CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height))
+        for case let filter as FilterLayer in layers {
+            filter.dropCachedFilters(notFrom: image)
+        }
         onImageChanged?(image)
     }
 
@@ -450,7 +492,10 @@ public final class EditorDocument {
             let layerBounds: CGRect
             if let filter = layer as? FilterLayer {
                 guard let first = filter.rects.first else { continue }
-                layerBounds = filter.rects.dropFirst().reduce(first.standardized) { $0.union($1.standardized) }
+                let union = filter.rects.dropFirst().reduce(first.standardized) { $0.union($1.standardized) }
+                // A spotlight's border straddles its rect; blur has no outline
+                let border = filter.filterMode == .spotlight ? filter.strokeWidth / 2.0 : 0.0
+                layerBounds = union.insetBy(dx: -border, dy: -border)
             } else {
                 layerBounds = layer.getBoundingBox()
             }

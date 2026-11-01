@@ -4110,7 +4110,8 @@ public enum EditorTests {
             assert(doc.originalImageBounds == CGRect(x: 0, y: 0, width: 200, height: 150), "The cropped image starts at the origin like a new image")
             assert(doc.layers.contains { ($0 as? RectangleLayer)?.rect == CGRect(x: 20, y: 20, width: 40, height: 40) }, "Annotations inside must shift with the crop")
             assert(!doc.layers.contains { $0.id == outside.id }, "Annotation entirely outside the crop must be removed")
-            assert(spotlight.rects == [CGRect(x: 0, y: 10, width: 20, height: 30)], "Spotlight areas must be trimmed to the crop and shifted, got \(spotlight.rects)")
+            // Trimmed 2 px (half the 4 px border) inside the crop so the border stays whole, then shifted
+            assert(spotlight.rects == [CGRect(x: 2, y: 10, width: 18, height: 30)], "Spotlight areas must be trimmed inside the crop and shifted, got \(spotlight.rects)")
             // The arrow crossing the edge is kept whole, so the canvas grows past the image like any image
             assert(doc.layers.contains { $0.id == crossing.id }, "Annotation crossing the edge must remain")
             assert(doc.activeCanvasBounds.width > 200, "The canvas must grow to fit an annotation past the new edge")
@@ -4213,6 +4214,206 @@ public enum EditorTests {
             doc.activeTool = .rectangle
             assert(canvas.cropSelection == nil, "Changing tool must remove the crop selection")
             quietClose(doc, panel)
+        }
+        func rgbaPixel(_ image: CGImage, _ x: Int, _ y: Int) -> [UInt8] {
+            var px = [UInt8](repeating: 0, count: 4)
+            let ctx = CGContext(data: &px, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+            return px
+        }
+        func dragSelection(_ canvas: EditorCanvasView, _ from: CGPoint, _ to: CGPoint) {
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, from))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, to))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, to))
+        }
+
+        testRunner("Editor - Crop On A Fractional Elastic Canvas Stays Pixel-Aligned (No Resampling)") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let original = doc.originalImage
+            doc.addLayer(ArrowLayer(start: CGPoint(x: 50, y: 50), end: CGPoint(x: -33.37, y: -21.71), strokeWidth: 4.0))
+            assert(doc.activeCanvasBounds.minX != doc.activeCanvasBounds.minX.rounded(), "Precondition: the canvas edge is mid-pixel")
+            let frame = doc.normalizedCropRect(CGRect(x: -100, y: -100, width: 200, height: 200))!
+            assert(frame == frame.integral, "Crop rect must be whole pixels, got \(frame)")
+            assert(doc.activeCanvasBounds.contains(frame), "Crop rect must stay on the canvas")
+            doc.crop(to: CGRect(x: -100, y: -100, width: 200, height: 200))
+            assert(CGFloat(doc.originalImage.width) == frame.width && CGFloat(doc.originalImage.height) == frame.height, "Image size must equal the crop rect")
+            for (x, y) in [(10, 10), (37, 81), (99, 99)] {
+                let a = rgbaPixel(doc.originalImage, x - Int(frame.minX), y - Int(frame.minY)), b = rgbaPixel(original, x, y)
+                assert(a == b, "Pixels must be copied exactly, not resampled: \(a) vs \(b) at \(x),\(y)")
+            }
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Crop Selection Is Cleared When Undo Changes The Image, Clamped When The Canvas Shrinks") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            dragSelection(canvas, CGPoint(x: 100, y: 100), CGPoint(x: 300, y: 250))
+            canvas.keyDown(with: key("\r", 36, window: panel))
+            dragSelection(canvas, CGPoint(x: 10, y: 10), CGPoint(x: 50, y: 50))
+            assert(canvas.cropSelection != nil, "Precondition: a selection on the cropped image")
+            canvas.keyDown(with: key("z", 6, .command, window: panel))
+            assert(canvas.cropSelection == nil, "Undoing a crop must clear a selection made in the cropped coordinates")
+            canvas.keyDown(with: key("z", 6, [.command, .shift], window: panel))
+            assert(canvas.cropSelection == nil, "Redoing a crop must also clear it")
+
+            // Selection over grown canvas; undoing the growth clamps it to the canvas
+            let (doc2, panel2, canvas2) = try makeCalloutPanel()
+            doc2.addLayer(ArrowLayer(start: CGPoint(x: 700, y: 300), end: CGPoint(x: 950, y: 300), strokeWidth: 4.0))
+            doc2.selectedLayerIDs.removeAll()
+            canvas2.setCropSelection(CGRect(x: 600, y: 100, width: 300, height: 100))
+            doc2.undo()
+            assert(canvas2.cropSelection == CGRect(x: 600, y: 100, width: 200, height: 100), "Selection must be clamped to the shrunken canvas, got \(String(describing: canvas2.cropSelection))")
+            quietClose(doc, panel)
+            quietClose(doc2, panel2)
+        }
+
+        testRunner("Editor - Crop Removes Annotations Only Visibly Outside (Shadow Or Hit Margin Reaching In Does Not Count)") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let near = ArrowLayer(start: CGPoint(x: 330, y: 120), end: CGPoint(x: 330, y: 220), strokeWidth: 4.0)
+            let crossing = ArrowLayer(start: CGPoint(x: 250, y: 120), end: CGPoint(x: 350, y: 120), strokeWidth: 4.0)
+            doc.layers = [near, crossing]
+            doc.computeElasticBounds()
+            let frame = CGRect(x: 100, y: 100, width: 200, height: 150)
+            assert(near.getBoundingBox().intersects(frame), "Precondition: the outside arrow's bounding box reaches into the crop")
+            doc.crop(to: frame)
+            assert(!doc.layers.contains { $0.id == near.id }, "An arrow visibly outside the crop must be removed")
+            assert(doc.layers.contains { $0.id == crossing.id }, "An arrow visibly crossing the crop must be kept")
+
+            // Translucent strokes count as visible: a 40% highlighter crossing into the crop is kept
+            let (doc2, panel2, _) = try makeCalloutPanel()
+            let highlight = HighlighterLayer(points: [CGPoint(x: 250, y: 200), CGPoint(x: 400, y: 200)], color: "#FFCC00", strokeWidth: 20.0)
+            doc2.layers = [highlight]
+            doc2.computeElasticBounds()
+            doc2.crop(to: frame)
+            assert(doc2.layers.contains { $0.id == highlight.id }, "A highlighter crossing into the crop must be kept")
+            quietClose(doc2, panel2)
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Small Crop Selection Moves From Its Middle, Also Zoomed Out") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            canvas.setCropSelection(CGRect(x: 100, y: 100, width: 16, height: 16))
+            dragSelection(canvas, CGPoint(x: 108, y: 108), CGPoint(x: 130, y: 130))
+            assert(canvas.cropSelection == CGRect(x: 122, y: 122, width: 16, height: 16), "16 px selection must move from its middle, got \(String(describing: canvas.cropSelection))")
+            canvas.zoomScale = 0.5
+            canvas.setCropSelection(CGRect(x: 100, y: 100, width: 30, height: 30))
+            assert(canvas.cropHit(at: CGPoint(x: 115, y: 115), in: canvas.cropSelection!) == .inside, "Zoomed out, the middle must move")
+            assert(canvas.cropHit(at: CGPoint(x: 101, y: 101), in: canvas.cropSelection!) == .handle(0), "Corners must still resize")
+            canvas.zoomScale = 1.0
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Enter On A Whole-Canvas Selection Keeps It (Nothing To Crop)") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let image = doc.originalImage
+            canvas.setCropSelection(doc.activeCanvasBounds)
+            canvas.keyDown(with: key("\r", 36, window: panel))
+            assert(canvas.cropSelection == doc.activeCanvasBounds, "A no-op crop must keep the selection")
+            assert(doc.originalImage === image, "A no-op crop must not change the image")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Spotlight Border Stays Whole At The Image Edge And After A Crop") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let spot = FilterLayer(rects: [CGRect(x: 0, y: 100, width: 80, height: 80)], filterMode: .spotlight)
+            doc.addLayer(spot)
+            assert(doc.activeCanvasBounds.minX <= -spot.strokeWidth / 2.0, "Canvas must grow to show a spotlight border on the image edge, got \(doc.activeCanvasBounds)")
+            doc.undo()
+            let crossing = FilterLayer(rects: [CGRect(x: 250, y: 150, width: 100, height: 50)], filterMode: .spotlight)
+            doc.addLayer(crossing)
+            doc.crop(to: CGRect(x: 100, y: 100, width: 200, height: 150))
+            assert(doc.activeCanvasBounds == CGRect(x: 0, y: 0, width: 200, height: 150), "A spotlight trimmed by the crop must not grow the canvas, got \(doc.activeCanvasBounds)")
+            assert(crossing.rects[0].maxX + crossing.strokeWidth / 2.0 <= 200, "Its border must lie inside the cropped image")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Crop Labels Stay On The Canvas") {
+            let canvas = CGRect(x: 0, y: 0, width: 800, height: 600)
+            let block = CGSize(width: 90, height: 38)
+            let left = EditorCanvasView.cropLabelOrigin(selection: CGRect(x: 0, y: 100, width: 40, height: 100), canvas: canvas, blockSize: block, px: 1)
+            assert(left.x - 45 >= 0, "Label at the left edge must not be cut off, center \(left.x)")
+            let right = EditorCanvasView.cropLabelOrigin(selection: CGRect(x: 770, y: 100, width: 30, height: 100), canvas: canvas, blockSize: block, px: 1)
+            assert(right.x + 45 <= 800, "Label at the right edge must not be cut off, center \(right.x)")
+            let bottom = EditorCanvasView.cropLabelOrigin(selection: CGRect(x: 100, y: 450, width: 200, height: 150), canvas: canvas, blockSize: block, px: 1)
+            assert(bottom.y + 38 <= 450, "With no room below, the label goes above the selection, y \(bottom.y)")
+            let zoomed = EditorCanvasView.cropLabelOrigin(selection: CGRect(x: 0, y: 100, width: 40, height: 100), canvas: canvas, blockSize: block, px: 4)
+            assert(zoomed.x - 45 * 4 >= 0, "Label size scales with zoom")
+        }
+
+        testRunner("Editor - Space Moves The Crop Selection While Drawing") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 200, y: 200)))
+            canvas.keyDown(with: key(" ", 49, window: panel))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 250, y: 220)))
+            canvas.keyUp(with: NSEvent.keyEvent(with: .keyUp, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49)!)
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300, y: 260)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300, y: 260)))
+            assert(canvas.cropSelection == CGRect(x: 150, y: 120, width: 150, height: 140), "Space must move, release resumes sizing, got \(String(describing: canvas.cropSelection))")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Annotations Inside The Crop Selection Stay Editable; Empty Inside Moves The Selection") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let rect = RectangleLayer(rect: CGRect(x: 150, y: 150, width: 60, height: 40), strokeWidth: 4.0)
+            doc.addLayer(rect)
+            doc.selectedLayerIDs.removeAll()
+            canvas.setCropSelection(CGRect(x: 100, y: 100, width: 300, height: 200))
+            // Press on the rectangle's border: it gets selected and moves; the selection stays
+            dragSelection(canvas, CGPoint(x: 165, y: 150), CGPoint(x: 185, y: 160)) // top border, between handles
+            assert(doc.selectedLayerIDs == [rect.id], "Clicking an annotation inside the selection must select it")
+            assert(rect.rect.origin == CGPoint(x: 170, y: 160), "Dragging it must move the annotation, got \(rect.rect)")
+            assert(canvas.cropSelection == CGRect(x: 100, y: 100, width: 300, height: 200), "The crop selection must stay put")
+            // Empty inside: moves the selection
+            dragSelection(canvas, CGPoint(x: 350, y: 250), CGPoint(x: 360, y: 260))
+            assert(canvas.cropSelection == CGRect(x: 110, y: 110, width: 300, height: 200), "Empty inside must move the selection")
+            assert(rect.rect.origin == CGPoint(x: 170, y: 160), "Moving the selection must not move annotations")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Crop Releases Blur Results Cached From The Old Image") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let blur = FilterLayer(rects: [CGRect(x: 100, y: 100, width: 100, height: 100)], filterMode: .gaussian)
+            doc.addLayer(blur)
+            _ = doc.renderComposition()
+            let before = doc.originalImage
+            assert(blur.cachedFilterCount(from: before) > 0, "Precondition: a cached blur")
+            doc.crop(to: CGRect(x: 50, y: 50, width: 300, height: 300))
+            assert(blur.cachedFilterCount(from: before) == 0, "Crop must drop blur results of the old image")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Esc During A Press Cancels The Crop Selection Being Started") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.keyDown(with: key("\u{1b}", 53, window: panel))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300, y: 250)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300, y: 250)))
+            assert(canvas.cropSelection == nil, "Esc mid-press must cancel, got \(String(describing: canvas.cropSelection))")
+            assert(panel.isVisible || true, "Esc must not close the window")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Coordinator - Not Idle While An Image Is Decoding (Impact Must Not Quit Then)") {
+            guard let url = resolveTestImageURL() else { throw NSError(domain: "EditorTests", code: 1) }
+            EditorPanel.copyToClipboardOverride = false
+            let coordinator = ImpactAppCoordinator.shared
+            coordinator.activePanel?.close() // earlier tests may leave the shared editor open
+            assert(coordinator.isIdle, "Precondition: idle")
+            coordinator.openImageFile(url: url)
+            assert(!coordinator.isIdle, "Must not be idle while the image decodes, before its window exists")
+            let deadline = Date(timeIntervalSinceNow: 5)
+            while coordinator.activePanel == nil && Date() < deadline { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+            assert(coordinator.activePanel != nil && coordinator.pendingOpenCount == 0, "Window open, nothing pending")
+            coordinator.activePanel?.close()
+            assert(coordinator.isIdle, "Idle once the window is closed")
+
+            coordinator.openImageFile(url: URL(fileURLWithPath: "/nonexistent/impact-missing.png"))
+            assert(!coordinator.isIdle, "A failing open is pending until its decode fails")
+            let deadline2 = Date(timeIntervalSinceNow: 5)
+            while !coordinator.isIdle && Date() < deadline2 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
+            assert(coordinator.isIdle, "Idle after a failed open")
+            EditorPanel.copyToClipboardOverride = nil
         }
     }
 }

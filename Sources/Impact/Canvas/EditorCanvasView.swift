@@ -117,6 +117,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     public func canvasBoundsDidChange() {
         frame = NSRect(origin: .zero, size: document.activeCanvasBounds.size)
         layoutCanvasSubviews()
+        // A crop selection never reaches past the canvas (e.g. after undo shrinks it)
+        if let selection = cropSelection, cropGesture == nil {
+            let clamped = selection.intersection(document.activeCanvasBounds)
+            cropSelection = clamped.isNull || document.normalizedCropRect(clamped) == nil ? nil : clamped
+        }
         // The elastic origin shifts when the canvas grows left/up; keep the editor on its bubble
         positionCalloutEditor()
         needsDisplay = true
@@ -139,6 +144,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         document.onImageChanged = { [weak self] image in
             guard let self = self else { return }
+            // A new base image (crop, or undoing one) moves the coordinates: the selection no longer points anywhere
+            self.clearCropSelection()
             self.imageView.image = image
             self.layoutCanvasSubviews()
             self.needsDisplay = true
@@ -472,16 +479,23 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // An active crop selection owns the mouse: handles resize it, the inside moves it,
         // a press outside removes it (and a drag from there starts a new one)
         if document.activeTool == .select, let selection = cropSelection {
-            if let handle = cropHandleIndex(at: point, in: selection) {
+            switch cropHit(at: point, in: selection) {
+            case .handle(let handle):
                 cropGesture = .resizing(handle: handle, initial: selection)
-            } else if selection.contains(point) {
+                needsDisplay = true
+                return
+            case .annotation:
+                break // annotations inside the selection stay editable: fall through to normal handling
+            case .inside:
                 cropGesture = .moving(initial: selection, start: point)
-            } else {
+                needsDisplay = true
+                return
+            case .outside:
                 clearCropSelection()
                 cropGesture = .pending(start: point)
+                needsDisplay = true
+                return
             }
-            needsDisplay = true
-            return
         }
 
         // Check handle click on currently selected layer or any visible layer
@@ -745,7 +759,22 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         didDragSinceMouseDown = true
 
-        if cropGesture != nil {
+        if let gesture = cropGesture {
+            // Space held while drawing moves the selection being drawn, like the other drawing tools
+            if isSpacePressed, case .creating(let start) = gesture {
+                let delta = CGPoint(x: point.x - lastDragPoint.x, y: point.y - lastDragPoint.y)
+                cropGesture = .creating(start: CGPoint(x: start.x + delta.x, y: start.y + delta.y))
+                if var selection = cropSelection {
+                    let canvas = document.activeCanvasBounds
+                    selection = selection.offsetBy(dx: delta.x, dy: delta.y)
+                    selection.origin.x = min(max(selection.minX, canvas.minX), canvas.maxX - selection.width)
+                    selection.origin.y = min(max(selection.minY, canvas.minY), canvas.maxY - selection.height)
+                    cropSelection = selection
+                }
+                lastDragPoint = point
+                needsDisplay = true
+                return
+            }
             updateCropGesture(to: point)
             lastDragPoint = point
             return
@@ -1426,17 +1455,24 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return
         }
 
-        if document.activeTool == .select, let selection = cropSelection {
+        if document.activeTool == .select, let selection = cropSelection, activeDraggingLayer == nil {
             if case .moving = cropGesture {
                 NSCursor.sleekMove.set()
-            } else if let handle = cropHandleIndex(at: point, in: selection) {
-                cursorForCropHandle(handle).set()
-            } else if selection.contains(point) {
-                NSCursor.sleekMove.set()
-            } else {
-                NSCursor.arrow.set()
+                return
             }
-            return
+            switch cropHit(at: point, in: selection) {
+            case .handle(let handle):
+                cursorForCropHandle(handle).set()
+                return
+            case .inside:
+                NSCursor.sleekMove.set()
+                return
+            case .outside:
+                NSCursor.arrow.set()
+                return
+            case .annotation:
+                break // the annotation's own cursor below
+            }
         }
 
         // While actively dragging a layer's body, maintain the sleek 4-directional move cursor
@@ -1514,12 +1550,15 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     @discardableResult
     public func commitCropSelection() -> Bool {
         guard let selection = cropSelection, !isEditingCallout else { return false }
-        cropSelection = nil
-        cropGesture = nil
-        if document.crop(to: selection) {
-            clearHoverStateImmediately()
-            (window as? EditorPanel)?.scaleToFit()
+        guard document.crop(to: selection) else {
+            // Nothing to crop (the selection is the whole canvas): keep it and say so
+            NSSound.beep()
+            return true
         }
+        cropSelection = nil // the image change already cleared it; kept for clarity
+        cropGesture = nil
+        clearHoverStateImmediately()
+        (window as? EditorPanel)?.scaleToFit()
         needsDisplay = true
         return true
     }
@@ -1559,11 +1598,31 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
          CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)]
     }
 
-    private func cropHandleIndex(at point: CGPoint, in rect: CGRect) -> Int? {
+    enum CropHit: Equatable {
+        case handle(Int)
+        case annotation // an annotation inside the selection: it gets the click
+        case inside     // empty inside: moves the selection
+        case outside
+    }
+
+    /// What a press at `point` acts on while a crop selection exists
+    func cropHit(at point: CGPoint, in rect: CGRect) -> CropHit {
         // Hit area stays about 10 screen points at any zoom
         let radius = 10.0 / max(zoomScale, 0.01)
+        // On a selection small on screen the handles would cover it all: its middle half always moves it
+        let core = rect.insetBy(dx: min(radius, rect.width * 0.25), dy: min(radius, rect.height * 0.25))
         let handles = Self.cropHandlePoints(of: rect)
-        return handles.indices.first { hypot(handles[$0].x - point.x, handles[$0].y - point.y) <= radius }
+        if !core.contains(point),
+           let handle = handles.indices.first(where: { hypot(handles[$0].x - point.x, handles[$0].y - point.y) <= radius }) {
+            return .handle(handle)
+        }
+        guard rect.contains(point) else { return .outside }
+        let selected = document.getSelectedLayers().first
+        if selected?.hitTestHandle(point: point) != nil || selected?.contains(point: point) == true
+            || document.layers.contains(where: { $0.isVisible && $0.contains(point: point) }) {
+            return .annotation
+        }
+        return .inside
     }
 
     private func cursorForCropHandle(_ handle: Int) -> NSCursor {
@@ -1639,17 +1698,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
         let lineHeight: CGFloat = 19.0
-        let gap: CGFloat = 10.0
-        let blockHeight = lineHeight * CGFloat(lines.count)
-        // Below the frame, or inside its bottom edge when there is no room under it
-        let belowY = r.maxY + gap * px
-        let fitsBelow = belowY + blockHeight * px <= canvas.maxY
-        let topY = fitsBelow ? belowY : max(r.minY + gap * px, r.maxY - (gap + blockHeight) * px)
+        let widest = lines.map { NSAttributedString(string: $0, attributes: attrs).size().width + 12.0 }.max() ?? 0
+        let origin = Self.cropLabelOrigin(selection: r, canvas: canvas, blockSize: CGSize(width: widest, height: lineHeight * CGFloat(lines.count)), px: px)
+        let topY = origin.y
 
         let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = nsCtx
-        context.translateBy(x: r.midX, y: topY)
+        context.translateBy(x: origin.x, y: topY)
         context.scaleBy(x: px, y: px)
         for (i, line) in lines.enumerated() {
             let text = NSAttributedString(string: line, attributes: attrs)
@@ -1663,6 +1719,24 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         NSGraphicsContext.restoreGraphicsState()
 
         context.restoreGState()
+    }
+
+    /// Top-center of the label block (canvas units): below the selection, else above it, else inside its
+    /// bottom edge; shifted sideways to stay on the canvas. `blockSize` is in screen points, `px` = canvas units per point.
+    static func cropLabelOrigin(selection r: CGRect, canvas: CGRect, blockSize: CGSize, px: CGFloat) -> CGPoint {
+        let gap = 10.0 * px, height = blockSize.height * px, halfWidth = blockSize.width / 2.0 * px
+        let y: CGFloat
+        if r.maxY + gap + height <= canvas.maxY {
+            y = r.maxY + gap
+        } else if r.minY - gap - height >= canvas.minY {
+            y = r.minY - gap - height
+        } else {
+            y = max(canvas.minY, r.maxY - gap - height)
+        }
+        let margin = 4.0 * px
+        let lo = canvas.minX + halfWidth + margin, hi = canvas.maxX - halfWidth - margin
+        let x = lo <= hi ? min(max(r.midX, lo), hi) : canvas.midX
+        return CGPoint(x: x, y: y)
     }
 
     // MARK: - Keyboard Modifiers & Shortcuts (Section 3)
@@ -1684,8 +1758,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return
         }
 
-        // Esc removes a crop selection first, leaving everything else as it is
-        if cropSelection != nil {
+        // Esc removes a crop selection (or one being started) first, leaving everything else as it is
+        if cropSelection != nil || cropGesture != nil {
             clearCropSelection()
             return
         }

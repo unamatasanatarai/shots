@@ -236,6 +236,16 @@ public final class FilterLayer: AnnotationLayer {
         let image: CGImage
     }
     private var filterCache: [FilterCacheEntry] = []
+
+    /// Drops cached results filtered from other images, so a replaced (cropped) image is not kept alive
+    public func dropCachedFilters(notFrom image: CGImage) {
+        filterCache.removeAll { $0.source !== image }
+    }
+
+    /// Number of cached results that were filtered from `image` (tests)
+    func cachedFilterCount(from image: CGImage) -> Int {
+        filterCache.filter { $0.source === image }.count
+    }
     private static let filterCacheLimit = 8
 
     private static let colorSpaceSRGB = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
