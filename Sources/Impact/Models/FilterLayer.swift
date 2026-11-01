@@ -232,6 +232,7 @@ public final class FilterLayer: AnnotationLayer {
         let rect: CGRect
         let mode: FilterMode
         let intensity: CGFloat
+        let source: CGImage // the image filtered (a crop replaces the document image)
         let image: CGImage
     }
     private var filterCache: [FilterCacheEntry] = []
@@ -327,7 +328,7 @@ public final class FilterLayer: AnnotationLayer {
 
     /// Returns a cached filtered image whose rect contains `area`, filtering a padded rect on a miss
     private func filteredImage(covering area: CGRect, of originalImage: CGImage, imageBounds: CGRect) -> FilterCacheEntry? {
-        if let hit = filterCache.lastIndex(where: { $0.mode == filterMode && $0.intensity == intensity && $0.rect.contains(area) }) {
+        if let hit = filterCache.lastIndex(where: { $0.source === originalImage && $0.mode == filterMode && $0.intensity == intensity && $0.rect.contains(area) }) {
             let entry = filterCache.remove(at: hit)
             filterCache.append(entry)
             return entry
@@ -358,7 +359,7 @@ public final class FilterLayer: AnnotationLayer {
         }
         guard let image = filtered else { return nil }
 
-        let entry = FilterCacheEntry(rect: padded, mode: filterMode, intensity: intensity, image: image)
+        let entry = FilterCacheEntry(rect: padded, mode: filterMode, intensity: intensity, source: originalImage, image: image)
         if filterCache.count >= Self.filterCacheLimit { filterCache.removeFirst() }
         filterCache.append(entry)
         return entry

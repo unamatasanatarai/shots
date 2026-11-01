@@ -699,7 +699,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         stack.frame = NSRect(x: 76, y: 0, width: initialW, height: bounds.height)
 
         // 1. Tool buttons: Select [V] (ALWAYS VISIBLE)
-        let selectBtn = ModernToolbarButton(image: ModernToolbarButton.ufoPointerIcon, tooltip: "Select [V]")
+        let selectBtn = ModernToolbarButton(image: ModernToolbarButton.ufoPointerIcon, tooltip: "Select / Crop [V]")
         selectBtn.onAction = { [weak self] in
             guard let self = self else { return }
             self.canvasView?.document.activeTool = .select

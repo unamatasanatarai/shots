@@ -1417,7 +1417,7 @@ public enum EditorTests {
             let toolbar = EditorToolbarView(canvasView: canvas)
             let selectBtn = toolbar.toolButtons[.select]
             assert(selectBtn != nil, "Toolbar must have a .select tool button")
-            assert(selectBtn?.tooltipText == "Select [V]", "Select button tooltip must be 'Select [V]'")
+            assert(selectBtn?.tooltipText == "Select / Crop [V]", "Select button tooltip must be 'Select / Crop [V]'")
             assert(toolbar.pinButton?.tooltipText == "Always on Top", "Pin button tooltip must be 'Always on Top'")
 
             // 4. Sleek Move & Resizing Cursors
@@ -4091,6 +4091,127 @@ public enum EditorTests {
             assert(abs(canvas.zoomScale - 1.0) < 0.001, "Canvas zoomScale must be 1.0")
             canvas.endCalloutEditing()
 
+            quietClose(doc, panel)
+        }
+        testRunner("Editor - Crop Makes A New Image: Shifts Annotations, Drops Outside Ones, Grows Elastically, Undo/Redo") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let originalImage = doc.originalImage
+            let inside = RectangleLayer(rect: CGRect(x: 120, y: 120, width: 40, height: 40))
+            let crossing = ArrowLayer(start: CGPoint(x: 150, y: 150), end: CGPoint(x: 400, y: 150), strokeWidth: 4.0)
+            let outside = RectangleLayer(rect: CGRect(x: 500, y: 400, width: 40, height: 40))
+            let spotlight = FilterLayer(rects: [CGRect(x: 90, y: 110, width: 30, height: 30), CGRect(x: 500, y: 300, width: 30, height: 30)], filterMode: .spotlight)
+            doc.layers = [spotlight, inside, crossing, outside]
+            doc.computeElasticBounds()
+            let before = doc.activeCanvasBounds
+
+            let didCrop = doc.crop(to: CGRect(x: 100.4, y: 99.6, width: 200, height: 150))
+            assert(didCrop, "Crop must succeed")
+            assert(doc.originalImage.width == 200 && doc.originalImage.height == 150, "The image must become the pixel-snapped crop")
+            assert(doc.originalImageBounds == CGRect(x: 0, y: 0, width: 200, height: 150), "The cropped image starts at the origin like a new image")
+            assert(doc.layers.contains { ($0 as? RectangleLayer)?.rect == CGRect(x: 20, y: 20, width: 40, height: 40) }, "Annotations inside must shift with the crop")
+            assert(!doc.layers.contains { $0.id == outside.id }, "Annotation entirely outside the crop must be removed")
+            assert(spotlight.rects == [CGRect(x: 0, y: 10, width: 20, height: 30)], "Spotlight areas must be trimmed to the crop and shifted, got \(spotlight.rects)")
+            // The arrow crossing the edge is kept whole, so the canvas grows past the image like any image
+            assert(doc.layers.contains { $0.id == crossing.id }, "Annotation crossing the edge must remain")
+            assert(doc.activeCanvasBounds.width > 200, "The canvas must grow to fit an annotation past the new edge")
+
+            doc.removeLayer(id: crossing.id)
+            assert(doc.activeCanvasBounds == CGRect(x: 0, y: 0, width: 200, height: 150), "Without overhang the canvas is the cropped image")
+            let rendered = doc.renderComposition()
+            assert(rendered?.width == 200 && rendered?.height == 150, "Export must be the crop size")
+
+            // Dragging an annotation out of bounds grows the cropped canvas
+            let arrow = ArrowLayer(start: CGPoint(x: 100, y: 100), end: CGPoint(x: 260, y: 100), strokeWidth: 4.0)
+            doc.addLayer(arrow)
+            assert(doc.activeCanvasBounds.maxX > 260, "Elastic growth must work after a crop")
+            doc.undo() // arrow
+            doc.undo() // removeLayer
+            doc.undo() // crop
+            assert(doc.originalImage === originalImage, "Undo must restore the original image")
+            assert(doc.activeCanvasBounds == before, "Undo must restore the uncropped canvas")
+            assert(doc.layers.contains { ($0 as? RectangleLayer)?.rect == outside.rect }, "Undo must restore removed annotations")
+            doc.redo()
+            assert(doc.originalImage.width == 200, "Redo must reapply the crop")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Crop Past The Image Edge Keeps Transparent Area And Pixels") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let w = doc.originalImageBounds.width, h = doc.originalImageBounds.height
+            doc.addLayer(ArrowLayer(start: CGPoint(x: w - 50, y: h - 50), end: CGPoint(x: w + 80, y: h + 80), strokeWidth: 4.0))
+            let crop = CGRect(x: w - 100, y: h - 100, width: 150, height: 150)
+            assert(doc.crop(to: crop), "Crop including the elastic area must succeed")
+            assert(doc.originalImage.width == 150 && doc.originalImage.height == 150, "Elastic area must be part of the new image")
+            // Pixels land where they were (top-left coordinates), and the part past the old edge is transparent
+            func rgba(_ image: CGImage, _ x: Int, _ y: Int) -> [UInt8] {
+                var px = [UInt8](repeating: 0, count: 4)
+                let ctx = CGContext(data: &px, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                ctx.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+                return px
+            }
+            doc.undo()
+            let original = doc.originalImage
+            doc.redo()
+            for (x, y) in [(5, 5), (90, 20), (20, 90)] {
+                let a = rgba(doc.originalImage, x, y), b = rgba(original, Int(w) - 100 + x, Int(h) - 100 + y)
+                assert(zip(a, b).allSatisfy { abs(Int($0) - Int($1)) <= 2 }, "Cropped pixel (\(x),\(y)) must match the original: \(a) vs \(b)")
+            }
+            assert(rgba(doc.originalImage, 120, 120)[3] == 0, "The area past the old image edge must be transparent")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Editor - Select Tool Drag Makes Crop Selection: Move, Resize, Esc, Click Outside, Enter") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            assert(doc.activeTool == .select, "Select is the default tool")
+
+            // Drag on empty canvas draws the selection
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300, y: 250)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300, y: 250)))
+            assert(canvas.cropSelection == CGRect(x: 100, y: 100, width: 200, height: 150), "Drag must create the crop selection, got \(String(describing: canvas.cropSelection))")
+            assert(doc.layers.isEmpty, "A crop selection must not add layers")
+
+            // Dragging the inside moves it
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 200, y: 200)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 220, y: 210)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 220, y: 210)))
+            assert(canvas.cropSelection == CGRect(x: 120, y: 110, width: 200, height: 150), "Dragging inside must move the selection")
+
+            // Bottom-right handle resizes it
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 320, y: 260)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 340, y: 300)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 340, y: 300)))
+            assert(canvas.cropSelection == CGRect(x: 120, y: 110, width: 220, height: 190), "Handle drag must resize the selection")
+
+            // Esc removes it, without changing the document
+            canvas.keyDown(with: key("\u{1b}", 53, window: panel))
+            assert(canvas.cropSelection == nil, "Esc must remove the selection")
+            assert(doc.activeCanvasBounds.width > 400, "Esc must not crop")
+
+            // A click outside (on the overlay) removes it
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300, y: 250)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300, y: 250)))
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 500, y: 450)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 500, y: 450)))
+            assert(canvas.cropSelection == nil, "Clicking outside must remove the selection")
+
+            // Enter crops; undo restores
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300, y: 250)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300, y: 250)))
+            canvas.keyDown(with: key("\r", 36, window: panel))
+            assert(canvas.cropSelection == nil, "Enter must consume the selection")
+            assert(doc.activeCanvasBounds == CGRect(x: 0, y: 0, width: 200, height: 150), "Enter must crop to the selection")
+            canvas.keyDown(with: key("z", 6, .command, window: panel))
+            assert(doc.activeCanvasBounds.width > 400, "Cmd+Z must undo the crop")
+
+            // Switching tools drops a pending selection
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300, y: 250)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300, y: 250)))
+            doc.activeTool = .rectangle
+            assert(canvas.cropSelection == nil, "Changing tool must remove the crop selection")
             quietClose(doc, panel)
         }
     }

@@ -129,6 +129,9 @@ public final class EditorPanel: NSPanel {
             canvasView.handleEscapeKey()
             return
         }
+        if (event.keyCode == 36 || event.keyCode == 76), canvasView.commitCropSelection() { // Return / keypad Enter
+            return
+        }
         if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers?.lowercased() == "o" {
             ImpactAppCoordinator.shared.openImageFileDialog()
             return

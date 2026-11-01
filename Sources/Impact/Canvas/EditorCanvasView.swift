@@ -25,6 +25,16 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var canvasTrackingArea: NSTrackingArea?
     private var currentMouseCanvasPoint: CGPoint?
 
+    // Crop selection (Select tool): dragging on empty canvas draws it; Enter crops, Esc or a click outside removes it
+    public private(set) var cropSelection: CGRect?
+    private enum CropGesture {
+        case pending(start: CGPoint)          // press outside any selection; a drag turns it into .creating
+        case creating(start: CGPoint)
+        case resizing(handle: Int, initial: CGRect)
+        case moving(initial: CGRect, start: CGPoint)
+    }
+    private var cropGesture: CropGesture?
+
     // Zoom & Pan
     public var zoomScale: CGFloat = 1.0
     public var onCloseRequested: (() -> Void)?
@@ -127,8 +137,18 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             self?.canvasBoundsDidChange()
         }
 
+        document.onImageChanged = { [weak self] image in
+            guard let self = self else { return }
+            self.imageView.image = image
+            self.layoutCanvasSubviews()
+            self.needsDisplay = true
+        }
+
         // Switching to any other tool finishes the session; the new tool stays active
         document.onActiveToolChanged = { [weak self] tool in
+            if tool != .select {
+                self?.clearCropSelection()
+            }
             guard let self = self, !self.isEndingCalloutEditing, tool != .callout, tool != .text, tool != .arrowText, self.isEditingCallout else { return }
             self.finishCalloutEditing(switchToSelect: false)
         }
@@ -144,6 +164,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         self.activeHandleIndex = nil
         self.activeDraggingRectIndex = nil
         self.initialRectForDrag = nil
+        self.cropSelection = nil
+        self.cropGesture = nil
         self.hoveredLayer = nil
         self.hoverOutlineLayer = nil
         self.zoomScale = 1.0
@@ -273,6 +295,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // 5. Draw Active Selection Handles & UI
         drawSelectionHandles(in: context)
+
+        // 5b. Crop selection: dims everything outside it, annotations included, as the crop removes them
+        drawCropSelection(in: context)
 
         // 6. Draw Brush Outline Preview (Highlighter or Pen)
         if (document.activeTool == .highlighter || document.activeTool == .pen), activeCreatingLayer == nil, let pt = currentMouseCanvasPoint {
@@ -444,6 +469,21 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         clearHoverStateImmediately()
 
+        // An active crop selection owns the mouse: handles resize it, the inside moves it,
+        // a press outside removes it (and a drag from there starts a new one)
+        if document.activeTool == .select, let selection = cropSelection {
+            if let handle = cropHandleIndex(at: point, in: selection) {
+                cropGesture = .resizing(handle: handle, initial: selection)
+            } else if selection.contains(point) {
+                cropGesture = .moving(initial: selection, start: point)
+            } else {
+                clearCropSelection()
+                cropGesture = .pending(start: point)
+            }
+            needsDisplay = true
+            return
+        }
+
         // Check handle click on currently selected layer or any visible layer
         if let selected = document.getSelectedLayers().first,
            let handleIndex = selected.hitTestHandle(point: point) {
@@ -578,6 +618,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     document.activeTool = .select
                 }
                 (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
+                // Dragging on empty canvas draws a crop selection
+                cropGesture = .pending(start: point)
             }
 
         case .arrow, .arrowText:
@@ -702,6 +744,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             pendingEditCallout = nil
         }
         didDragSinceMouseDown = true
+
+        if cropGesture != nil {
+            updateCropGesture(to: point)
+            lastDragPoint = point
+            return
+        }
 
         let delta = CGPoint(x: point.x - lastDragPoint.x, y: point.y - lastDragPoint.y)
 
@@ -957,6 +1005,16 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     override public func mouseUp(with event: NSEvent) {
+        if cropGesture != nil {
+            if case .creating = cropGesture, let selection = cropSelection,
+               document.normalizedCropRect(selection) == nil {
+                cropSelection = nil // too small to crop to
+            }
+            cropGesture = nil
+            updateCursorForPoint(canvasPoint(from: event))
+            needsDisplay = true
+            return
+        }
         if let callout = pendingEditCallout {
             pendingEditCallout = nil
             // The mouseDown drag snapshot is a no-op; the editing session records its own step
@@ -1368,6 +1426,19 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             return
         }
 
+        if document.activeTool == .select, let selection = cropSelection {
+            if case .moving = cropGesture {
+                NSCursor.sleekMove.set()
+            } else if let handle = cropHandleIndex(at: point, in: selection) {
+                cursorForCropHandle(handle).set()
+            } else if selection.contains(point) {
+                NSCursor.sleekMove.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+            return
+        }
+
         // While actively dragging a layer's body, maintain the sleek 4-directional move cursor
         if activeDraggingLayer != nil && activeHandleIndex == nil {
             NSCursor.sleekMove.set()
@@ -1418,6 +1489,182 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
     }
 
+    // MARK: - Crop Selection
+
+    private static let cropDimCGColor = CGColor(gray: 0.0, alpha: 0.5)
+    private static let cropLineLightCGColor = CGColor(gray: 1.0, alpha: 0.9)
+    private static let cropLineDarkCGColor = CGColor(gray: 0.0, alpha: 0.6)
+    private static let cropLabelBackgroundCGColor = CGColor(gray: 0.0, alpha: 0.55)
+
+    /// Removes the crop selection without cropping
+    public func clearCropSelection() {
+        guard cropSelection != nil || cropGesture != nil else { return }
+        cropSelection = nil
+        cropGesture = nil
+        needsDisplay = true
+    }
+
+    /// Sets the crop selection (clamped to the canvas), as a drag would; nil removes it
+    public func setCropSelection(_ rect: CGRect?) {
+        cropSelection = rect.map { $0.standardized.intersection(document.activeCanvasBounds) }.flatMap { $0.isNull ? nil : $0 }
+        needsDisplay = true
+    }
+
+    /// Crops to the selection (Enter). False when there is no selection to crop to.
+    @discardableResult
+    public func commitCropSelection() -> Bool {
+        guard let selection = cropSelection, !isEditingCallout else { return false }
+        cropSelection = nil
+        cropGesture = nil
+        if document.crop(to: selection) {
+            clearHoverStateImmediately()
+            (window as? EditorPanel)?.scaleToFit()
+        }
+        needsDisplay = true
+        return true
+    }
+
+    private func updateCropGesture(to rawPoint: CGPoint) {
+        guard let gesture = cropGesture else { return }
+        let canvas = document.activeCanvasBounds
+        let point = CGPoint(x: min(max(rawPoint.x, canvas.minX), canvas.maxX),
+                            y: min(max(rawPoint.y, canvas.minY), canvas.maxY))
+        switch gesture {
+        case .pending(let start):
+            // A click stays a click until the pointer moves more than 3 pt
+            guard hypot(rawPoint.x - start.x, rawPoint.y - start.y) > 3.0 else { return }
+            cropGesture = .creating(start: start)
+            updateCropGesture(to: rawPoint)
+            return
+        case .creating(let start):
+            cropSelection = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
+                                   width: abs(point.x - start.x), height: abs(point.y - start.y))
+        case .resizing(let handle, let initial):
+            cropSelection = Self.resize(initial, handle: handle, to: point)
+        case .moving(let initial, let start):
+            // Moves as a whole, stopping at the canvas edges
+            var moved = initial.offsetBy(dx: rawPoint.x - start.x, dy: rawPoint.y - start.y)
+            moved.origin.x = min(max(moved.minX, canvas.minX), canvas.maxX - moved.width)
+            moved.origin.y = min(max(moved.minY, canvas.minY), canvas.maxY - moved.height)
+            cropSelection = moved
+            NSCursor.sleekMove.set()
+        }
+        needsDisplay = true
+    }
+
+    /// Handle order matches FilterLayer: 0 TL, 1 T, 2 TR, 3 R, 4 BR, 5 B, 6 BL, 7 L
+    private static func cropHandlePoints(of r: CGRect) -> [CGPoint] {
+        [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
+         CGPoint(x: r.maxX, y: r.midY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.midX, y: r.maxY),
+         CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)]
+    }
+
+    private func cropHandleIndex(at point: CGPoint, in rect: CGRect) -> Int? {
+        // Hit area stays about 10 screen points at any zoom
+        let radius = 10.0 / max(zoomScale, 0.01)
+        let handles = Self.cropHandlePoints(of: rect)
+        return handles.indices.first { hypot(handles[$0].x - point.x, handles[$0].y - point.y) <= radius }
+    }
+
+    private func cursorForCropHandle(_ handle: Int) -> NSCursor {
+        switch handle {
+        case 0, 4: return NSCursor.sleekResizeDiagonalNWSE
+        case 2, 6: return NSCursor.sleekResizeDiagonalNESW
+        case 1, 5: return NSCursor.sleekResizeUpDown
+        default: return NSCursor.sleekResizeLeftRight
+        }
+    }
+
+    /// Drags one handle of `initial` to `point`, keeping the opposite side fixed (handles may cross over)
+    static func resize(_ initial: CGRect, handle: Int, to point: CGPoint) -> CGRect {
+        var minX = initial.minX, maxX = initial.maxX, minY = initial.minY, maxY = initial.maxY
+        switch handle {
+        case 0: minX = point.x; minY = point.y
+        case 1: minY = point.y
+        case 2: maxX = point.x; minY = point.y
+        case 3: maxX = point.x
+        case 4: maxX = point.x; maxY = point.y
+        case 5: maxY = point.y
+        case 6: minX = point.x; maxY = point.y
+        default: minX = point.x
+        }
+        return CGRect(x: min(minX, maxX), y: min(minY, maxY), width: abs(maxX - minX), height: abs(maxY - minY))
+    }
+
+    /// Dimmed outside, a sharp dashed frame, square handles and the size label with the Enter hint below
+    private func drawCropSelection(in context: CGContext) {
+        guard let raw = cropSelection else { return }
+        let canvas = document.activeCanvasBounds
+        // The frame shows the exact pixels the crop will keep
+        let r = document.normalizedCropRect(raw) ?? raw.standardized
+        let px = 1.0 / max(zoomScale, 0.01) // one screen point in canvas units
+
+        context.saveGState()
+
+        let dim = CGMutablePath()
+        dim.addRect(canvas)
+        dim.addRect(r)
+        context.addPath(dim)
+        context.setFillColor(Self.cropDimCGColor)
+        context.fillPath(using: .evenOdd)
+
+        // Sharp corners, square caps: a dark line under light dashes reads on any background
+        context.setLineWidth(px)
+        context.setLineJoin(.miter)
+        context.setLineCap(.butt)
+        let frame = r.insetBy(dx: px / 2.0, dy: px / 2.0)
+        context.setStrokeColor(Self.cropLineDarkCGColor)
+        context.stroke(frame)
+        context.setStrokeColor(Self.cropLineLightCGColor)
+        context.setLineDash(phase: 0, lengths: [4.0 * px, 4.0 * px])
+        context.stroke(frame)
+        context.setLineDash(phase: 0, lengths: [])
+
+        // Square handles, sharp like the frame (hidden while the selection is being drawn)
+        if case .creating = cropGesture {} else {
+            let side = 7.0 * px
+            for p in Self.cropHandlePoints(of: r) {
+                let handle = CGRect(x: p.x - side / 2.0, y: p.y - side / 2.0, width: side, height: side)
+                context.setFillColor(Self.handleFillCGColor)
+                context.fill(handle)
+                context.setStrokeColor(Self.cropLineDarkCGColor)
+                context.setLineWidth(px)
+                context.stroke(handle)
+            }
+        }
+
+        // Labels at a constant screen size: draw in a context scaled back to screen points
+        let w = Int(r.width.rounded()), h = Int(r.height.rounded())
+        let lines = ["\(w)×\(h)px", "↩ to crop"]
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let lineHeight: CGFloat = 19.0
+        let gap: CGFloat = 10.0
+        let blockHeight = lineHeight * CGFloat(lines.count)
+        // Below the frame, or inside its bottom edge when there is no room under it
+        let belowY = r.maxY + gap * px
+        let fitsBelow = belowY + blockHeight * px <= canvas.maxY
+        let topY = fitsBelow ? belowY : max(r.minY + gap * px, r.maxY - (gap + blockHeight) * px)
+
+        let nsCtx = NSGraphicsContext(cgContext: context, flipped: true)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        context.translateBy(x: r.midX, y: topY)
+        context.scaleBy(x: px, y: px)
+        for (i, line) in lines.enumerated() {
+            let text = NSAttributedString(string: line, attributes: attrs)
+            let size = text.size()
+            let pill = CGRect(x: -size.width / 2.0 - 6.0, y: CGFloat(i) * lineHeight, width: size.width + 12.0, height: lineHeight - 2.0)
+            context.setFillColor(Self.cropLabelBackgroundCGColor)
+            context.addPath(CGPath(roundedRect: pill, cornerWidth: 4.0, cornerHeight: 4.0, transform: nil))
+            context.fillPath()
+            text.draw(at: CGPoint(x: -size.width / 2.0, y: pill.midY - size.height / 2.0))
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        context.restoreGState()
+    }
+
     // MARK: - Keyboard Modifiers & Shortcuts (Section 3)
 
     override public func flagsChanged(with event: NSEvent) {
@@ -1434,6 +1681,12 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         // Safety net: Esc normally reaches the editor first (cancelOperation:)
         if isEditingCallout {
             endCalloutEditing()
+            return
+        }
+
+        // Esc removes a crop selection first, leaving everything else as it is
+        if cropSelection != nil {
+            clearCropSelection()
             return
         }
 
@@ -1512,6 +1765,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     override public func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
             handleEscapeKey()
+            return
+        }
+        if (event.keyCode == 36 || event.keyCode == 76), commitCropSelection() { // Return / keypad Enter
             return
         }
         if event.keyCode == 123 || event.keyCode == 124 || event.keyCode == 125 || event.keyCode == 126 { // Arrow keys

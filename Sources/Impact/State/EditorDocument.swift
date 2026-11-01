@@ -3,8 +3,9 @@ import CoreGraphics
 import AppKit
 
 public final class EditorDocument {
-    public let originalImage: CGImage
-    public let originalImageBounds: CGRect
+    /// The base image. A crop replaces it (undo restores the previous one).
+    public private(set) var originalImage: CGImage
+    public private(set) var originalImageBounds: CGRect
     public private(set) var activeCanvasBounds: CGRect
 
     public var layers: [AnnotationLayer] = []
@@ -75,10 +76,31 @@ public final class EditorDocument {
     }
 
     // Undo / Redo
-    private var undoStack: [[AnnotationLayer]] = []
-    private var redoStack: [[AnnotationLayer]] = []
+    private struct Snapshot {
+        let layers: [AnnotationLayer]
+        let image: CGImage
+    }
+    private var undoStack: [Snapshot] = []
+    private var redoStack: [Snapshot] = []
+
+    private func currentSnapshot() -> Snapshot {
+        Snapshot(layers: layers.map { $0.clone() }, image: originalImage)
+    }
+
+    private func restore(_ snapshot: Snapshot) {
+        layers = snapshot.layers
+        if snapshot.image !== originalImage {
+            replaceImage(snapshot.image)
+        }
+        selectedLayerIDs = selectedLayerIDs.intersection(Set(layers.map { $0.id }))
+        isModified = true
+        computeElasticBounds()
+        onNeedsDisplay?()
+    }
 
     public var onBoundsChanged: ((CGRect) -> Void)?
+    /// Fires when a crop (or undoing one) replaces the base image
+    public var onImageChanged: ((CGImage) -> Void)?
     public var onNeedsDisplay: (() -> Void)?
 
     public init(image: CGImage) {
@@ -305,15 +327,14 @@ public final class EditorDocument {
 
     public func saveSnapshot() {
         snapshotSerial += 1
-        let snapshot = layers.map { $0.clone() }
-        undoStack.append(snapshot)
+        undoStack.append(currentSnapshot())
         if undoStack.count > 50 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
     /// Pushes a snapshot captured earlier (e.g. before a callout editing session) as one undo step
     public func pushSnapshot(_ snapshot: [AnnotationLayer]) {
-        undoStack.append(snapshot)
+        undoStack.append(Snapshot(layers: snapshot, image: originalImage))
         if undoStack.count > 50 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
@@ -325,22 +346,92 @@ public final class EditorDocument {
 
     public func undo() {
         guard let previous = undoStack.popLast() else { return }
-        redoStack.append(layers.map { $0.clone() })
-        layers = previous
-        selectedLayerIDs = selectedLayerIDs.intersection(Set(layers.map { $0.id }))
-        isModified = true
-        computeElasticBounds()
-        onNeedsDisplay?()
+        redoStack.append(currentSnapshot())
+        restore(previous)
     }
 
     public func redo() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append(layers.map { $0.clone() })
-        layers = next
+        undoStack.append(currentSnapshot())
+        restore(next)
+    }
+
+    // MARK: - Crop
+
+    /// Smallest crop, in canvas points, on either side
+    public static let minimumCropSize: CGFloat = 4.0
+
+    /// The rect a crop to `rect` would produce: snapped to whole pixels and kept inside the current canvas.
+    /// Nil when too small.
+    public func normalizedCropRect(_ rect: CGRect) -> CGRect? {
+        let r = rect.standardized
+        let snapped = CGRect(x: r.minX.rounded(), y: r.minY.rounded(), width: r.width.rounded(), height: r.height.rounded())
+            .intersection(activeCanvasBounds)
+        guard !snapped.isNull, snapped.width >= Self.minimumCropSize, snapped.height >= Self.minimumCropSize else { return nil }
+        return snapped
+    }
+
+    /// Crops to `rect` (canvas coordinates) as one undo step. The result behaves exactly like a newly opened
+    /// image: the selected pixels become the image (areas past the old image edge stay transparent) and
+    /// annotations shift with it, so the canvas grows elastically again when something extends past the edge.
+    /// Annotations entirely outside are removed; blur and spotlight areas are trimmed to the crop; other
+    /// annotations crossing the edge are kept whole, and the canvas grows to fit them.
+    @discardableResult
+    public func crop(to rect: CGRect) -> Bool {
+        guard let frame = normalizedCropRect(rect), frame != activeCanvasBounds,
+              let cropped = Self.image(originalImage, croppedTo: frame) else { return false }
+        saveSnapshot()
+
+        let shift = CGPoint(x: -frame.minX, y: -frame.minY)
+        layers.removeAll { layer in
+            if let filter = layer as? FilterLayer {
+                filter.rects = filter.rects.compactMap { r in
+                    let kept = r.standardized.intersection(frame)
+                    return kept.isNull || kept.width < 1 || kept.height < 1 ? nil : kept.offsetBy(dx: shift.x, dy: shift.y)
+                }
+                filter.detectedTextRects = filter.detectedTextRects.compactMap { r in
+                    let kept = r.intersection(frame)
+                    return kept.isNull ? nil : kept.offsetBy(dx: shift.x, dy: shift.y)
+                }
+                if let idx = filter.selectedRectIndex, idx >= filter.rects.count {
+                    filter.selectedRectIndex = filter.rects.isEmpty ? nil : filter.rects.count - 1
+                }
+                return filter.rects.isEmpty
+            }
+            guard layer.getBoundingBox().intersects(frame) else { return true }
+            layer.move(by: shift)
+            return false
+        }
         selectedLayerIDs = selectedLayerIDs.intersection(Set(layers.map { $0.id }))
+
+        replaceImage(cropped)
         isModified = true
         computeElasticBounds()
         onNeedsDisplay?()
+        return true
+    }
+
+    /// The pixels of `frame` (top-left image coordinates); parts outside the image are transparent
+    static func image(_ image: CGImage, croppedTo frame: CGRect) -> CGImage? {
+        let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        if imageBounds.contains(frame) {
+            return image.cropping(to: frame)
+        }
+        let width = Int(frame.width), height = Int(frame.height)
+        let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? colorSpaceSRGB
+        guard width > 0, height > 0, let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return nil }
+        // CGContext is bottom-left: the image's top edge sits at (frame.minY) below the crop's top edge
+        context.draw(image, in: CGRect(x: -frame.minX, y: frame.maxY - imageBounds.height, width: imageBounds.width, height: imageBounds.height))
+        return context.makeImage()
+    }
+
+    private func replaceImage(_ image: CGImage) {
+        originalImage = image
+        originalImageBounds = CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height))
+        onImageChanged?(image)
     }
 
     // MARK: - Elastic Canvas Auto-Sizing (Section 4)
@@ -354,7 +445,15 @@ public final class EditorDocument {
 
         // 2. Iterate through all active layers. Get layerBounds = layer.getBoundingBox()
         for layer in layers where layer.isVisible {
-            let layerBounds = layer.getBoundingBox()
+            // Blur/spotlight areas count by their own rects, not the padded hit box: an area reaching the
+            // image edge (e.g. trimmed by a crop) must not grow the canvas
+            let layerBounds: CGRect
+            if let filter = layer as? FilterLayer {
+                guard let first = filter.rects.first else { continue }
+                layerBounds = filter.rects.dropFirst().reduce(first.standardized) { $0.union($1.standardized) }
+            } else {
+                layerBounds = layer.getBoundingBox()
+            }
             // 3. If layerBounds extends outside computedBounds: union + 10px strict padding
             if layerBounds.minX < computedMinX {
                 computedMinX = layerBounds.minX - 10.0
