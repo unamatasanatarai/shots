@@ -11,33 +11,10 @@ source "${script_dir}/config.sh"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/${APP_NAME,,}"
 mkdir -p "$cache_dir"
 
-sdk_file="${cache_dir}/sdk_path.tmp"
-xcrun --show-sdk-path >"$sdk_file" 2>/dev/null
-if [[ ! -s "$sdk_file" ]]; then
-    rm -f "$sdk_file"
-    printf '%s\n' "Error: Failed to obtain SDK path from xcrun" >&2
-    exit 1
-fi
-IFS= read -r sdk_path <"$sdk_file"
-rm -f "$sdk_file"
+source "${script_dir}/build-common.sh"
+parse_build_args "$@"
 
-# Increment and track build number
-build_num_file="${project_dir}/BUILD_NUMBER"
-if [[ -f "$build_num_file" ]]; then
-    IFS= read -r current_build <"$build_num_file"
-    current_build="${current_build//[[:space:]]/}"
-    if [[ "$current_build" =~ ^[0-9]+$ ]]; then
-        build_number=$((current_build + 1))
-    else
-        build_number=1
-    fi
-else
-    build_number=1
-fi
-printf '%s\n' "$build_number" >"$build_num_file"
-export BUILD_NUMBER="$build_number"
-
-build_dir="build"
+build_dir="$(arch_build_dir "$target_arch")"
 app_name="Impact"
 bundle_id="com.unamatasanatarai.Impact"
 app_dir="${build_dir}/${app_name}.app"
@@ -67,13 +44,8 @@ while IFS= read -r file; do
     sources+=("$file")
 done < <(find Sources/Impact -type f -name "*.swift" | sort)
 
-printf '%s\n' "Compiling ${app_name} v${VERSION} (Build ${BUILD_NUMBER}) (${#sources[@]} source files)..."
-swiftc -sdk "$sdk_path" \
-    -O \
-    -whole-module-optimization \
-    -Xlinker -dead_strip \
-    "${sources[@]}" \
-    -o "${macos_dir}/${app_name}"
+printf '%s\n' "Compiling ${app_name} v${VERSION} (${target_arch}, Build ${BUILD_NUMBER}) (${#sources[@]} source files)..."
+compile_swift "$target_arch" "${macos_dir}/${app_name}" "$cache_dir" "${sources[@]}"
 
 printf '%s\n' "Generating ${app_name} Info.plist..."
 cat <<EOF >"${contents_dir}/Info.plist"
@@ -128,13 +100,7 @@ cat <<EOF >"${contents_dir}/Info.plist"
 </plist>
 EOF
 
-printf '%s\n' "Signing ${app_name} bundle..."
-codesign --force --deep --sign - --requirements "=designated => identifier \"${bundle_id}\"" "$app_dir"
-
-printf '%s\n' "Refreshing macOS LaunchServices cache..."
-touch "$app_dir"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R "$app_dir" >/dev/null 2>&1 || true
-qlmanage -r cache >/dev/null 2>&1 || true
+sign_and_register "$app_dir" "$bundle_id" "$target_arch"
 
 printf '%s\n' "✅ Build complete:"
 printf '%s\n' "   - ${app_dir}"

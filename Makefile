@@ -15,17 +15,17 @@ kill:
 	@killall "Impact" 2>/dev/null || pkill -x "Impact" 2>/dev/null || true
 	@sleep 0.2
 
-## build-shots: Compile Shots.app only
+## build-shots: Compile Shots.app only (optional: ARCH=native|Silicon|Intel|universal)
 build-shots:
-	@./scripts/build-shots.sh
+	@./scripts/build-shots.sh $(ARCH)
 
-## build-impact: Compile Impact.app only
+## build-impact: Compile Impact.app only (optional: ARCH=native|Silicon|Intel|universal)
 build-impact:
-	@./scripts/build-impact.sh
+	@./scripts/build-impact.sh $(ARCH)
 
-## dmg: Build styled DMG distribution package for Shots and Impact
+## dmg: Build styled DMG distribution package for Shots and Impact (optional: ARCH=native|Silicon|Intel|universal|all; non-native builds go to build/<Arch>/)
 dmg:
-	@./scripts/build_dmg.sh
+	@./scripts/build_dmg.sh $(ARCH)
 
 ## run: Kill running apps, rebuild impact & shots, and launch Shots.app
 run: kill build-impact run-shots

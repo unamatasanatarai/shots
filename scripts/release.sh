@@ -300,8 +300,8 @@ printf '%s\n' "$response_text" >"$summaries_file"
     cat "$summaries_file"
 } >"$release_notes_file"
 
-dmg_name="${APP_NAME}-${version}.dmg"
-dmg_path="${build_dir}/${dmg_name}"
+dmg_silicon="${build_dir}/${APP_NAME}-${version}-Silicon.dmg"
+dmg_intel="${build_dir}/${APP_NAME}-${version}-Intel.dmg"
 
 # Preview comes before confirmation, tests, file changes, commits,
 # tags, pushes, and publishing.
@@ -314,7 +314,8 @@ printf 'Target version:  v%s\n' "$version"
 printf 'Commits reviewed: %s\n' "$commit_count"
 printf 'Gemini model:    %s\n' "$GEMINI_MODEL"
 printf 'Bundle ID:       %s\n' "${BUNDLE_ID:-"(not configured)"}"
-printf 'DMG artifact:    %s\n' "$dmg_path"
+printf 'DMG artifacts:   %s\n' "$dmg_silicon"
+printf '                 %s\n' "$dmg_intel"
 printf '\n%s\n' 'Release notes to be published:'
 printf '%s\n' '--------------------------------------------------'
 cat "$release_notes_file"
@@ -344,11 +345,19 @@ if ! git diff --quiet -- VERSION; then
     git commit -m "chore(release): bump version to v${version}"
 fi
 
-info "Building release DMG..."
-"${script_dir}/build_dmg.sh"
+info "Building release DMGs for Silicon and Intel..."
+"${script_dir}/build_dmg.sh" all
 
-[[ -f "$dmg_path" ]] ||
-    die "Expected DMG artifact was not created: ${dmg_path}"
+[[ -f "$dmg_silicon" ]] ||
+    die "Expected DMG artifact was not created: ${dmg_silicon}"
+[[ -f "$dmg_intel" ]] ||
+    die "Expected DMG artifact was not created: ${dmg_intel}"
+
+# build_dmg.sh bumps BUILD_NUMBER; commit it so the tag points at the build number shipped in both DMGs.
+if ! git diff --quiet -- BUILD_NUMBER; then
+    git add -- BUILD_NUMBER
+    git commit -m "chore(release): build $(<BUILD_NUMBER) for v${version}" -- BUILD_NUMBER
+fi
 
 # Recheck before creating the tag.
 git show-ref --verify --quiet "refs/tags/v${version}" &&
@@ -372,7 +381,7 @@ git push origin "v${version}"
 if command -v gh >/dev/null 2>&1; then
     info "Publishing GitHub release v${version}..."
 
-    gh release create "v${version}" "$dmg_path" \
+    gh release create "v${version}" "$dmg_silicon" "$dmg_intel" \
         --title "${APP_NAME} v${version}" \
         --notes-file "$release_notes_file"
 else
@@ -381,4 +390,4 @@ else
         >&2
 fi
 
-printf '\n%s\n' "Release v${version} completed: ${dmg_path}"
+printf '\n%s\n' "Release v${version} completed: ${dmg_silicon}, ${dmg_intel}"

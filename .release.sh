@@ -10,10 +10,13 @@ APP_NAME="Shots"
 
 TEST_CMD='./scripts/test-shots.sh && ./scripts/test-impact.sh'
 
-# Rebuild both apps after the VERSION bump: build_dmg.sh alone reuses any existing bundles in build/,
-# which would ship the previous version's apps. The builds bump BUILD_NUMBER; committing it before ggrel
-# tags makes the tagged commit match the build number inside the shipped apps.
-BUILD_CMD='./scripts/build-shots.sh && ./scripts/build-impact.sh && ./scripts/build_dmg.sh &&
+# Build both Apple Silicon (arm64) and Intel (x86_64) DMG packages for release.
+# build_dmg.sh all bumps BUILD_NUMBER once; committing it before ggrel tags
+# ensures the tagged commit matches the build number embedded in both shipped DMGs.
+BUILD_CMD='./scripts/build_dmg.sh all &&
   { git diff --quiet -- BUILD_NUMBER || git commit -m "chore(release): build $(cat BUILD_NUMBER) for v${version}" -- BUILD_NUMBER; }'
 
-RELEASE_ASSETS=('build/Shots-${version}.dmg')
+RELEASE_ASSETS=(
+    'build/Shots-${version}-Silicon.dmg'
+    'build/Shots-${version}-Intel.dmg'
+)
