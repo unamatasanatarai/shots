@@ -4664,7 +4664,7 @@ public enum EditorTests {
         }
 
         testRunner("Audit - Opening Another Image Keeps The Current Annotations (Saved Like Close)") {
-            try withoutClipboard {
+            withoutClipboard {
                 let (dir, a) = tempSource("a.png")
                 defer { try? FileManager.default.removeItem(at: dir) }
                 let doc = EditorDocument(image: solidImage(200, 100))
@@ -4678,7 +4678,7 @@ public enum EditorTests {
         }
 
         testRunner("Audit - Edits After Save Are Saved On Close; Undoing Everything Saves Nothing") {
-            try withoutClipboard {
+            withoutClipboard {
                 let (dir, src) = tempSource("src.png")
                 defer { try? FileManager.default.removeItem(at: dir) }
                 let doc = EditorDocument(image: solidImage(200, 100))
@@ -4781,7 +4781,7 @@ public enum EditorTests {
         }
 
         testRunner("Audit - Keys Reach The Canvas Even When The Window Handles Them; Cmd+S Saves") {
-            try withoutClipboard {
+            withoutClipboard {
                 let (dir, src) = tempSource("k.png")
                 defer { try? FileManager.default.removeItem(at: dir) }
                 let doc = EditorDocument(image: solidImage(400, 300))
