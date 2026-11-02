@@ -4999,17 +4999,17 @@ public enum EditorTests {
             let cl = r.clone()
             assert((cl as? DimensionLayer)?.labelBounds == r.labelBounds, "Clones (undo) keep the label bounds")
         }
-        testRunner("Ruler - A Click Or Tiny Drag Creates No Zero-Length Ruler") {
+        testRunner("Ruler - A Click Creates No Zero-Length Ruler, But 1 px Is A Valid Distance") {
             let (doc, panel, canvas) = try makeCalloutPanel()
             doc.activeTool = .dimension
             let serial = doc.snapshotSerial
             // Plain click
             canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 200, y: 200)))
             canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 200, y: 200)))
-            // Jitter under 6pt
+            // Sub-pixel jitter (rounds to 0 px)
             canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 300, y: 200)))
-            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 303, y: 202)))
-            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 303, y: 202)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300.4, y: 200.3)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300.4, y: 200.3)))
             assert(!doc.layers.contains { $0 is DimensionLayer }, "A click must not leave a 0px ruler")
             assert(doc.snapshotSerial == serial, "A rejected ruler must not add an undo step")
             assert(!doc.hasContent, "A rejected ruler is not unsaved work")
@@ -5019,6 +5019,17 @@ public enum EditorTests {
             canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 160, y: 100)))
             canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 160, y: 100)))
             assert(doc.layers.filter { $0 is DimensionLayer }.count == 1, "A real drag creates a ruler")
+            // A 1 px ruler is a valid measurement
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 300)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 101, y: 300)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 101, y: 300)))
+            let rulers = doc.layers.compactMap { $0 as? DimensionLayer }
+            assert(rulers.count == 2, "A 1 px drag creates a ruler, got \(rulers.count)")
+            if let one = rulers.last {
+                let len = hypot(one.end.x - one.start.x, one.end.y - one.start.y)
+                assert(abs(len - 1) < 0.01, "The ruler measures 1 px, got \(len)")
+                assert(!one.badgeRect.intersects(CGRect(x: 100, y: 300, width: 1, height: 0).insetBy(dx: 0, dy: -DimensionLayer.tickHalfLength)), "1 px ruler's label sits beside it")
+            }
             quietClose(doc, panel)
         }
         testRunner("Audit - Quitting Saves Unsaved Annotations Like Closing Does (Incl. Text Being Typed)") {

@@ -1161,9 +1161,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                     let dy = line.end.y - line.start.y
                     isValidSize = dx * dx + dy * dy >= 36.0
                 } else if let dim = creating as? DimensionLayer {
+                    // Any measurable distance is valid (1 px included); only a zero-length click is not
                     let dx = dim.end.x - dim.start.x
                     let dy = dim.end.y - dim.start.y
-                    isValidSize = dx * dx + dy * dy >= 36.0
+                    isValidSize = dx * dx + dy * dy >= 1.0
                 } else if let filter = creating as? FilterLayer {
                     isValidSize = filter.rects.first.map { $0.width >= 6.0 && $0.height >= 6.0 } ?? false
                 } else if let pen = creating as? PenLayer {
