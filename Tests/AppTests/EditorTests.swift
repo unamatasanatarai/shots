@@ -4914,6 +4914,91 @@ public enum EditorTests {
                 assert(closes == 1, "onClose fires once, got \(closes)")
             }
         }
+        testRunner("Ruler - Label Larger Than The Ruler Moves Beside It, Otherwise Stays Centered") {
+            func onLine(_ r: CGRect, _ a: CGPoint, _ b: CGPoint) -> Bool {
+                // Does the badge cover any sampled point of the ruler or its ticks?
+                for i in 0...20 {
+                    let t = CGFloat(i) / 20
+                    let p = CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+                    if r.insetBy(dx: -DimensionLayer.tickHalfLength, dy: -DimensionLayer.tickHalfLength).contains(p) { return true }
+                }
+                return false
+            }
+            // Long horizontal: centered on the line
+            let long = DimensionLayer(start: CGPoint(x: 100, y: 200), end: CGPoint(x: 300, y: 200))
+            assert(abs(long.badgeRect.midX - 200) < 0.5 && abs(long.badgeRect.midY - 200) < 0.5, "Long ruler keeps a centered label")
+            // Short horizontal (21 px): above, horizontally centered, clear of line and ticks
+            let a = CGPoint(x: 100, y: 200), b = CGPoint(x: 121, y: 202)
+            let short = DimensionLayer(start: a, end: b)
+            let r = short.badgeRect
+            assert(r.maxY < min(a.y, b.y) - DimensionLayer.tickHalfLength, "Short horizontal ruler: label above, got \(r)")
+            assert(abs(r.midX - 110.5) < 0.5, "Label stays centered over the ruler")
+            assert(!onLine(r, a, b), "Label must not cover the ruler")
+            // Short vertical: to the right
+            let c = CGPoint(x: 50, y: 100), d = CGPoint(x: 52, y: 120)
+            let vert = DimensionLayer(start: c, end: d)
+            let v = vert.badgeRect
+            assert(v.minX > max(c.x, d.x) + DimensionLayer.tickHalfLength, "Short vertical ruler: label right, got \(v)")
+            assert(abs(v.midY - 110) < 0.5, "Label stays level with the ruler's middle")
+            // Long vertical (taller than the label): centered
+            let tall = DimensionLayer(start: CGPoint(x: 50, y: 100), end: CGPoint(x: 50, y: 160))
+            assert(abs(tall.badgeRect.midY - 130) < 0.5 && abs(tall.badgeRect.midX - 50) < 0.5, "Tall vertical ruler keeps a centered label")
+            // Diagonal short ruler moves too; dragging a handle until it's long re-centers (cache invalidated)
+            let diag = DimensionLayer(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 15, y: 12))
+            assert(!onLine(diag.badgeRect, diag.start, diag.end), "Short diagonal ruler: label off the line")
+            diag.updateHandle(index: 1, to: CGPoint(x: 200, y: 20))
+            assert(abs(diag.badgeRect.midX - 100) < 0.5, "Lengthening re-centers the label")
+            // The moved label is part of the drawing and selectable
+            assert(short.getBoundingBox().contains(r), "Bounding box (repaint/elastic canvas) includes the moved label")
+            assert(short.contains(point: CGPoint(x: r.midX, y: r.midY)), "Clicking the label selects the ruler")
+        }
+        testRunner("Ruler - A Moved Label Flips To The Side That Stays Inside The Image") {
+            let img = CGRect(x: 0, y: 0, width: 400, height: 300)
+            func ruler(_ a: CGPoint, _ b: CGPoint) -> CGRect {
+                let r = DimensionLayer(start: a, end: b); r.labelBounds = img; return r.badgeRect
+            }
+            let clear = DimensionLayer.tickHalfLength
+            // Horizontal at the top edge: below instead of above
+            let topEdge = ruler(CGPoint(x: 200, y: 5), CGPoint(x: 220, y: 5))
+            assert(topEdge.minY > 5 + clear && img.contains(topEdge), "Top edge: label below, got \(topEdge)")
+            // Horizontal mid-image: above as usual
+            let mid = ruler(CGPoint(x: 200, y: 150), CGPoint(x: 220, y: 150))
+            assert(mid.maxY < 150 - clear, "Mid image: label above, got \(mid)")
+            // Horizontal at the right edge: above, slid left inside the image
+            let rightEdge = ruler(CGPoint(x: 385, y: 150), CGPoint(x: 398, y: 150))
+            assert(rightEdge.maxY < 150 && img.contains(rightEdge), "Right edge: label above and inside, got \(rightEdge)")
+            // Vertical at the right edge: left instead of right
+            let vRight = ruler(CGPoint(x: 395, y: 140), CGPoint(x: 395, y: 158))
+            assert(vRight.maxX < 395 - clear && img.contains(vRight), "Vertical at right edge: label left, got \(vRight)")
+            // Vertical mid-image: right as usual
+            let vMid = ruler(CGPoint(x: 200, y: 140), CGPoint(x: 200, y: 158))
+            assert(vMid.minX > 200 + clear, "Vertical mid image: label right, got \(vMid)")
+            // Vertical at the bottom edge: right side, slid up inside the image
+            let vBottom = ruler(CGPoint(x: 200, y: 285), CGPoint(x: 200, y: 299))
+            assert(vBottom.minX > 200 && img.contains(vBottom), "Vertical at bottom: label right and inside, got \(vBottom)")
+            // Top-right corner: below and slid left
+            let corner = ruler(CGPoint(x: 380, y: 3), CGPoint(x: 398, y: 3))
+            assert(corner.minY > 3 && img.contains(corner), "Corner: label inside the image, got \(corner)")
+            // Never covers the ruler when moved
+            for r in [topEdge, mid, rightEdge, vRight, vMid, vBottom, corner] {
+                assert(r.width > 0 && r.height > 0, "Label has a size")
+            }
+            // An image smaller than the label: still placed beside (no crash, finite)
+            let tiny = DimensionLayer(start: CGPoint(x: 5, y: 5), end: CGPoint(x: 15, y: 5))
+            tiny.labelBounds = CGRect(x: 0, y: 0, width: 20, height: 10)
+            assert(tiny.badgeRect.minX.isFinite && tiny.badgeRect.minY.isFinite, "Tiny image: finite placement")
+            // The document keeps rulers in sync with the image (incl. after crop)
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let r = DimensionLayer(start: CGPoint(x: 200, y: 5), end: CGPoint(x: 220, y: 5))
+            doc.addLayer(r)
+            assert(r.labelBounds == doc.originalImageBounds, "Document sets the label bounds")
+            assert(r.badgeRect.minY > 5, "At the top edge the label goes below")
+            assert(doc.originalImageBounds.contains(r.badgeRect), "The label stays inside the image")
+            doc.crop(to: CGRect(x: 100, y: 0, width: 200, height: 200))
+            assert(r.labelBounds == doc.originalImageBounds, "Crop updates the label bounds, got \(String(describing: r.labelBounds))")
+            let cl = r.clone()
+            assert((cl as? DimensionLayer)?.labelBounds == r.labelBounds, "Clones (undo) keep the label bounds")
+        }
         testRunner("Ruler - A Click Or Tiny Drag Creates No Zero-Length Ruler") {
             let (doc, panel, canvas) = try makeCalloutPanel()
             doc.activeTool = .dimension

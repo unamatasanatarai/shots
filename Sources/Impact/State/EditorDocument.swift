@@ -566,6 +566,7 @@ public final class EditorDocument {
 
         // 2. Iterate through all active layers. Get layerBounds = layer.getBoundingBox()
         for layer in layers where layer.isVisible {
+            if let ruler = layer as? DimensionLayer { ruler.labelBounds = originalImageBounds }
             // Blur/spotlight areas count by their own rects, not the padded hit box: an area reaching the
             // image edge (e.g. trimmed by a crop) must not grow the canvas
             let layerBounds: CGRect

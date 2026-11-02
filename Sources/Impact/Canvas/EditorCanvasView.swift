@@ -722,6 +722,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 color: document.activeColor,
                 strokeWidth: 2.0
             )
+            dim.labelBounds = document.originalImageBounds
             activeCreatingLayer = dim
 
         case .spotlight:
