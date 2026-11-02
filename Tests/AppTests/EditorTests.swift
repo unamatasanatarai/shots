@@ -4999,6 +4999,70 @@ public enum EditorTests {
             let cl = r.clone()
             assert((cl as? DimensionLayer)?.labelBounds == r.labelBounds, "Clones (undo) keep the label bounds")
         }
+        testRunner("Ruler - Dragging An End Shrinks It Down To 1 px Without Grabbing The Other End") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let ruler = DimensionLayer(start: CGPoint(x: 100, y: 200), end: CGPoint(x: 140, y: 200))
+            doc.addLayer(ruler)
+            doc.selectLayer(ruler)
+            // Shrink the end step by step: 40 → 1 px, re-grabbing the end each time like a user would
+            var x: CGFloat = 140
+            for target in stride(from: 139.0, through: 101.0, by: -1.0) {
+                canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: x, y: 200)))
+                canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: target, y: 200)))
+                canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: target, y: 200)))
+                x = target
+                assert(ruler.start == CGPoint(x: 100, y: 200), "Start must stay put while the end is dragged to \(target), got start \(ruler.start)")
+                assert(abs(ruler.end.x - target) < 0.01, "End follows the drag to \(target), got \(ruler.end)")
+            }
+            // At 1 px, grabbing the start moves the start
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 200)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 90, y: 200)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 90, y: 200)))
+            assert(ruler.start == CGPoint(x: 90, y: 200) && ruler.end == CGPoint(x: 101, y: 200), "Start handle moved, got \(ruler.start) \(ruler.end)")
+            assert(doc.layers.contains { $0 === ruler }, "The ruler stays")
+            quietClose(doc, panel)
+        }
+        testRunner("Editor - Short Lines And Arrows: Grabbing An End Takes That End, Not The Other One") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let line = LineLayer(start: CGPoint(x: 100, y: 100), end: CGPoint(x: 112, y: 100))
+            doc.addLayer(line); doc.selectLayer(line)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 112, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 104, y: 100)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 104, y: 100)))
+            assert(line.start == CGPoint(x: 100, y: 100) && line.end == CGPoint(x: 104, y: 100), "Line end shrinks, got \(line.start) \(line.end)")
+            let arrow = ArrowLayer(start: CGPoint(x: 100, y: 300), control: CGPoint(x: 107, y: 300), end: CGPoint(x: 114, y: 300), strokeWidth: 4)
+            doc.addLayer(arrow); doc.selectLayer(arrow)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 114, y: 300)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 120, y: 300)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 120, y: 300)))
+            assert(arrow.start == CGPoint(x: 100, y: 300), "Arrow start stays, got \(arrow.start)")
+            assert(arrow.end.x > 114, "Arrow end follows the drag, got \(arrow.end)")
+            // Equidistant ties and out-of-reach points
+            assert(nearestHandle([CGPoint(x: 0, y: 0), CGPoint(x: 2, y: 0)], to: CGPoint(x: 1, y: 0), radius: 8) == 0, "Tie: first handle")
+            assert(nearestHandle([CGPoint(x: 0, y: 0)], to: CGPoint(x: 9, y: 0), radius: 8) == nil, "Out of reach: none")
+            quietClose(doc, panel)
+        }
+        testRunner("Ruler - The Gap Between The End Ticks Equals The Measured Distance (1, 2, 10, 37 px)") {
+            for length in [1, 2, 10, 37] {
+                let w = 120, h = 60
+                let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                let y: CGFloat = 30, x0: CGFloat = 40
+                let ruler = DimensionLayer(start: CGPoint(x: x0, y: y), end: CGPoint(x: x0 + CGFloat(length), y: y), color: "#FF0000")
+                ruler.labelBounds = CGRect(x: 0, y: 0, width: w, height: h)
+                // Keep the label away from the sampled row: it goes on the y < 30 side ("above" in canvas terms)
+                ruler.draw(in: ctx, scale: 1)
+                let image = ctx.makeImage()!
+                // Sample a row through the ticks but off the main line and away from the label
+                let row = Int(y) + 4
+                let sampleY = image.height - 1 - row   // rgbaPixel counts rows from the top
+                func red(_ x: Int) -> Bool { let p = rgbaPixel(image, x, sampleY); return p[3] > 128 && p[0] > 128 }
+                let gap = (Int(x0)..<(Int(x0) + length)).filter { red($0) }
+                assert(gap.isEmpty, "\(length) px: nothing drawn inside the measured span, got red at \(gap)")
+                assert(red(Int(x0) - 1) && red(Int(x0) - 2), "\(length) px: start tick sits just left of the span")
+                assert(red(Int(x0) + length) && red(Int(x0) + length + 1), "\(length) px: end tick sits just right of the span")
+                assert(!red(Int(x0) - 3) && !red(Int(x0) + length + 2), "\(length) px: ticks are 2 px wide, no more")
+            }
+        }
         testRunner("Ruler - A Click Creates No Zero-Length Ruler, But 1 px Is A Valid Distance") {
             let (doc, panel, canvas) = try makeCalloutPanel()
             doc.activeTool = .dimension

@@ -147,15 +147,7 @@ public final class DimensionLayer: AnnotationLayer {
     private func aY_t(_ t: CGFloat) -> CGFloat { start.y + t * (end.y - start.y) }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        let rSq = radius * radius
-        let dx0 = point.x - start.x
-        let dy0 = point.y - start.y
-        if dx0 * dx0 + dy0 * dy0 <= rSq { return 0 }
-
-        let dx1 = point.x - end.x
-        let dy1 = point.y - end.y
-        if dx1 * dx1 + dy1 * dy1 <= rSq { return 1 }
-        return nil
+        nearestHandle([start, end], to: point, radius: radius)
     }
 
     public func move(by delta: CGPoint) {
@@ -185,7 +177,8 @@ public final class DimensionLayer: AnnotationLayer {
         context.setLineWidth(strokeWidth)
         context.setLineCap(.round)
 
-        // Main measurement line
+        // Main measurement line (butt caps: round ones would spill past the measured span into the gap's ends)
+        context.setLineCap(.butt)
         context.move(to: start)
         context.addLine(to: end)
         context.strokePath()
@@ -200,12 +193,20 @@ public final class DimensionLayer: AnnotationLayer {
         let cosP = cos(perp) * tickHalf
         let sinP = sin(perp) * tickHalf
 
-        let s1 = CGPoint(x: start.x - cosP, y: start.y - sinP)
-        let s2 = CGPoint(x: start.x + cosP, y: start.y + sinP)
+        // The ticks sit just outside the measured span: their inner edges are exactly at start and end,
+        // so a 10 px measurement shows 10 px between them (a centered tick would cover half its width)
+        let out = strokeWidth / 2.0
+        let ox = cos(angle) * out, oy = sin(angle) * out
+        let sTick = CGPoint(x: start.x - ox, y: start.y - oy)
+        let eTick = CGPoint(x: end.x + ox, y: end.y + oy)
+        context.setLineCap(.butt)
+
+        let s1 = CGPoint(x: sTick.x - cosP, y: sTick.y - sinP)
+        let s2 = CGPoint(x: sTick.x + cosP, y: sTick.y + sinP)
         context.move(to: s1); context.addLine(to: s2); context.strokePath()
 
-        let e1 = CGPoint(x: end.x - cosP, y: end.y - sinP)
-        let e2 = CGPoint(x: end.x + cosP, y: end.y + sinP)
+        let e1 = CGPoint(x: eTick.x - cosP, y: eTick.y - sinP)
+        let e2 = CGPoint(x: eTick.x + cosP, y: eTick.y + sinP)
         context.move(to: e1); context.addLine(to: e2); context.strokePath()
 
         // Display exact pixel distance badge in the center

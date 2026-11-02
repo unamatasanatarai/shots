@@ -117,20 +117,7 @@ public final class ArrowLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        let rSq = radius * radius
-        let dx0 = point.x - start.x
-        let dy0 = point.y - start.y
-        if dx0 * dx0 + dy0 * dy0 <= rSq { return 0 }
-
-        let dx1 = point.x - control.x
-        let dy1 = point.y - control.y
-        if dx1 * dx1 + dy1 * dy1 <= rSq { return 1 }
-
-        let dx2 = point.x - end.x
-        let dy2 = point.y - end.y
-        if dx2 * dx2 + dy2 * dy2 <= rSq { return 2 }
-
-        return nil
+        nearestHandle([start, control, end], to: point, radius: radius)
     }
 
     public func move(by delta: CGPoint) {

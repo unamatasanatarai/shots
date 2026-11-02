@@ -187,3 +187,14 @@ public extension NSColor {
     }
 }
 
+
+/// The index of the handle nearest to `point` within `radius`. Handles of a short line/arrow/ruler overlap,
+/// and taking the first match would grab the far end (the shape flips) instead of the one under the cursor
+func nearestHandle(_ handles: [CGPoint], to point: CGPoint, radius: CGFloat) -> Int? {
+    var best: (index: Int, distSq: CGFloat)?
+    for (i, h) in handles.enumerated() {
+        let d = (point.x - h.x) * (point.x - h.x) + (point.y - h.y) * (point.y - h.y)
+        if d <= radius * radius, d < (best?.distSq ?? .infinity) { best = (i, d) }
+    }
+    return best?.index
+}

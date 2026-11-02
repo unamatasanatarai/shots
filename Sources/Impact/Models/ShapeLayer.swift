@@ -486,16 +486,7 @@ public final class LineLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        let hitRadius = max(radius, 10.0)
-        let hitRadiusSq = hitRadius * hitRadius
-        let dx0 = point.x - start.x
-        let dy0 = point.y - start.y
-        if dx0 * dx0 + dy0 * dy0 <= hitRadiusSq { return 0 }
-
-        let dx1 = point.x - end.x
-        let dy1 = point.y - end.y
-        if dx1 * dx1 + dy1 * dy1 <= hitRadiusSq { return 1 }
-        return nil
+        nearestHandle([start, end], to: point, radius: max(radius, 10.0))
     }
 
     public func move(by delta: CGPoint) {
