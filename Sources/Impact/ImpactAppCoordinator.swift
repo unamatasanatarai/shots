@@ -39,7 +39,8 @@ public final class ImpactAppCoordinator {
     public func openEmptyEditor() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            if let existing = self.activePanel, existing.isVisible {
+            if let existing = self.activePanel, existing.isVisible || existing.isMiniaturized {
+                if existing.isMiniaturized { existing.deminiaturize(nil) }
                 existing.makeKeyAndOrderFront(nil)
                 self.activate()
                 return
@@ -70,7 +71,8 @@ public final class ImpactAppCoordinator {
             guard let self = self else { return }
 
             // If the single main window already exists, load the image directly into it
-            if let existing = self.activePanel, existing.isVisible {
+            if let existing = self.activePanel, existing.isVisible || existing.isMiniaturized {
+                if existing.isMiniaturized { existing.deminiaturize(nil) }
                 existing.loadImage(image: image, title: title, sourceFileURL: sourceFileURL)
                 existing.makeKeyAndOrderFront(nil)
                 self.activate()

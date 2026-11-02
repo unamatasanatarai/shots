@@ -7,19 +7,38 @@ public final class DimensionLayer: AnnotationLayer {
     public let type: LayerType = .dimension
     public var zIndex: Int
     public var isVisible: Bool = true
-    public var color: String
+    public var color: String {
+        didSet { _cachedBadge = nil }
+    }
     public var strokeWidth: CGFloat {
         didSet { _cachedBoundingBox = nil }
     }
 
     public var start: CGPoint {
-        didSet { _cachedBoundingBox = nil }
+        didSet { _cachedBoundingBox = nil; _cachedBadge = nil }
     }
     public var end: CGPoint {
-        didSet { _cachedBoundingBox = nil }
+        didSet { _cachedBoundingBox = nil; _cachedBadge = nil }
     }
 
     private var _cachedBoundingBox: CGRect?
+
+    /// The distance badge: its text and pill rect, built once per geometry/color change instead of every frame
+    private var _cachedBadge: (text: NSAttributedString, rect: CGRect)?
+    private static let badgeFont = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .bold)
+
+    private func badge() -> (text: NSAttributedString, rect: CGRect) {
+        if let cached = _cachedBadge { return cached }
+        let dx = end.x - start.x, dy = end.y - start.y
+        let distance = Int(round(sqrt(dx * dx + dy * dy)))
+        let text = NSAttributedString(string: "\(distance) px", attributes: [.font: Self.badgeFont, .foregroundColor: NSColor.white])
+        let size = text.size()
+        let mid = CGPoint(x: (start.x + end.x) / 2.0, y: (start.y + end.y) / 2.0)
+        let rect = CGRect(x: mid.x - size.width / 2.0 - 5.0, y: mid.y - size.height / 2.0 - 2.0,
+                          width: size.width + 10.0, height: size.height + 4.0)
+        _cachedBadge = (text, rect)
+        return (text, rect)
+    }
 
     public init(
         id: UUID = UUID(),
@@ -44,7 +63,8 @@ public final class DimensionLayer: AnnotationLayer {
         let minY = min(start.y, end.y) - pad
         let maxX = max(start.x, end.x) + pad
         let maxY = max(start.y, end.y) + pad
-        let box = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        // The badge is centered on the line and can be wider than the padding (vertical rulers); +4 for its shadow
+        let box = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).union(badge().rect.insetBy(dx: -4, dy: -4))
         _cachedBoundingBox = box
         return box
     }
@@ -133,24 +153,7 @@ public final class DimensionLayer: AnnotationLayer {
         context.move(to: e1); context.addLine(to: e2); context.strokePath()
 
         // Display exact pixel distance badge in the center
-        let distance = Int(round(sqrt(dx * dx + dy * dy)))
-        let text = "\(distance) px"
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .bold)
-
-        let textAttrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.white
-        ]
-        let attrString = NSAttributedString(string: text, attributes: textAttrs)
-        let textSize = attrString.size()
-
-        let mid = CGPoint(x: (start.x + end.x) / 2.0, y: (start.y + end.y) / 2.0)
-        let badgeRect = CGRect(
-            x: mid.x - textSize.width / 2.0 - 5.0,
-            y: mid.y - textSize.height / 2.0 - 2.0,
-            width: textSize.width + 10.0,
-            height: textSize.height + 4.0
-        )
+        let (attrString, badgeRect) = badge()
 
         // Badge pill background
         context.setFillColor(FastColor.shared.cgColor(hex: color, alpha: 0.90))

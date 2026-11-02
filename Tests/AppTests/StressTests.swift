@@ -478,27 +478,48 @@ public struct StressTests {
 
     // MARK: 6. AppSettings Concurrency Stress
 
+    /// The real threading contract: settings change on the main thread (Preferences, SwiftUI) while capture
+    /// work reads them from background queues. Readers must never crash or see a torn value.
+    /// (Writing an ObservableObject from background threads is not supported, so the test no longer does it.)
     private static func testAppSettingsConcurrentMutations() throws {
         let settings = AppSettings.shared
         let group = DispatchGroup()
         let queue = DispatchQueue(label: "shots.stress.settings", attributes: .concurrent)
+        let lock = NSLock()
+        var badReads = 0
+        let done = DispatchSemaphore(value: 0)
+        var stop = false
 
-        for i in 0..<50 {
+        for _ in 0..<50 {
             group.enter()
             queue.async {
-                if i % 3 == 0 {
-                    settings.jpgQuality = (i % 100) + 1
-                } else if i % 3 == 1 {
-                    settings.saveToDisk = (i % 2 == 0)
-                } else {
-                    settings.copyToClipboard = (i % 2 != 0)
+                var reads = 0
+                while true {
+                    lock.lock(); let finished = stop; lock.unlock()
+                    if finished && reads > 0 { break }
+                    let snap = settings.captureSnapshot
+                    let factor = settings.jpgCompressionFactor
+                    _ = settings.resolvedSaveDirectoryURL
+                    if !(1...100).contains(snap.jpgQuality) || factor <= 0 || factor > 1 {
+                        lock.lock(); badReads += 1; lock.unlock()
+                    }
+                    reads += 1
                 }
-                settings.checkForShortcutConflicts()
                 group.leave()
             }
         }
+        queue.async { group.wait(); done.signal() }
 
-        group.wait()
+        for i in 0..<300 { // main-thread writes, as Preferences does
+            settings.jpgQuality = (i % 100) + 1
+            settings.saveToDisk = (i % 2 == 0)
+            settings.copyToClipboard = (i % 3 != 0)
+            settings.checkForShortcutConflicts()
+        }
+        lock.lock(); stop = true; lock.unlock()
+        done.wait()
+
+        assert(badReads == 0, "Background readers must never see an invalid value, saw \(badReads)")
         // Reset to canonical safe defaults
         settings.jpgQuality = 80
         settings.saveToDisk = true

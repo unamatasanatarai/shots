@@ -201,10 +201,9 @@ public struct PreferencesView: View {
                 }
 
                 let carbonMods = KeyCodes.carbonModifiers(from: event.modifierFlags)
-                let isFunctionKey = (event.keyCode >= 122 && event.keyCode <= 131) || event.keyCode >= 96
-
-                // Require at least one modifier key or a function key
-                if carbonMods != 0 || isFunctionKey {
+                // Require at least one modifier key or a true F-key (F1–F20); arrows, Home/End,
+                // Page Up/Down and Help need a modifier, matching what HotkeyManager registers
+                if KeyCodes.isRecordableShortcut(keyCode: event.keyCode, carbonMods: carbonMods) {
                     switch target {
                     case .area:
                         self.settings.hotkeyKeyCode = event.keyCode

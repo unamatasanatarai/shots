@@ -134,8 +134,7 @@ public final class FilterLayer: AnnotationLayer {
             let dx = point.x - hp.x
             let dy = point.y - hp.y
             if dx * dx + dy * dy <= hitRadiusSq {
-                selectedRectIndex = i / 8
-                return i
+                return i // no side effects: hover calls this; the press selects the rect (index / 8)
             }
         }
         return nil
@@ -144,13 +143,17 @@ public final class FilterLayer: AnnotationLayer {
     public func move(by delta: CGPoint) {
         let idx = selectedRectIndex ?? (rects.count - 1)
         if idx >= 0 && idx < rects.count {
+            let moved = rects[idx]
             rects[idx].origin.x += delta.x
             rects[idx].origin.y += delta.y
+            // Text found inside the moved area moves with it
+            detectedTextRects = detectedTextRects.map { moved.intersects($0) ? $0.offsetBy(dx: delta.x, dy: delta.y) : $0 }
         } else {
             for i in 0..<rects.count {
                 rects[i].origin.x += delta.x
                 rects[i].origin.y += delta.y
             }
+            detectedTextRects = detectedTextRects.map { $0.offsetBy(dx: delta.x, dy: delta.y) }
         }
         _cachedBoundingBox = nil
     }
@@ -247,6 +250,10 @@ public final class FilterLayer: AnnotationLayer {
         filterCache.filter { $0.source === image }.count
     }
     private static let filterCacheLimit = 8
+    private static let filterCacheByteBudget = 64 * 1024 * 1024
+
+    /// Bytes held by cached filter results (tests)
+    var cachedFilterBytes: Int { filterCache.reduce(0) { $0 + $1.image.bytesPerRow * $1.image.height } }
 
     private static let colorSpaceSRGB = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
     private static let spotlightDarkMaskColor = CGColor(gray: 0.0, alpha: 0.50)
@@ -370,8 +377,14 @@ public final class FilterLayer: AnnotationLayer {
         guard let image = filtered else { return nil }
 
         let entry = FilterCacheEntry(rect: padded, mode: filterMode, intensity: intensity, source: originalImage, image: image)
-        if filterCache.count >= Self.filterCacheLimit { filterCache.removeFirst() }
+        // A newer result covering an older one makes it useless; then keep the total within a byte budget
+        // (8 entries of a large blur on a Retina capture could otherwise hold hundreds of MB)
+        filterCache.removeAll { $0.source === entry.source && $0.mode == entry.mode && $0.intensity == entry.intensity && entry.rect.contains($0.rect) }
         filterCache.append(entry)
+        while filterCache.count > Self.filterCacheLimit
+                || (filterCache.count > 1 && filterCache.reduce(0, { $0 + $1.image.bytesPerRow * $1.image.height }) > Self.filterCacheByteBudget) {
+            filterCache.removeFirst()
+        }
         return entry
     }
 

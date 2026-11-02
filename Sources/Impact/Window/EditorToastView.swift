@@ -82,15 +82,21 @@ public final class EditorToastView: NSVisualEffectView {
         scheduleDismissal()
     }
 
+    /// Bumped by every (re)scheduled dismissal: a fade-out finishing after the toast was shown again must not remove it
+    private var dismissalGeneration = 0
+
     private func scheduleDismissal() {
         dismissWorkItem?.cancel()
+        dismissalGeneration += 1
+        let generation = dismissalGeneration
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.25
                 self.animator().alphaValue = 0.0
             }, completionHandler: { [weak self] in
-                self?.removeFromSuperview()
+                guard let self = self, self.dismissalGeneration == generation else { return }
+                self.removeFromSuperview()
             })
         }
         dismissWorkItem = work

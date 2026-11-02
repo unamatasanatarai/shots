@@ -39,13 +39,28 @@ public final class RegionSelectionCoordinator {
     /// Pooled panels hold full-screen backing stores: they are released after a while without captures
     private var panelPoolPurge: DispatchWorkItem?
     private static let panelPoolLifetime: TimeInterval = 30
-    public private(set) var isSelecting = false
+    /// internal(set) so tests can simulate an active session without showing overlay windows
+    public internal(set) var isSelecting = false
     private var completionHandler: ((CGImage?) -> Void)?
     private var regionCompletionHandler: ((SelectedRegionInfo?) -> Void)?
     private var rulerCompletionHandler: ((String?) -> Void)?
     private var colorPickerCompletionHandler: ((String?) -> Void)?
     public internal(set) var currentColorPickerValue: String?
     private var colorPickerRefreshTimer: Timer?
+
+    /// Latest live color picker sample, taken once per mouse move / timer tick (never inside draw)
+    struct LiveColorSample {
+        let point: CGPoint
+        let hex: String
+        let rgb: (r: Int, g: Int, b: Int)
+        let color: NSColor
+        let patch: CGImage?
+        /// Raw RGBA bytes of the 9x9 patch, used to detect whether anything on screen changed
+        let patchBytes: [UInt8]
+    }
+    private(set) var liveColorSample: LiveColorSample?
+    /// Primary display height captured when the session starts (avoids NSScreen.screens per mouse move)
+    private var sessionPrimaryHeight: CGFloat = 0
     private var screenSnapshots: [CGDirectDisplayID: CGImage] = [:]
     private var localKeyDownMonitor: Any?
 
@@ -82,7 +97,11 @@ public final class RegionSelectionCoordinator {
             completion(nil)
             return
         }
-        guard !isSelecting else { return }
+        // A session is already active: report "no selection" so callers never hang
+        guard !isSelecting else {
+            completion(nil)
+            return
+        }
         regionCompletionHandler = completion
         startSelection(mode: mode) { _ in }
     }
@@ -92,7 +111,10 @@ public final class RegionSelectionCoordinator {
             completion?(nil)
             return
         }
-        guard !isSelecting else { return }
+        guard !isSelecting else {
+            completion?(nil)
+            return
+        }
         rulerCompletionHandler = completion
         startSelection(mode: .ruler) { _ in }
     }
@@ -102,7 +124,10 @@ public final class RegionSelectionCoordinator {
             completion?(nil)
             return
         }
-        guard !isSelecting else { return }
+        guard !isSelecting else {
+            completion?(nil)
+            return
+        }
         colorPickerCompletionHandler = completion
         startSelection(mode: .colorPicker) { _ in }
     }
@@ -116,7 +141,10 @@ public final class RegionSelectionCoordinator {
             completion(nil)
             return
         }
-        guard !isSelecting else { return }
+        guard !isSelecting else {
+            completion(nil)
+            return
+        }
         isSelecting = true
         activeMode = mode
         activeDelaySeconds = delaySeconds
@@ -153,6 +181,8 @@ public final class RegionSelectionCoordinator {
 
         overlayPanels.removeAll()
         screenSnapshots.removeAll()
+        liveColorSample = nil
+        sessionPrimaryHeight = screens.first?.frame.height ?? 0
 
         panelPoolPurge?.cancel()
         panelPoolPurge = nil
@@ -239,6 +269,7 @@ public final class RegionSelectionCoordinator {
 
         stopLiveColorPickerTimer()
         currentColorPickerValue = nil
+        liveColorSample = nil
 
         removeHotKeys()
         removeEventTap()
@@ -501,12 +532,7 @@ public final class RegionSelectionCoordinator {
             liveStartPoint = nil
 
             if activeMode == .ruler {
-                let dx = abs(end.x - start.x)
-                let dy = abs(end.y - start.y)
-                let dist = hypot(dx, dy)
-                let measurement = (dx < 2 && dy < 2)
-                    ? String(format: "X: %.0f, Y: %.0f px", end.x, end.y)
-                    : String(format: "%.0f × %.0f px (Dist: %.1f px)", dx, dy, dist)
+                let measurement = Self.rulerClipboardText(startCG: start, endCG: end)
                 copyToPasteboard(measurement)
                 OCRNotificationController.shared.show(snippet: "Ruler copied: \(measurement)")
                 finish(with: nil, measurement: measurement, colorHex: nil)
@@ -602,8 +628,8 @@ public final class RegionSelectionCoordinator {
         let scaleX = CGFloat(image.width) / captureRect.width
         let scaleY = CGFloat(image.height) / captureRect.height
 
-        let centerPixelX = max(0, min(Int(round((globalCGPoint.x - captureRect.origin.x) * scaleX)), image.width - 1))
-        let centerPixelY = max(0, min(Int(round((globalCGPoint.y - captureRect.origin.y) * scaleY)), image.height - 1))
+        let centerPixelX = Self.pixelIndex(coordinate: globalCGPoint.x, origin: captureRect.origin.x, scale: scaleX, count: image.width)
+        let centerPixelY = Self.pixelIndex(coordinate: globalCGPoint.y, origin: captureRect.origin.y, scale: scaleY, count: image.height)
 
         let cropRect = CGRect(x: centerPixelX - 4, y: centerPixelY - 4, width: 9, height: 9)
         let patch = image.cropping(to: cropRect)
@@ -638,10 +664,108 @@ public final class RegionSelectionCoordinator {
 
     private func refreshLiveColorPicker() {
         guard isSelecting, activeMode == .colorPicker else { return }
+        let point = liveCurrentPoint ?? CGEvent(source: nil)?.location ?? .zero
+        // Repaint only when the pixels under the loupe (or the sampled point) actually changed
+        guard updateLiveColorSample(at: point) else { return }
         for panel in overlayPanels {
             guard let view = panel.contentView as? RegionSelectionView else { continue }
             view.refreshLiveSample()
         }
+    }
+
+    /// Takes one live sample at `point` and caches it for drawing.
+    /// Returns true when the sample differs from the cached one (a redraw is needed).
+    @discardableResult
+    func updateLiveColorSample(at point: CGPoint) -> Bool {
+        guard let live = sampleLiveColorAndPatch(at: point) else {
+            let changed = liveColorSample != nil
+            liveColorSample = nil
+            return changed
+        }
+        let normalizedPatch = live.patch.flatMap { Self.normalizedPatch($0) }
+        let sample = LiveColorSample(
+            point: point,
+            hex: live.hex,
+            rgb: live.rgb,
+            color: live.color,
+            patch: normalizedPatch?.image ?? live.patch,
+            patchBytes: normalizedPatch?.bytes ?? []
+        )
+        let previous = liveColorSample
+        liveColorSample = sample
+        guard let old = previous else { return true }
+        return old.point != sample.point || old.hex != sample.hex || old.patchBytes != sample.patchBytes
+    }
+
+    /// Redraws a patch into its own small RGBA buffer: the cached sample then does not retain the
+    /// whole capture, and its bytes can be compared cheaply between ticks
+    private static func normalizedPatch(_ patch: CGImage) -> (image: CGImage, bytes: [UInt8])? {
+        let width = patch.width, height = patch.height
+        guard width > 0, height > 0 else { return nil }
+        guard let ctx = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: sRGBColorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ) else { return nil }
+        ctx.draw(patch, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let data = ctx.data, let image = ctx.makeImage() else { return nil }
+        let bytes = Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: width * height * 4))
+        return (image, bytes)
+    }
+
+    // MARK: - Pure helpers (unit tested)
+
+    /// Index of the pixel covering `coordinate` in an image whose pixel 0 starts at `origin`
+    /// (points) with `scale` pixels per point. Pixel i covers [origin + i/scale, origin + (i+1)/scale),
+    /// so this must floor: rounding picks the neighbour once the cursor is past a pixel's midpoint.
+    static func pixelIndex(coordinate: CGFloat, origin: CGFloat, scale: CGFloat, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        let raw = ((coordinate - origin) * scale).rounded(.down)
+        guard raw.isFinite else { return 0 }
+        return max(0, min(Int(raw), count - 1))
+    }
+
+    /// Ruler text shared by the on-screen badge and the clipboard (backing pixels, like the badge)
+    static func rulerMeasurementText(dxPoints: CGFloat, dyPoints: CGFloat, scale: CGFloat) -> String {
+        let dx = abs(dxPoints) * scale
+        let dy = abs(dyPoints) * scale
+        return String(format: "W: %.0f px  H: %.0f px  Dist: %.1f px", dx, dy, hypot(dx, dy))
+    }
+
+    /// Ruler position text shared by badge and clipboard: pixels from the display's top-left corner
+    static func rulerPositionText(xPoints: CGFloat, yPointsFromTop: CGFloat, scale: CGFloat) -> String {
+        let x = Int((xPoints * scale).rounded())
+        let y = Int((yPointsFromTop * scale).rounded())
+        return "X: \(x) px  Y: \(y) px"
+    }
+
+    /// Clipboard text for a finished ruler gesture in global CG coordinates; matches what the badge showed
+    static func rulerClipboardText(
+        startCG: CGPoint,
+        endCG: CGPoint,
+        screenFrame: NSRect,
+        primaryHeight: CGFloat,
+        scale: CGFloat
+    ) -> String {
+        let dx = endCG.x - startCG.x
+        let dy = endCG.y - startCG.y
+        if abs(dx) < 2 && abs(dy) < 2 {
+            let displayTop = primaryHeight - screenFrame.maxY
+            return rulerPositionText(xPoints: endCG.x - screenFrame.minX, yPointsFromTop: endCG.y - displayTop, scale: scale)
+        }
+        return rulerMeasurementText(dxPoints: dx, dyPoints: dy, scale: scale)
+    }
+
+    private static func rulerClipboardText(startCG: CGPoint, endCG: CGPoint) -> String {
+        let screen = CaptureService.shared.screen(containingCGPoint: endCG) ?? NSScreen.main ?? NSScreen.screens.first
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return rulerClipboardText(
+            startCG: startCG,
+            endCG: endCG,
+            screenFrame: screen?.frame ?? .zero,
+            primaryHeight: primaryHeight,
+            scale: screen?.backingScaleFactor ?? 1
+        )
     }
 
     public func sampleColorAtGlobalPoint(_ globalCGPoint: CGPoint) -> (hex: String, rgb: (r: Int, g: Int, b: Int))? {
@@ -666,8 +790,8 @@ public final class RegionSelectionCoordinator {
         let scaleX = CGFloat(image.width) / screenFrame.width
         let scaleY = CGFloat(image.height) / screenFrame.height
 
-        let pixelX = max(0, min(Int(round(localX * scaleX)), image.width - 1))
-        let pixelY = max(0, min(Int(round(localY * scaleY)), image.height - 1))
+        let pixelX = Self.pixelIndex(coordinate: localX, origin: 0, scale: scaleX, count: image.width)
+        let pixelY = Self.pixelIndex(coordinate: localY, origin: 0, scale: scaleY, count: image.height)
 
         return extractColor(from: image, x: pixelX, y: pixelY)
     }
@@ -705,14 +829,22 @@ public final class RegionSelectionCoordinator {
         }
         RegionSelectionView.invisibleCursor.set()
 
-        let screenHeight = NSScreen.screens.first.map { $0.frame.maxY } ?? 0
+        let screenHeight = sessionPrimaryHeight
         let appKitGlobal = NSPoint(x: globalCGPoint.x, y: screenHeight - globalCGPoint.y)
+
+        if activeMode == .colorPicker {
+            // Sample once here; draw() only renders the cached sample
+            updateLiveColorSample(at: globalCGPoint)
+        }
 
         for panel in overlayPanels {
             guard let view = panel.contentView as? RegionSelectionView else { continue }
             let screenFrame = view.targetScreen.frame
 
-            let isOnThisScreen = screenFrame.contains(appKitGlobal)
+            // Containment in CG space: the top row (CG y == 0) maps to AppKit y == frame.maxY,
+            // which NSRect.contains excludes
+            let isOnThisScreen = CaptureService.cgDisplayRect(for: screenFrame, primaryHeight: screenHeight)
+                .contains(globalCGPoint)
             let localPt: NSPoint? = isOnThisScreen ? NSPoint(
                 x: appKitGlobal.x - screenFrame.origin.x,
                 y: appKitGlobal.y - screenFrame.origin.y
@@ -801,7 +933,11 @@ public final class RegionSelectionCoordinator {
                         cropRect: selRect
                     )
                 }
-                self.finish(with: cropped ?? CGDisplayCreateImage(displayID))
+                if cropped == nil {
+                    NSLog("Region capture failed for selection %@", NSStringFromRect(selRect))
+                }
+                // Never substitute a full-display image for a failed region capture
+                self.finish(with: cropped)
             } else {
                 let fullDisplayRect = NSRect(origin: .zero, size: screenFrame.size)
                 let mode: LastCaptureRecord.Mode = (self.activeMode == .ocr)
@@ -952,7 +1088,7 @@ private final class RegionOverlayPanel: NSPanel {
 
 // MARK: - Region Selection View
 
-private final class RegionSelectionView: NSView {
+final class RegionSelectionView: NSView {
     fileprivate private(set) var targetScreen: NSScreen
     fileprivate private(set) var mode: CaptureOverlayMode
     fileprivate private(set) var screenImage: CGImage?
@@ -1044,7 +1180,8 @@ private final class RegionSelectionView: NSView {
     private func dirtyRects() -> [NSRect] {
         var rects: [NSRect] = []
         if let pt = currentPoint ?? currentMousePoint {
-            rects.append(NSRect(x: pt.x - 420, y: pt.y - 280, width: 840, height: 560))
+            let reach = Self.dirtyReach(for: mode)
+            rects.append(NSRect(x: pt.x - reach.width, y: pt.y - reach.height, width: reach.width * 2, height: reach.height * 2))
             if mode == .ruler {
                 // Full-screen alignment guidelines
                 rects.append(NSRect(x: 0, y: round(pt.y) - 2, width: bounds.width, height: 4))
@@ -1055,6 +1192,17 @@ private final class RegionSelectionView: NSView {
             rects.append(normalizedRect(from: start, to: current).insetBy(dx: -6, dy: -6))
         }
         return rects
+    }
+
+    /// Half-extent around the active point that covers everything drawn there in each mode:
+    /// area/OCR: crosshair (32pt) + number badge; ruler: pill badge (~260pt wide);
+    /// color picker: 126pt loupe + 36pt pill placed 20pt away (either side), plus shadow
+    static func dirtyReach(for mode: CaptureOverlayMode) -> NSSize {
+        switch mode {
+        case .area, .ocr: return NSSize(width: 110, height: 50)
+        case .ruler: return NSSize(width: 320, height: 80)
+        case .colorPicker: return NSSize(width: 180, height: 230)
+        }
     }
 
     override var acceptsFirstResponder: Bool { false }
@@ -1208,19 +1356,21 @@ private final class RegionSelectionView: NSView {
 
                 context.restoreGState()
 
-                let scale = targetScreen.backingScaleFactor
-                let dx = abs(current.x - start.x) * scale
-                let dy = abs(current.y - start.y) * scale
-                let dist = hypot(dx, dy)
-                let text = String(format: "W: %.0f px  H: %.0f px  Dist: %.1f px", dx, dy, dist)
+                let text = RegionSelectionCoordinator.rulerMeasurementText(
+                    dxPoints: current.x - start.x,
+                    dyPoints: current.y - start.y,
+                    scale: targetScreen.backingScaleFactor
+                )
                 drawPillBadge(text: text, at: current, in: context)
             }
         } else {
             drawPrecisionCrosshair(at: pt, in: context)
-            let scale = targetScreen.backingScaleFactor
-            let curX = Int(round(pt.x * scale))
-            let curY = Int(round((bounds.height - pt.y) * scale))
-            drawPillBadge(text: "X: \(curX) px  Y: \(curY) px", at: pt, in: context)
+            let text = RegionSelectionCoordinator.rulerPositionText(
+                xPoints: pt.x,
+                yPointsFromTop: bounds.height - pt.y,
+                scale: targetScreen.backingScaleFactor
+            )
+            drawPillBadge(text: text, at: pt, in: context)
         }
     }
 
@@ -1277,16 +1427,13 @@ private final class RegionSelectionView: NSView {
         context.fillEllipse(in: loupeCircleRect)
         context.restoreGState()
 
-        // 2. Draw Magnified 9x9 Pixel Grid (Live Screen Sample)
-        let appKitGlobal = NSPoint(x: targetScreen.frame.origin.x + pt.x, y: targetScreen.frame.origin.y + pt.y)
-        let globalCGPoint = CaptureService.shared.coreGraphicsPoint(from: appKitGlobal)
-
+        // 2. Draw Magnified 9x9 Pixel Grid (cached live sample: never capture the screen inside draw)
         var centerColor = NSColor.black
         var centerHex = "#000000"
         var centerRGB = "rgb(0, 0, 0)"
         var patchImage: CGImage?
 
-        if let sample = RegionSelectionCoordinator.shared.sampleLiveColorAndPatch(at: globalCGPoint) {
+        if let sample = RegionSelectionCoordinator.shared.liveColorSample {
             centerHex = sample.hex
             centerRGB = "rgb(\(sample.rgb.r), \(sample.rgb.g), \(sample.rgb.b))"
             centerColor = sample.color
@@ -1295,8 +1442,8 @@ private final class RegionSelectionView: NSView {
         } else if let img = screenImage {
             let scaleX = CGFloat(img.width) / bounds.width
             let scaleY = CGFloat(img.height) / bounds.height
-            let imgX = Int(round(pt.x * scaleX))
-            let imgY = Int(round((bounds.height - pt.y) * scaleY))
+            let imgX = RegionSelectionCoordinator.pixelIndex(coordinate: pt.x, origin: 0, scale: scaleX, count: img.width)
+            let imgY = RegionSelectionCoordinator.pixelIndex(coordinate: bounds.height - pt.y, origin: 0, scale: scaleY, count: img.height)
             if let sampled = RegionSelectionCoordinator.shared.extractColor(from: img, x: imgX, y: imgY) {
                 centerHex = sampled.hex
                 centerRGB = "rgb(\(sampled.rgb.r), \(sampled.rgb.g), \(sampled.rgb.b))"

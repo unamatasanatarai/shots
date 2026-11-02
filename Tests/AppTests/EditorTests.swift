@@ -41,6 +41,11 @@ public enum EditorTests {
     }()
 
     public static func run(testRunner: (String, () throws -> Void) -> Void) {
+        // Untitled images save into a throwaway folder, never the user's Pictures
+        let saveDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("impact-tests-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.createDirectory(at: saveDir, withIntermediateDirectories: true)
+        EditorPanel.fallbackSaveDirectory = saveDir
+        defer { try? FileManager.default.removeItem(at: saveDir) }
         testRunner("Editor - Load test-image.jpg into EditorDocument") {
             guard let imageURL = resolveTestImageURL(),
                   let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
@@ -1095,7 +1100,7 @@ public enum EditorTests {
             )!
             let img = context.makeImage()!
             let doc = EditorDocument(image: img)
-            doc.isModified = true
+            doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 40, height: 40))) // a real edit
 
             let tempDir = FileManager.default.temporaryDirectory
             let sourceFile = tempDir.appendingPathComponent("arero.jpg")
@@ -1123,7 +1128,7 @@ public enum EditorTests {
 
             // Next session: closing a new modified panel increments to arero-3.jpg without overwriting arero-2.jpg or arero.jpg
             let doc2 = EditorDocument(image: img)
-            doc2.isModified = true
+            doc2.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 40, height: 40)))
             let panel2 = EditorPanel(document: doc2, title: "arero.jpg", sourceFileURL: sourceFile)
             panel2.close()
 
@@ -2946,6 +2951,7 @@ public enum EditorTests {
         func quietClose(_ doc: EditorDocument, _ panel: EditorPanel) {
             doc.layers.removeAll()
             doc.isModified = false
+            panel.shouldSaveOnClose = false
             EditorPanel.copyToClipboardOverride = false
             panel.close()
             EditorPanel.copyToClipboardOverride = nil
@@ -4232,7 +4238,7 @@ public enum EditorTests {
             let (doc, panel, _) = try makeCalloutPanel()
             let original = doc.originalImage
             doc.addLayer(ArrowLayer(start: CGPoint(x: 50, y: 50), end: CGPoint(x: -33.37, y: -21.71), strokeWidth: 4.0))
-            assert(doc.activeCanvasBounds.minX != doc.activeCanvasBounds.minX.rounded(), "Precondition: the canvas edge is mid-pixel")
+            assert(doc.activeCanvasBounds == doc.activeCanvasBounds.integral, "Elastic growth must land on whole pixels, got \(doc.activeCanvasBounds)")
             let frame = doc.normalizedCropRect(CGRect(x: -100, y: -100, width: 200, height: 200))!
             assert(frame == frame.integral, "Crop rect must be whole pixels, got \(frame)")
             assert(doc.activeCanvasBounds.contains(frame), "Crop rect must stay on the canvas")
@@ -4450,6 +4456,438 @@ public enum EditorTests {
             assert(panel.frame.size == original, "Undoing the crop must grow the window back, got \(panel.frame.size)")
             quietClose(doc, panel)
             quietClose(bigDoc, bigPanel)
+        }
+        // MARK: - Audit regressions: document & models
+
+        func solidImage(_ w: Int, _ h: Int, gray: CGFloat = 1.0) -> CGImage {
+            let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.setFillColor(CGColor(gray: gray, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            return ctx.makeImage()!
+        }
+
+        testRunner("Audit - Undo Never Restores An Empty Spotlight That Dims The Whole Image") {
+            let doc = EditorDocument(image: solidImage(200, 100))
+            let line = LineLayer(start: CGPoint(x: 10, y: 10), end: CGPoint(x: 100, y: 10))
+            doc.addLayer(line)
+            doc.activeTool = .spotlight          // adds the empty working overlay
+            doc.saveSnapshot()                   // e.g. pressing an arrow with the spotlight tool active
+            doc.activeTool = .select
+            line.move(by: CGPoint(x: 5, y: 5))
+            doc.undo()
+            assert(!doc.layers.contains { ($0 as? FilterLayer)?.filterMode == .spotlight }, "No empty spotlight may come back")
+            let out = doc.renderComposition()!
+            assert(rgbaPixel(out, 150, 80)[0] == 255, "A white image must export white, got \(rgbaPixel(out, 150, 80))")
+            // With the spotlight tool active, undo keeps its working overlay
+            doc.activeTool = .spotlight
+            doc.saveSnapshot(); line.move(by: CGPoint(x: 1, y: 0)); doc.undo()
+            assert(doc.layers.contains { ($0 as? FilterLayer)?.filterMode == .spotlight }, "The spotlight tool's overlay stays while the tool is active")
+        }
+
+        testRunner("Audit - A Click That Changes Nothing Keeps The Redo History") {
+            let doc = EditorDocument(image: solidImage(200, 100))
+            doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 40, height: 40)))
+            doc.addLayer(RectangleLayer(rect: CGRect(x: 80, y: 10, width: 40, height: 40)))
+            doc.undo()
+            doc.saveSnapshot(); doc.discardLastSnapshot() // what a plain click does
+            doc.redo()
+            assert(doc.layers.count == 2, "Redo must survive a no-op press, got \(doc.layers.count)")
+            // A real change after undo still clears redo
+            doc.undo(); doc.saveSnapshot(); doc.layers.removeAll(); doc.redo()
+            assert(doc.layers.isEmpty, "A real edit after undo must clear redo")
+        }
+
+        testRunner("Audit - Elastic Canvas Grows To Whole Pixels So Exports Stay Crisp") {
+            // 1px checkerboard: any sub-pixel shift blends to gray
+            let w = 60, h = 60
+            let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            for y in 0..<h { for x in 0..<w where (x + y) % 2 == 0 { ctx.setFillColor(CGColor(gray: 1, alpha: 1)); ctx.fill(CGRect(x: x, y: y, width: 1, height: 1)) } }
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            let doc = EditorDocument(image: ctx.makeImage()!)
+            doc.addLayer(LineLayer(start: CGPoint(x: -3.3, y: 30), end: CGPoint(x: 20, y: 30.7), strokeWidth: 3))
+            assert(doc.activeCanvasBounds == doc.activeCanvasBounds.integral, "Canvas must be whole pixels, got \(doc.activeCanvasBounds)")
+            let out = doc.renderComposition()!
+            let ox = Int(-doc.activeCanvasBounds.minX)
+            for x in 40..<50 {
+                let v = rgbaPixel(out, ox + x, 5)[0]
+                assert(v == 0 || v == 255, "Exported pixels must not be resampled, got \(v) at \(x)")
+            }
+            // Padding is applied once to the union: a second, smaller overhang doesn't change the margin
+            let doc2 = EditorDocument(image: solidImage(100, 100))
+            doc2.addLayer(RectangleLayer(rect: CGRect(x: -40, y: 10, width: 60, height: 20)))
+            let first = doc2.activeCanvasBounds.minX
+            doc2.addLayer(RectangleLayer(rect: CGRect(x: -38, y: 50, width: 60, height: 20)))
+            assert(doc2.activeCanvasBounds.minX == first, "A smaller overhang must not move the edge")
+            assert(doc2.layers[0].getBoundingBox().minX - doc2.activeCanvasBounds.minX >= 10, "At least 10 pt of room past the outermost annotation")
+        }
+
+        testRunner("Audit - Hovering A Spotlight Handle Does Not Change Which Hole Is Selected") {
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let spot = FilterLayer(rects: [CGRect(x: 20, y: 20, width: 80, height: 80), CGRect(x: 200, y: 100, width: 100, height: 100)], filterMode: .spotlight)
+            doc.layers = [spot]
+            spot.selectedRectIndex = 0
+            doc.selectedLayerIDs = [spot.id]
+            _ = spot.hitTestHandle(point: CGPoint(x: 200, y: 100)) // hover over hole B's corner
+            assert(spot.selectedRectIndex == 0, "Hit testing must not change the selection")
+            doc.removeSelectedLayers()
+            assert(spot.rects == [CGRect(x: 200, y: 100, width: 100, height: 100)], "Delete must remove the selected hole A, got \(spot.rects)")
+        }
+
+        testRunner("Audit - Clicks Hit What Is Drawn On Top: Arrow Over A Later Blur Edge") {
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let arrow = ArrowLayer(start: CGPoint(x: 50, y: 150), end: CGPoint(x: 300, y: 150), strokeWidth: 6)
+            doc.addLayer(arrow)
+            let blur = FilterLayer(rects: [CGRect(x: 150, y: 100, width: 150, height: 100)], filterMode: .gaussian)
+            doc.addLayer(blur) // added later, but drawn underneath
+            let p = CGPoint(x: 150, y: 150) // on the arrow, on the blur's left edge band
+            assert(arrow.contains(point: p) && blur.contains(point: p), "Precondition: both contain the point")
+            assert(doc.selectLayer(at: p) === arrow, "The arrow drawn on top must win")
+            assert(doc.topLayer(at: CGPoint(x: 152, y: 120)) === blur, "Where only the blur edge is, the blur is hit")
+            // zIndex decides between vector layers
+            let rect = RectangleLayer(rect: CGRect(x: 100, y: 120, width: 100, height: 60), strokeWidth: 6, zIndex: -5)
+            doc.addLayer(rect)
+            assert(doc.topLayer(at: CGPoint(x: 150, y: 120.5)) === arrow || doc.topLayer(at: CGPoint(x: 150, y: 120.5)) === rect, "Sanity")
+            assert(doc.layersTopToBottom().firstIndex { $0 === arrow }! < doc.layersTopToBottom().firstIndex { $0 === rect }!, "Lower zIndex is below, even when added later")
+        }
+
+        testRunner("Audit - Every Layer Type Paints Only Inside Its Bounding Box") {
+            // Draws the layer into a bitmap 60 pt larger than its box on every side; returns how far (pt) the
+            // farthest painted pixel lies outside the box
+            func paintedOutside(_ layer: AnnotationLayer) -> CGFloat {
+                let box = layer.getBoundingBox()
+                let margin: CGFloat = 60
+                let area = box.insetBy(dx: -margin, dy: -margin).integral
+                let w = Int(area.width), h = Int(area.height)
+                let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                ctx.translateBy(x: 0, y: CGFloat(h)); ctx.scaleBy(x: 1, y: -1); ctx.translateBy(x: -area.minX, y: -area.minY)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+                layer.draw(in: ctx, scale: 1)
+                NSGraphicsContext.restoreGraphicsState()
+                // Box edges in bitmap pixels, 1 pt tolerance
+                let x0 = Int((box.minX - area.minX - 1).rounded(.down)), x1 = Int((box.maxX - area.minX + 1).rounded(.up))
+                let y0 = Int((box.minY - area.minY - 1).rounded(.down)), y1 = Int((box.maxY - area.minY + 1).rounded(.up))
+                let px = ctx.data!.bindMemory(to: UInt8.self, capacity: w * h * 4)
+                var worst = 0
+                for y in 0..<h {
+                    let rowInside = y >= y0 && y < y1
+                    var x = 0
+                    while x < w {
+                        if rowInside && x == max(x0, 0) { x = max(x1, x0 + 1); continue } // skip the inside span
+                        if px[(y * w + x) * 4 + 3] > 0 {
+                            worst = max(worst, x0 - x, x - x1 + 1, y0 - y, y - y1 + 1)
+                        }
+                        x += 1
+                    }
+                }
+                return CGFloat(worst)
+            }
+            let text = TextLayer(center: CGPoint(x: 700, y: 700), color: "#FF3B30"); text.text = "Some label 😀"
+            let cases: [(String, AnnotationLayer)] = [
+                ("vertical ruler", DimensionLayer(start: CGPoint(x: 700, y: 100), end: CGPoint(x: 700, y: 1300))),
+                ("short ruler", DimensionLayer(start: CGPoint(x: 700, y: 650), end: CGPoint(x: 700, y: 750))),
+                ("arrow", ArrowLayer(start: CGPoint(x: 300, y: 300), control: CGPoint(x: 700, y: 100), end: CGPoint(x: 1000, y: 600), strokeWidth: 8)),
+                ("rect", RectangleLayer(rect: CGRect(x: 300, y: 300, width: 400, height: 200), strokeWidth: 10)),
+                ("ellipse", EllipseLayer(rect: CGRect(x: 300, y: 300, width: 400, height: 200), strokeWidth: 10)),
+                ("line", LineLayer(start: CGPoint(x: 200, y: 200), end: CGPoint(x: 1100, y: 900), strokeWidth: 12)),
+                ("counter", CounterLayer(tip: CGPoint(x: 700, y: 700), value: 1000, color: "#FF3B30")),
+                ("callout", CalloutLayer(tip: CGPoint(x: 600, y: 600), color: "#FF3B30", text: "Hello callout\nsecond line")),
+                ("text", text),
+                ("pen", PenLayer(points: (0..<200).map { CGPoint(x: 400 + CGFloat($0) * 3, y: 700 + 50 * sin(CGFloat($0) / 9)) }, color: "#FF3B30", strokeWidth: 10)),
+                ("highlighter", HighlighterLayer(points: (0..<200).map { CGPoint(x: 400 + CGFloat($0) * 3, y: 700) }, color: "#FFCC00", strokeWidth: 20)),
+            ]
+            for (name, layer) in cases {
+                let out = paintedOutside(layer)
+                assert(out <= 0, "\(name) paints \(out) pt outside its bounding box")
+            }
+        }
+
+        testRunner("Audit - Crop Inside The Image Copies Pixels (Releases The Original)") {
+            let doc = EditorDocument(image: solidImage(2000, 2000))
+            doc.crop(to: CGRect(x: 100, y: 100, width: 100, height: 100))
+            assert(doc.originalImage.width == 100 && doc.originalImage.bytesPerRow <= 100 * 4 + 64, "Cropped image must own a small buffer, bytesPerRow \(doc.originalImage.bytesPerRow)")
+        }
+
+        testRunner("Audit - Text-Only Blur Areas Follow Move And Duplicate") {
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let blur = FilterLayer(rects: [CGRect(x: 10, y: 10, width: 50, height: 20)], filterMode: .gaussian, isTextOnlyMode: true)
+            blur.detectedTextRects = [CGRect(x: 12, y: 12, width: 40, height: 10)]
+            doc.addLayer(blur)
+            blur.selectedRectIndex = 0
+            blur.move(by: CGPoint(x: 30, y: 0))
+            assert(blur.detectedTextRects == [CGRect(x: 42, y: 12, width: 40, height: 10)], "Detected text must move with its area, got \(blur.detectedTextRects)")
+            doc.selectedLayerIDs = [blur.id]
+            doc.duplicateSelectedLayers()
+            let copy = doc.layers.last as! FilterLayer
+            assert(copy.detectedTextRects == [CGRect(x: 52, y: 22, width: 40, height: 10)], "Duplicated text rects must be offset too, got \(copy.detectedTextRects)")
+        }
+
+        testRunner("Audit - Blur Cache Drops Superseded Results And Stays Within Its Byte Budget") {
+            let base = solidImage(4000, 3000, gray: 0.5)
+            let blur = FilterLayer(rects: [CGRect(x: 100, y: 100, width: 600, height: 400)], filterMode: .gaussian)
+            let ctx = CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            for step in 0..<40 { // growing resize: each step outgrows the previous padded result
+                blur.rects[0].size = CGSize(width: 600 + step * 80, height: 400 + step * 60)
+                blur.applyFilter(to: base, canvasBounds: CGRect(x: 0, y: 0, width: 4000, height: 3000), in: ctx)
+            }
+            assert(blur.cachedFilterBytes <= 64 * 1024 * 1024 || blur.cachedFilterCount(from: base) == 1, "Cache must stay within budget, holds \(blur.cachedFilterBytes / 1_048_576) MB")
+            assert(blur.cachedFilterCount(from: base) <= 3, "Superseded results must be dropped, holds \(blur.cachedFilterCount(from: base))")
+        }
+
+        testRunner("Audit - Repeated Exports Don't Accumulate Full-Size Buffers") {
+            func footprintMB() -> Double {
+                var info = task_vm_info_data_t()
+                var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+                _ = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) } }
+                return Double(info.phys_footprint) / 1_048_576
+            }
+            let doc = EditorDocument(image: solidImage(3000, 2000)) // 23 MB per export
+            _ = doc.renderComposition()
+            let before = footprintMB()
+            for _ in 0..<8 { _ = doc.renderComposition() } // no surrounding pool, like a loop or a background caller
+            let growth = footprintMB() - before
+            assert(growth < 40, "8 exports must not keep ~8 full buffers alive, grew \(Int(growth)) MB")
+        }
+        // MARK: - Audit regressions: editor window, saving, keys, undo steps
+
+        func tempSource(_ name: String) -> (URL, URL) {
+            let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("impact-save-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent(name)
+            try? Data([0x89, 0x50]).write(to: url)
+            return (dir, url)
+        }
+        func files(_ dir: URL) -> [String] { ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).sorted() }
+        func withoutClipboard(_ body: () throws -> Void) rethrows {
+            EditorPanel.copyToClipboardOverride = false
+            defer { EditorPanel.copyToClipboardOverride = nil }
+            try body()
+        }
+
+        testRunner("Audit - Opening Another Image Keeps The Current Annotations (Saved Like Close)") {
+            try withoutClipboard {
+                let (dir, a) = tempSource("a.png")
+                defer { try? FileManager.default.removeItem(at: dir) }
+                let doc = EditorDocument(image: solidImage(200, 100))
+                let panel = EditorPanel(document: doc, title: "a.png", sourceFileURL: a)
+                doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 50, height: 40)))
+                panel.loadImage(image: solidImage(120, 80), title: "b.png", sourceFileURL: dir.appendingPathComponent("b.png"))
+                assert(files(dir).contains("a-2.png"), "Replacing the image must save a's annotations, files: \(files(dir))")
+                assert(panel.document.layers.isEmpty, "The new image starts clean")
+                panel.shouldSaveOnClose = false; panel.close()
+            }
+        }
+
+        testRunner("Audit - Edits After Save Are Saved On Close; Undoing Everything Saves Nothing") {
+            try withoutClipboard {
+                let (dir, src) = tempSource("src.png")
+                defer { try? FileManager.default.removeItem(at: dir) }
+                let doc = EditorDocument(image: solidImage(200, 100))
+                let panel = EditorPanel(document: doc, title: "src.png", sourceFileURL: src)
+                doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 50, height: 40)))
+                panel.saveRequested()
+                assert(files(dir) == ["src-2.png", "src.png"], "Save writes src-2, files: \(files(dir))")
+                assert(!panel.hasUnsavedWork, "Nothing unsaved right after Save")
+                doc.addLayer(ArrowLayer(start: CGPoint(x: 100, y: 50), end: CGPoint(x: 180, y: 50), strokeWidth: 4))
+                assert(panel.hasUnsavedWork, "An edit after Save is unsaved")
+                panel.close()
+                assert(files(dir).contains("src-3.png"), "Closing must save the later edits, files: \(files(dir))")
+
+                let (dir2, src2) = tempSource("x.png")
+                defer { try? FileManager.default.removeItem(at: dir2) }
+                let doc2 = EditorDocument(image: solidImage(200, 100))
+                let panel2 = EditorPanel(document: doc2, title: "x.png", sourceFileURL: src2)
+                doc2.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 50, height: 40)))
+                doc2.crop(to: CGRect(x: 0, y: 0, width: 150, height: 80))
+                doc2.undo(); doc2.undo()
+                assert(!doc2.hasContent, "Undoing every edit leaves nothing to save")
+                panel2.close()
+                assert(files(dir2) == ["x.png"], "No duplicate file after undoing everything, files: \(files(dir2))")
+            }
+        }
+
+        testRunner("Audit - Untitled Images Save As Annotation-N In The Fallback Folder, Never Named After The App Version") {
+            let doc = EditorDocument(image: solidImage(50, 50))
+            let panel = EditorPanel(document: doc)
+            panel.updateVersionTitle()
+            let url = panel.nextAvailableFileURL()
+            assert(url.lastPathComponent.hasPrefix("Annotation-") && url.pathExtension == "png", "Untitled save name, got \(url.lastPathComponent)")
+            assert(url.deletingLastPathComponent().standardizedFileURL == EditorPanel.fallbackSaveDirectory?.standardizedFileURL, "Tests must never save into ~/Pictures, got \(url.path)")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Audit - Toolbar Undo While Typing Reverts Only The Text Being Typed") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let rect = RectangleLayer(rect: CGRect(x: 20, y: 20, width: 60, height: 40))
+            doc.addLayer(rect)
+            let (_, editor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 300))
+            typeText(editor, "hello")
+            panel.toolbarView.undoButton?.onAction?()
+            assert(!canvas.isEditingCallout, "Undo must end the typing session")
+            assert(doc.layers.contains { ($0 as? RectangleLayer)?.rect == rect.rect }, "The rectangle must survive (undo restores clones)")
+            assert(!doc.layers.contains { $0 is CalloutLayer }, "The callout being created is reverted")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Audit - Undo Mid-Drag Is Ignored (The Drag Keeps Editing A Live Layer)") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            let rect = RectangleLayer(rect: CGRect(x: 50, y: 50, width: 100, height: 100), fillStyle: .solid)
+            doc.addLayer(rect)
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 150, y: 100)))
+            canvas.keyDown(with: key("z", 6, .command, window: panel))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 200, y: 100)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 200, y: 100)))
+            let live = doc.layers.compactMap { $0 as? RectangleLayer }.first
+            assert(live?.rect.origin == CGPoint(x: 150, y: 50), "The whole drag must land in the document, got \(String(describing: live?.rect))")
+            doc.undo()
+            assert(doc.layers.compactMap { $0 as? RectangleLayer }.first?.rect.origin == CGPoint(x: 50, y: 50), "One undo reverts the drag")
+            quietClose(doc, panel)
+        }
+
+        testRunner("Audit - Actions That Change Nothing Leave No Undo Step") {
+            // Spotlight tool click inside an existing hole only selects it
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            doc.activeTool = .spotlight
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 300, y: 250)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 300, y: 250)))
+            doc.activeTool = .spotlight
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 200, y: 170)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 200, y: 170)))
+            doc.undo()
+            let holes = doc.layers.compactMap { $0 as? FilterLayer }.first?.rects.count ?? 0
+            assert(holes == 0, "One undo removes the hole (no empty step from the selecting click), holes: \(holes)")
+
+            // Esc between press and release
+            let (doc2, panel2, canvas2) = try makeCalloutPanel()
+            doc2.addLayer(RectangleLayer(rect: CGRect(x: 50, y: 50, width: 100, height: 100), fillStyle: .solid))
+            doc2.addLayer(RectangleLayer(rect: CGRect(x: 300, y: 50, width: 100, height: 100), fillStyle: .solid))
+            canvas2.mouseDown(with: mouse(.leftMouseDown, canvas2, CGPoint(x: 100, y: 100)))
+            canvas2.keyDown(with: key("\u{1b}", 53, window: panel2))
+            canvas2.mouseUp(with: mouse(.leftMouseUp, canvas2, CGPoint(x: 100, y: 100)))
+            doc2.undo()
+            assert(doc2.layers.count == 1, "One undo removes the last rectangle (no empty step from Esc), count: \(doc2.layers.count)")
+
+            // Picking the color the selection already has
+            let (doc3, panel3, _) = try makeCalloutPanel()
+            let r = RectangleLayer(rect: CGRect(x: 50, y: 50, width: 100, height: 100), color: "#FF3B30")
+            doc3.addLayer(r)
+            let serial = doc3.editSerial
+            panel3.toolbarView.applyPickedColor("#FF3B30")
+            assert(doc3.editSerial == serial, "Same color: no undo step")
+            panel3.toolbarView.applyPickedColor("#34C759")
+            assert(r.color == "#34C759" && doc3.editSerial == serial + 1, "A new color is one step")
+            quietClose(doc, panel); quietClose(doc2, panel2); quietClose(doc3, panel3)
+        }
+
+        testRunner("Audit - Keys Reach The Canvas Even When The Window Handles Them; Cmd+S Saves") {
+            try withoutClipboard {
+                let (dir, src) = tempSource("k.png")
+                defer { try? FileManager.default.removeItem(at: dir) }
+                let doc = EditorDocument(image: solidImage(400, 300))
+                let panel = EditorPanel(document: doc, title: "k.png", sourceFileURL: src)
+                assert(panel.firstResponder === panel.canvasView, "The canvas starts as first responder")
+                panel.makeFirstResponder(nil) // e.g. after clicking the toolbar
+                panel.keyDown(with: key("r", 15, window: panel))
+                assert(doc.activeTool == .rectangle, "Tool letters must work, tool: \(doc.activeTool)")
+                doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 40, height: 40)))
+                panel.keyDown(with: key("z", 6, .command, window: panel))
+                assert(doc.layers.isEmpty, "Cmd+Z must undo")
+                doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 40, height: 40)))
+                doc.selectedLayerIDs = [doc.layers[0].id]
+                panel.keyDown(with: key("\u{7f}", 51, window: panel))
+                assert(doc.layers.isEmpty, "Delete must delete")
+                doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 40, height: 40)))
+                panel.keyDown(with: key("s", 1, .command, window: panel))
+                assert(files(dir).contains("k-2.png"), "Cmd+S must save, files: \(files(dir))")
+                panel.makeFirstResponder(panel.canvasView)
+                panel.canvasView.keyDown(with: key("s", 1, .command, window: panel))
+                assert(files(dir).contains("k-3.png"), "Cmd+S on the canvas saves too (an explicit Save always writes), files: \(files(dir))")
+                panel.shouldSaveOnClose = false; panel.close()
+            }
+        }
+
+        testRunner("Audit - Toolbar Follows The Selection After An Image Is Loaded Into The Welcome Window") {
+            withoutClipboard {
+                let panel = EditorPanel(document: nil)
+                panel.loadImage(image: solidImage(400, 300), title: "w.png")
+                let rect = RectangleLayer(rect: CGRect(x: 50, y: 50, width: 100, height: 100), color: "#34C759", fillStyle: .solid)
+                panel.document.addLayer(rect)
+                panel.document.selectedLayerIDs.removeAll()
+                panel.toolbarView.updateSelectedToolVisuals()
+                panel.canvasView.mouseDown(with: mouse(.leftMouseDown, panel.canvasView, CGPoint(x: 100, y: 100)))
+                panel.canvasView.mouseUp(with: mouse(.leftMouseUp, panel.canvasView, CGPoint(x: 100, y: 100)))
+                assert(panel.document.selectedLayerIDs == [rect.id], "Precondition: selected")
+                assert(panel.toolbarView.colorStackView?.isHidden == false, "Selecting must show the color swatch")
+                quietClose(panel.document, panel)
+            }
+        }
+        testRunner("Perf - Drag Steps Repaint Only The Moved Annotation's Old And New Area (No Trails)") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            var areas: [CGRect?] = []
+            canvas.onPartialRepaint = { areas.append($0) }
+            // A curved arrow: its control handle sits well off the curve's box
+            let arrow = ArrowLayer(start: CGPoint(x: 100, y: 300), control: CGPoint(x: 200, y: 100), end: CGPoint(x: 300, y: 300), strokeWidth: 6)
+            doc.addLayer(arrow)
+            var steps: [(before: [CGPoint], after: [CGPoint], boxBefore: CGRect, boxAfter: CGRect)] = []
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 300)))
+            var p = CGPoint(x: 100, y: 300)
+            for _ in 0..<5 {
+                let handlesBefore = [arrow.start, arrow.control, arrow.end], boxBefore = arrow.getBoundingBox()
+                p = CGPoint(x: p.x + 40, y: p.y + 15)
+                canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, p))
+                steps.append((handlesBefore, [arrow.start, arrow.control, arrow.end], boxBefore, arrow.getBoundingBox()))
+            }
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, p))
+            assert(areas.count == steps.count, "One repaint per drag step, got \(areas.count)")
+            for (area, step) in zip(areas, steps) {
+                guard let area = area else { assertionFailure("A vector drag must not repaint everything"); continue }
+                assert(area.contains(step.boxBefore) && area.contains(step.boxAfter), "Repaint must cover old and new drawing")
+                for h in step.before + step.after {
+                    assert(area.insetBy(dx: 6, dy: 6).contains(h), "Repaint must cover every handle (incl. the control point) \(h)")
+                }
+                assert(area.width * area.height < doc.activeCanvasBounds.width * doc.activeCanvasBounds.height / 3, "Repaint must be much smaller than the canvas")
+            }
+            // Spotlight changes dim the whole canvas: full repaint
+            areas.removeAll()
+            doc.activeTool = .spotlight
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 400, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 500, y: 200)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 500, y: 200)))
+            assert(areas.count == 1 && areas[0] == nil, "Spotlight drawing repaints everything")
+            quietClose(doc, panel)
+        }
+        testRunner("Audit - Quitting Saves Unsaved Annotations Like Closing Does (Incl. Text Being Typed)") {
+            try withoutClipboard {
+                let (dir, src) = tempSource("q.png")
+                defer { try? FileManager.default.removeItem(at: dir) }
+                let doc = EditorDocument(image: solidImage(300, 200))
+                let panel = EditorPanel(document: doc, title: "q.png", sourceFileURL: src)
+                let (_, editor) = try createCallout(doc, panel.canvasView, at: CGPoint(x: 100, y: 100))
+                typeText(editor, "typed before quit")
+                ImpactAppDelegate.closeEditorsForTermination([panel])
+                assert(files(dir).contains("q-2.png"), "Quit must save, files: \(files(dir))")
+                assert(!panel.canvasView.isEditingCallout && doc.layers.contains { ($0 as? CalloutLayer)?.text == "typed before quit" }, "Typing is committed first")
+            }
+        }
+        testRunner("Perf - Cached Hit-Test Order Refreshes On Add, Remove, Undo, Paste And Duplicate") {
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let a = RectangleLayer(rect: CGRect(x: 50, y: 50, width: 100, height: 100), fillStyle: .solid)
+            doc.addLayer(a)
+            let p = CGPoint(x: 100, y: 100)
+            assert(doc.topLayer(at: p) === a, "Added layer is hit")
+            let b = RectangleLayer(rect: CGRect(x: 50, y: 50, width: 100, height: 100), fillStyle: .solid)
+            doc.addLayer(b)
+            assert(doc.topLayer(at: p) === b, "A newer layer on top is hit after adding")
+            doc.selectedLayerIDs = [b.id]; doc.duplicateSelectedLayers()
+            let dup = doc.layers.last!
+            assert(doc.topLayer(at: CGPoint(x: 110, y: 110)) === dup, "The duplicate (lifted zIndex) is on top")
+            doc.removeLayer(id: dup.id)
+            assert(doc.topLayer(at: p) === b, "Removal refreshes")
+            doc.undo()
+            assert(doc.topLayer(at: CGPoint(x: 110, y: 110))?.id == dup.id, "Undo (new layer objects) refreshes")
+            doc.layers.removeAll()
+            assert(doc.topLayer(at: p) == nil, "Direct array edits refresh")
         }
     }
 }

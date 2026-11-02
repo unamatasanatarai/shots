@@ -15,7 +15,37 @@ public final class EditorPanel: NSPanel {
     private var isPinned: Bool = false
     public var onClose: (() -> Void)?
     public private(set) var sourceFileURL: URL?
-    private var hasSavedComposition: Bool = false
+    /// document.editSerial when the composition was last saved (nil: never saved)
+    private var savedEditSerial: Int?
+
+    /// Whether closing (or replacing the image, or quitting) writes a numbered file. Tests turn it off.
+    public var shouldSaveOnClose: Bool = true
+
+    /// Where untitled images (no source file) are saved; nil = ~/Pictures. Tests point it at a temp folder.
+    public static var fallbackSaveDirectory: URL?
+
+    /// Annotations or a crop not yet written to a file
+    public var hasUnsavedWork: Bool {
+        hasImage && document.hasContent && savedEditSerial != document.editSerial
+    }
+
+    /// Writes the numbered file if there is unsaved work (close, quit, or another image replacing this one)
+    @discardableResult
+    func saveUnsavedWorkIfNeeded() -> URL? {
+        canvasView.endCalloutEditingIfNeeded()
+        guard shouldSaveOnClose, hasUnsavedWork else { return nil }
+        return saveToNextNumberedFile()
+    }
+
+    /// The Save button and Cmd+S
+    public func saveRequested() {
+        guard hasImage else { return }
+        canvasView.endCalloutEditingIfNeeded()
+        if let savedURL = saveToNextNumberedFile() {
+            NSLog("Impact: Saved composition to %@", savedURL.path)
+            showImageSavedToast()
+        }
+    }
 
     public init(document: EditorDocument? = nil, title: String = "Impact", sourceFileURL: URL? = nil) {
         let doc = document ?? EditorDocument.makePlaceholder()
@@ -74,6 +104,8 @@ public final class EditorPanel: NSPanel {
 
         setupContentView()
         setupToolbarActions()
+        initialFirstResponder = canvasView
+        makeFirstResponder(canvasView)
 
         toolbarView.layoutSubtreeIfNeeded()
         toolbarView.updateResponsiveOverflow()
@@ -157,14 +189,28 @@ public final class EditorPanel: NSPanel {
             canvasView.keyDown(with: event)
             return
         }
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers?.lowercased() == "s" {
+            saveRequested()
+            return
+        }
         if event.keyCode == 123 || event.keyCode == 124 || event.keyCode == 125 || event.keyCode == 126 { // Arrow keys
             let isShift = event.modifierFlags.contains(.shift)
             if canvasView.nudgeSelectedLayers(keyCode: event.keyCode, isShift: isShift, isRepeat: event.isARepeat) {
                 return
             }
         }
+        // Keys that reach the window without passing the canvas (it isn't first responder, e.g. after
+        // clicking the toolbar) go to the canvas: tools, undo, delete. Ones the canvas passed up stop here.
+        if firstResponder !== canvasView, !(firstResponder is NSText), !isForwardingKeyToCanvas {
+            isForwardingKeyToCanvas = true
+            canvasView.keyDown(with: event)
+            isForwardingKeyToCanvas = false
+            return
+        }
         super.keyDown(with: event)
     }
+
+    private var isForwardingKeyToCanvas = false
 
     public static var copyToClipboardOverride: Bool? = nil
 
@@ -209,10 +255,9 @@ public final class EditorPanel: NSPanel {
             canvasView.copyCompositionToClipboard()
         }
 
-        // Upon closing Impact, save to numbered file without overwriting original only if modified
-        if !hasSavedComposition && (!document.layers.isEmpty || document.isModified) {
-            saveToNextNumberedFile()
-        }
+        // Upon closing Impact, save to a numbered file (never overwriting the original) when there are
+        // annotations or a crop that no saved file has yet, including edits made after a Save
+        saveUnsavedWorkIfNeeded()
 
         super.close()
         onClose?()
@@ -239,11 +284,15 @@ public final class EditorPanel: NSPanel {
                 baseName = fullFilename
             }
         } else {
-            baseDir = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
-            let titleURL = URL(fileURLWithPath: title)
-            let fullFilename = titleURL.deletingPathExtension().lastPathComponent
-            ext = titleURL.pathExtension.isEmpty ? "png" : titleURL.pathExtension
-            if !fullFilename.isEmpty && fullFilename != "Impact" && fullFilename != "Shots Editor" {
+            baseDir = EditorPanel.fallbackSaveDirectory
+                ?? FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
+            // The window title is the app's version string unless an image name was given: never a file name
+            let isAppTitle = title == "Impact" || title == "Shots Editor" || title.hasPrefix("Impact v")
+            let titleURL = URL(fileURLWithPath: isAppTitle ? "" : title)
+            let fullFilename = isAppTitle ? "" : titleURL.deletingPathExtension().lastPathComponent
+            let titleExt = titleURL.pathExtension.lowercased()
+            ext = ["png", "jpg", "jpeg", "tiff", "tif", "gif", "bmp", "heic"].contains(titleExt) ? titleExt : "png"
+            if !fullFilename.isEmpty {
                 if let regex = EditorPanel.numberedSuffixRegex,
                    let match = regex.firstMatch(in: fullFilename, range: NSRange(fullFilename.startIndex..., in: fullFilename)) {
                     let nameRange = Range(match.range(at: 1), in: fullFilename)!
@@ -286,7 +335,7 @@ public final class EditorPanel: NSPanel {
             format = .png
         }
         canvasView.saveCompositionToFile(url: targetURL, format: format)
-        hasSavedComposition = true
+        savedEditSerial = document.editSerial
         return targetURL
     }
 
@@ -415,12 +464,18 @@ public final class EditorPanel: NSPanel {
 
     /// Loads an image directly into the main window, transitioning from empty state
     public func loadImage(image: CGImage, title: String = "Impact", sourceFileURL: URL? = nil) {
+        // The image being replaced keeps its work: saved like a close would (numbered file next to its source)
+        saveUnsavedWorkIfNeeded()
         self.sourceFileURL = sourceFileURL
         let newDoc = EditorDocument(image: image)
         self.document = newDoc
         self.canvasView.setDocument(newDoc)
         self.hasImage = true
-        self.hasSavedComposition = false
+        self.savedEditSerial = nil
+        newDoc.onSelectionChanged = { [weak self] in
+            self?.toolbarView.updateSelectedToolVisuals()
+        }
+        makeFirstResponder(canvasView)
 
         welcomeDropView?.removeFromSuperview()
         welcomeDropView = nil
@@ -597,11 +652,8 @@ public final class EditorPanel: NSPanel {
         }
 
         toolbarView.onSaveRequested = { [weak self] in
-            guard let self = self, self.hasImage else { return }
-            if let savedURL = self.saveToNextNumberedFile() {
-                NSLog("Impact: Saved composition to %@", savedURL.path)
-                self.showImageSavedToast()
-            }
+            guard let self = self else { return }
+            self.saveRequested()
             // Explicitly keep the editor panel open and active
             self.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -611,7 +663,7 @@ public final class EditorPanel: NSPanel {
             ImpactAppCoordinator.shared.openImageFileDialog()
         }
 
-        toolbarView.onCopyRequested = { [weak self] in
+        toolbarView.onCopyRequested = { [weak self] in // the Copy button (copies once, then the toast)
             guard let self = self, self.hasImage else { return }
             self.canvasView.copyCompositionToClipboard()
             self.showCopiedToClipboardToast()

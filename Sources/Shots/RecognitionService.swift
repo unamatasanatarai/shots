@@ -192,15 +192,12 @@ public final class RecognitionService {
             return []
         }
 
-        // Sort observations into natural reading order: top-to-bottom, then left-to-right
-        let sortedResults = results.sorted { obs1, obs2 in
-            let y1 = obs1.boundingBox.origin.y
-            let y2 = obs2.boundingBox.origin.y
-            if abs(y1 - y2) > 0.03 {
-                return y1 > y2
-            }
-            return obs1.boundingBox.origin.x < obs2.boundingBox.origin.x
+        // Sort observations into natural reading order: rows top-to-bottom, then left-to-right.
+        // Boxes are converted to pixels so row grouping does not depend on the image aspect ratio.
+        let pixelBoxes = results.map {
+            VNImageRectForNormalizedRect($0.boundingBox, image.width, image.height)
         }
+        let sortedResults = RecognitionService.readingOrder(of: pixelBoxes).map { results[$0] }
 
         var items: [RecognitionItem] = []
         for observation in sortedResults {
@@ -218,6 +215,38 @@ public final class RecognitionService {
         return items
     }
 
+
+    /// Returns the indices of `boxes` (y-up coordinates, e.g. Vision pixel rects) in reading order.
+    /// Boxes are grouped into rows by vertical overlap with the row's first (topmost) box, rows are
+    /// ordered top-to-bottom and boxes within a row left-to-right. Unlike a fixed normalized-height
+    /// threshold this is transitive and independent of how tall the image is.
+    public static func readingOrder(of boxes: [CGRect]) -> [Int] {
+        let byTop = boxes.indices.sorted { a, b in
+            let ra = boxes[a], rb = boxes[b]
+            if ra.midY != rb.midY { return ra.midY > rb.midY }
+            return ra.minX < rb.minX
+        }
+
+        var rows: [(anchor: CGRect, members: [Int])] = []
+        for index in byTop {
+            let box = boxes[index]
+            if let last = rows.last {
+                let anchor = last.anchor
+                // Same line when either box's vertical centre falls inside the other's extent
+                let sameRow = (box.midY >= anchor.minY && box.midY <= anchor.maxY)
+                    || (anchor.midY >= box.minY && anchor.midY <= box.maxY)
+                if sameRow {
+                    rows[rows.count - 1].members.append(index)
+                    continue
+                }
+            }
+            rows.append((anchor: box, members: [index]))
+        }
+
+        return rows.flatMap { row in
+            row.members.sorted { boxes[$0].minX < boxes[$1].minX }
+        }
+    }
 
     private static let allBarcodeSymbologies: [VNBarcodeSymbology] = [.qr] + oneDimensionalBarcodeSymbologies
 

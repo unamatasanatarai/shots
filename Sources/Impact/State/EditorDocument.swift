@@ -8,8 +8,28 @@ public final class EditorDocument {
     public private(set) var originalImageBounds: CGRect
     public private(set) var activeCanvasBounds: CGRect
 
-    public var layers: [AnnotationLayer] = []
+    public var layers: [AnnotationLayer] = [] {
+        didSet { cachedTopToBottom = nil }
+    }
+    /// Draw order cache for hit testing (several lookups per mouse move); rebuilt when `layers` changes.
+    /// zIndex/visibility only change on layers before they're inserted, which also resets it.
+    private var cachedTopToBottom: [AnnotationLayer]?
     public var isModified: Bool = false
+
+    /// Changes with every edit, undo and redo (and back when a no-op press's snapshot is discarded):
+    /// a saved file is current while this matches the value recorded at save time
+    public private(set) var editSerial = 0
+
+    /// The image the editor opened with (a crop replaces originalImage; undoing it restores this object)
+    private let openedImage: CGImage
+
+    /// Whether there is anything worth saving: an annotation, or a crop. Undoing everything returns to false.
+    public var hasContent: Bool {
+        originalImage !== openedImage || layers.contains { layer in
+            if let filter = layer as? FilterLayer { return !filter.rects.isEmpty }
+            return true
+        }
+    }
     public var onSelectionChanged: (() -> Void)?
 
     public var selectedLayerIDs: Set<UUID> = [] {
@@ -84,13 +104,25 @@ public final class EditorDocument {
     private var redoStack: [Snapshot] = []
 
     private func currentSnapshot() -> Snapshot {
-        Snapshot(layers: layers.map { $0.clone() }, image: originalImage)
+        Snapshot(layers: Self.historyLayers(layers), image: originalImage)
+    }
+
+    /// Clones for the undo history, without the empty spotlight overlay the spotlight tool adds while it is
+    /// active: restored outside that tool it would dim the whole canvas with no hole and nothing to select
+    private static func historyLayers(_ layers: [AnnotationLayer]) -> [AnnotationLayer] {
+        layers.compactMap { layer in
+            if let filter = layer as? FilterLayer, filter.filterMode == .spotlight, filter.rects.isEmpty { return nil }
+            return layer.clone()
+        }
     }
 
     private func restore(_ snapshot: Snapshot) {
         layers = snapshot.layers
         if snapshot.image !== originalImage {
             replaceImage(snapshot.image)
+        }
+        if activeTool == .spotlight {
+            ensureSpotlightOverlay() // the tool's working overlay
         }
         selectedLayerIDs = selectedLayerIDs.intersection(Set(layers.map { $0.id }))
         isModified = true
@@ -105,6 +137,7 @@ public final class EditorDocument {
 
     public init(image: CGImage) {
         self.originalImage = image
+        self.openedImage = image
         self.originalImageBounds = CGRect(
             x: 0,
             y: 0,
@@ -192,19 +225,48 @@ public final class EditorDocument {
     }
 
     public func selectLayer(at point: CGPoint) -> AnnotationLayer? {
-        // Reverse iterate to select top-most layer
-        for layer in layers.reversed() {
-            if layer.isVisible && layer.contains(point: point) {
-                selectedLayerIDs = [layer.id]
-                if layer.type != .blur {
-                    activeColor = layer.color
-                }
-                onNeedsDisplay?()
-                return layer
+        if let layer = topLayer(at: point) {
+            selectedLayerIDs = [layer.id]
+            if layer.type != .blur {
+                activeColor = layer.color
             }
+            onNeedsDisplay?()
+            return layer
         }
         selectedLayerIDs.removeAll()
         onNeedsDisplay?()
+        return nil
+    }
+
+    /// Visible layers from top to bottom as drawn: vector layers by zIndex (later wins ties), then the
+    /// spotlight overlay, then blur areas. Hit testing must follow this, not array order, or an invisible
+    /// blur edge added later wins clicks on an arrow drawn above it.
+    public func layersTopToBottom() -> [AnnotationLayer] {
+        if let cached = cachedTopToBottom { return cached }
+        let order = computeTopToBottom()
+        cachedTopToBottom = order
+        return order
+    }
+
+    private func computeTopToBottom() -> [AnnotationLayer] {
+        let visible = layers.enumerated().filter { $0.element.isVisible }
+        let vectors = visible.filter { !($0.element is FilterLayer) }
+            .sorted { $0.element.zIndex != $1.element.zIndex ? $0.element.zIndex > $1.element.zIndex : $0.offset > $1.offset }
+        let spotlights = visible.filter { ($0.element as? FilterLayer)?.filterMode == .spotlight }.reversed()
+        let blurs = visible.filter { ($0.element as? FilterLayer).map { $0.filterMode != .spotlight } ?? false }.reversed()
+        return (vectors + spotlights + blurs).map { $0.element }
+    }
+
+    /// The topmost visible layer whose body contains `point`
+    public func topLayer(at point: CGPoint) -> AnnotationLayer? {
+        layersTopToBottom().first { $0.contains(point: point) }
+    }
+
+    /// The topmost visible layer with a handle at `point`, and that handle's index
+    public func topHandle(at point: CGPoint) -> (layer: AnnotationLayer, index: Int)? {
+        for layer in layersTopToBottom() {
+            if let index = layer.hitTestHandle(point: point) { return (layer, index) }
+        }
         return nil
     }
 
@@ -272,6 +334,7 @@ public final class EditorDocument {
             if let filter = copy as? FilterLayer {
                 // FilterLayer.move(by:) shifts only its selected rectangle; copies move as a whole
                 filter.rects = filter.rects.map { $0.offsetBy(dx: offset.x, dy: offset.y) }
+                filter.detectedTextRects = filter.detectedTextRects.map { $0.offsetBy(dx: offset.x, dy: offset.y) }
             } else {
                 copy.move(by: offset)
             }
@@ -325,33 +388,50 @@ public final class EditorDocument {
     /// Counts saveSnapshot calls, so a gesture can tell whether the latest snapshot is its own
     public private(set) var snapshotSerial = 0
 
+    /// The redo history the latest saveSnapshot cleared, so discarding that snapshot (a press that changed
+    /// nothing) can put it back: a plain click must not throw away redo
+    private var redoBeforeLastSnapshot: [Snapshot]?
+
     public func saveSnapshot() {
         snapshotSerial += 1
+        editSerial += 1
         undoStack.append(currentSnapshot())
         if undoStack.count > 50 { undoStack.removeFirst() }
+        redoBeforeLastSnapshot = redoStack
         redoStack.removeAll()
     }
 
     /// Pushes a snapshot captured earlier (e.g. before a callout editing session) as one undo step
     public func pushSnapshot(_ snapshot: [AnnotationLayer]) {
-        undoStack.append(Snapshot(layers: snapshot, image: originalImage))
+        undoStack.append(Snapshot(layers: Self.historyLayers(snapshot), image: originalImage))
+        redoBeforeLastSnapshot = nil
+        editSerial += 1
         if undoStack.count > 50 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
     /// Drops the most recent snapshot when the gesture that saved it turned out to change nothing
     public func discardLastSnapshot() {
-        _ = undoStack.popLast()
+        guard undoStack.popLast() != nil else { return }
+        editSerial -= 1
+        if let redo = redoBeforeLastSnapshot {
+            redoStack = redo
+        }
+        redoBeforeLastSnapshot = nil
     }
 
     public func undo() {
         guard let previous = undoStack.popLast() else { return }
+        redoBeforeLastSnapshot = nil
+        editSerial += 1
         redoStack.append(currentSnapshot())
         restore(previous)
     }
 
     public func redo() {
         guard let next = redoStack.popLast() else { return }
+        redoBeforeLastSnapshot = nil
+        editSerial += 1
         undoStack.append(currentSnapshot())
         restore(next)
     }
@@ -453,9 +533,8 @@ public final class EditorDocument {
     /// The pixels of `frame` (top-left image coordinates); parts outside the image are transparent
     static func image(_ image: CGImage, croppedTo frame: CGRect) -> CGImage? {
         let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-        if imageBounds.contains(frame) {
-            return image.cropping(to: frame)
-        }
+        // Always copied into its own buffer: CGImage.cropping(to:) shares the parent's pixels, which would
+        // keep the full original alive for the document's lifetime, even after undo history drops it
         let width = Int(frame.width), height = Int(frame.height)
         let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? colorSpaceSRGB
         guard width > 0, height > 0, let context = CGContext(
@@ -499,20 +578,20 @@ public final class EditorDocument {
             } else {
                 layerBounds = layer.getBoundingBox()
             }
-            // 3. If layerBounds extends outside computedBounds: union + 10px strict padding
-            if layerBounds.minX < computedMinX {
-                computedMinX = layerBounds.minX - 10.0
-            }
-            if layerBounds.minY < computedMinY {
-                computedMinY = layerBounds.minY - 10.0
-            }
-            if layerBounds.maxX > computedMaxX {
-                computedMaxX = layerBounds.maxX + 10.0
-            }
-            if layerBounds.maxY > computedMaxY {
-                computedMaxY = layerBounds.maxY + 10.0
-            }
+            // 3. Union of everything that reaches past the image (padded once below)
+            computedMinX = min(computedMinX, layerBounds.minX)
+            computedMinY = min(computedMinY, layerBounds.minY)
+            computedMaxX = max(computedMaxX, layerBounds.maxX)
+            computedMaxY = max(computedMaxY, layerBounds.maxY)
         }
+
+        // 10 pt of room past the outermost annotation, on whole pixels: a fractional origin would draw
+        // (and export) the screenshot at a sub-pixel offset, resampling every pixel
+        let image = originalImageBounds
+        if computedMinX < image.minX { computedMinX = (computedMinX - 10.0).rounded(.down) }
+        if computedMinY < image.minY { computedMinY = (computedMinY - 10.0).rounded(.down) }
+        if computedMaxX > image.maxX { computedMaxX = (computedMaxX + 10.0).rounded(.up) }
+        if computedMaxY > image.maxY { computedMaxY = (computedMaxY + 10.0).rounded(.up) }
 
         // 4. Original Integrity: never shrink smaller than exact original background dimensions
         computedMinX = min(computedMinX, originalImageBounds.minX)
@@ -543,6 +622,12 @@ public final class EditorDocument {
     }
 
     public func renderComposition() -> CGImage? {
+        // The NSGraphicsContext below is autoreleased and holds the full-size bitmap: drain it here so repeated
+        // exports don't stack canvas-sized buffers until the caller's pool drains
+        autoreleasepool { renderCompositionImage() }
+    }
+
+    private func renderCompositionImage() -> CGImage? {
         computeElasticBounds()
 
         let width = Int(ceil(activeCanvasBounds.width))

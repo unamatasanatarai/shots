@@ -4,6 +4,9 @@ import ServiceManagement
 public final class LaunchAtLoginService {
     public static let shared = LaunchAtLoginService()
 
+    /// Test hook: replaces the system login-item call. Returns success or throws.
+    var backendOverride: ((Bool) throws -> Bool)?
+
     public var isEnabled: Bool {
         get {
             if #available(macOS 13.0, *) {
@@ -19,26 +22,36 @@ public final class LaunchAtLoginService {
         }
     }
 
+    /// Registers/unregisters the login item. The preference is persisted only when the system call
+    /// succeeds, so a failed registration never leaves the toggle claiming "on".
     @discardableResult
     public func setLaunchAtLogin(enabled: Bool) -> Bool {
-        AppSettings.shared.launchAtLogin = enabled
+        let succeeded: Bool
+        do {
+            succeeded = try (backendOverride ?? Self.systemSetLaunchAtLogin)(enabled)
+        } catch {
+            NSLog("LaunchAtLoginService: failed to update login item: %@", error.localizedDescription)
+            succeeded = false
+        }
 
+        if succeeded {
+            AppSettings.shared.launchAtLogin = enabled
+        }
+        return succeeded
+    }
+
+    private static func systemSetLaunchAtLogin(_ enabled: Bool) throws -> Bool {
         if #available(macOS 13.0, *) {
-            do {
-                if enabled {
-                    if SMAppService.mainApp.status != .enabled {
-                        try SMAppService.mainApp.register()
-                    }
-                } else {
-                    if SMAppService.mainApp.status == .enabled {
-                        try SMAppService.mainApp.unregister()
-                    }
+            if enabled {
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
                 }
-                return true
-            } catch {
-                NSLog("LaunchAtLoginService: failed to update SMAppService: %@", error.localizedDescription)
-                return false
+            } else {
+                if SMAppService.mainApp.status == .enabled {
+                    try SMAppService.mainApp.unregister()
+                }
             }
+            return true
         } else {
             #if !targetEnvironment(simulator)
             if let bundleID = Bundle.main.bundleIdentifier {

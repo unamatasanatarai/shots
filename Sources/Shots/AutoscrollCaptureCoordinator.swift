@@ -36,6 +36,38 @@ public final class AutoscrollCaptureCoordinator: NSObject {
         }
     }
 
+    private var _isRunning = false
+
+    /// True from the moment a scrolling capture starts (including region selection) until its completion fires
+    public var isRunning: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _isRunning
+    }
+
+    /// Atomically claims the coordinator; returns false when a session is already in flight
+    func tryBeginRun() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !_isRunning else { return false }
+        _isRunning = true
+        return true
+    }
+
+    func endRun() {
+        stateLock.lock()
+        _isRunning = false
+        stateLock.unlock()
+    }
+
+    /// Wraps a caller completion so the running flag is released exactly when the session ends
+    private func releasingCompletion(_ completion: ((CGImage?) -> Void)?) -> (CGImage?) -> Void {
+        return { [weak self] image in
+            self?.endRun()
+            completion?(image)
+        }
+    }
+
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
 
@@ -50,7 +82,13 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             completion?(nil)
             return
         }
-        beginAutoscrollFlow(completion: completion)
+        // Re-entry guard: a second start must not reset the abort flags of, or race, a running loop
+        guard tryBeginRun() else {
+            NSLog("Scrolling capture already in progress; ignoring new request")
+            completion?(nil)
+            return
+        }
+        beginAutoscrollFlow(completion: releasingCompletion(completion))
     }
 
     /// Repeats a previous scrolling capture over the same region without asking for a new selection
@@ -59,13 +97,18 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             completion?(nil)
             return
         }
-        executeAutoscrollSession(region: region, completion: completion)
+        guard tryBeginRun() else {
+            NSLog("Scrolling capture already in progress; ignoring repeat request")
+            completion?(nil)
+            return
+        }
+        executeAutoscrollSession(region: region, completion: releasingCompletion(completion))
     }
 
-    private func beginAutoscrollFlow(completion: ((CGImage?) -> Void)?) {
+    private func beginAutoscrollFlow(completion: @escaping (CGImage?) -> Void) {
         RegionSelectionCoordinator.shared.startRegionSelection { [weak self] regionInfo in
             guard let self = self, let region = regionInfo else {
-                completion?(nil)
+                completion(nil)
                 return
             }
             self.executeAutoscrollSession(region: region, completion: completion)
@@ -74,7 +117,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
 
     // MARK: - Auto-scroll Execution Session
 
-    private func executeAutoscrollSession(region: SelectedRegionInfo, completion: ((CGImage?) -> Void)?) {
+    private func executeAutoscrollSession(region: SelectedRegionInfo, completion: @escaping (CGImage?) -> Void) {
         isAborted = false
         isFinishedEarly = false
 
@@ -101,7 +144,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             guard !self.isAborted else {
                 DispatchQueue.main.async {
                     self.dismissHUD()
-                    completion?(nil)
+                    completion(nil)
                 }
                 return
             }
@@ -111,7 +154,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             guard let firstFrame = CaptureService.shared.captureRegion(displayID: displayID, selRect: regionRect, in: screenSize) else {
                 DispatchQueue.main.async {
                     self.dismissHUD()
-                    completion?(nil)
+                    completion(nil)
                 }
                 return
             }
@@ -122,7 +165,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             var lastPixels = FramePixels(firstFrame)
             var consecutiveIdenticalCount = 0
             let maxSteps = 80 // Safety ceiling: prevents runaway loops on infinite feeds
-            let speedConfig = AppSettings.shared.scrollingCaptureSpeed
+            let speedConfig = AppSettings.shared.captureSnapshot.scrollingCaptureSpeed
             let scrollPixels = speedConfig.scrollDeltaPixels(forRegionHeight: regionRect.height)
             let stepDelay = speedConfig.stepDelayMicroseconds
 
@@ -169,7 +212,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             if self.isAborted {
                 NSLog("Scrolling capture aborted via Escape. Discarding all frames without saving.")
                 DispatchQueue.main.async {
-                    completion?(nil)
+                    completion(nil)
                 }
                 return
             }
@@ -185,7 +228,7 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             CaptureManager.shared.processCapturedImage(finalImage)
 
             DispatchQueue.main.async {
-                completion?(finalImage)
+                completion(finalImage)
             }
         }
     }
@@ -233,6 +276,8 @@ public final class AutoscrollCaptureCoordinator: NSObject {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
+        // Keep the HUD out of the frames being captured
+        panel.sharingType = .none
 
         let hudView = AutoscrollHUDView(frame: NSRect(x: 0, y: 0, width: hudW, height: hudH)) { [weak self] in
             self?.finishAutoscroll()

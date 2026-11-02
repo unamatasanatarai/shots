@@ -42,8 +42,25 @@ public enum KeyCodes {
 
     public static let noKey: UInt16 = 0xFFFF
 
+    /// Virtual key codes of the true function keys F1–F20 (not arrows, Home/End, Page Up/Down or Help)
+    public static let functionKeyCodes: Set<UInt16> = Set([
+        kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+        kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20
+    ].map { UInt16($0) })
+
+    public static func isFunctionKey(_ keyCode: UInt16) -> Bool {
+        functionKeyCodes.contains(keyCode)
+    }
+
+    /// A shortcut is usable when it has a key plus at least one modifier, or is a bare F-key.
+    /// The Preferences recorder accepts exactly these combinations.
     public static func isShortcutAssigned(keyCode: UInt16, carbonMods: UInt32) -> Bool {
-        return keyCode != noKey && carbonMods != 0
+        return keyCode != noKey && (carbonMods != 0 || isFunctionKey(keyCode))
+    }
+
+    /// Whether the shortcut recorder should accept this key event as a new shortcut
+    public static func isRecordableShortcut(keyCode: UInt16, carbonMods: UInt32) -> Bool {
+        isShortcutAssigned(keyCode: keyCode, carbonMods: carbonMods)
     }
 
     public static func shortcutString(keyCode: UInt16, carbonMods: UInt32) -> String {

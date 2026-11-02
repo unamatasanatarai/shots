@@ -821,7 +821,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         // 4. Action Buttons: Undo [Cmd Z], Open [Cmd O], Copy [Cmd C], Save [Cmd S], Pin Window (Always on Top)
         let undoBtn = ModernToolbarButton(systemName: "arrow.uturn.backward", tooltip: "Undo [Cmd Z]", pointSize: 12.0)
         undoBtn.onAction = { [weak self] in
-            self?.canvasView?.document.undo()
+            self?.canvasView?.performUndo()
         }
         self.undoButton = undoBtn
         stack.addArrangedSubview(undoBtn)
@@ -835,8 +835,11 @@ public final class EditorToolbarView: NSVisualEffectView {
 
         let copyBtn = ModernToolbarButton(systemName: "doc.on.doc", tooltip: "Copy [Cmd C]", pointSize: 12.0)
         copyBtn.onAction = { [weak self] in
-            self?.canvasView?.copyCompositionToClipboard()
-            self?.onCopyRequested?()
+            if let onCopy = self?.onCopyRequested {
+                onCopy() // the panel copies and shows the toast
+            } else {
+                self?.canvasView?.copyCompositionToClipboard()
+            }
         }
         self.copyButton = copyBtn
         stack.addArrangedSubview(copyBtn)
@@ -1155,6 +1158,11 @@ public final class EditorToolbarView: NSVisualEffectView {
         self.singleColorButton?.updateColor(hex: hex)
         if let doc = self.canvasView?.document {
             let selected = doc.getSelectedLayers()
+            // Picking the color the selection already has changes nothing: no undo step
+            let recolorable = selected.filter { $0.type != .blur }
+            if !recolorable.isEmpty && recolorable.allSatisfy({ $0.color == hex }) {
+                return
+            }
             if !selected.isEmpty {
                 // A recolor during a callout editing session folds into the session's undo step
                 if self.canvasView?.isEditingCallout != true {

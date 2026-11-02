@@ -226,7 +226,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // 2a. Draw Blur / Pixelate Layers (always UNDER spotlight overlay)
         for layer in document.layers where layer.isVisible {
-            if let filter = layer as? FilterLayer, filter.filterMode != .spotlight {
+            if let filter = layer as? FilterLayer, filter.filterMode != .spotlight,
+               filter.getBoundingBox().intersects(visibleCanvasRect) {
                 // When actively dragging/moving an existing blur layer, don't draw its blurred image mid-drag
                 if activeDraggingLayer?.id != filter.id {
                     filter.applyFilter(to: document.originalImage, canvasBounds: document.activeCanvasBounds, in: context)
@@ -527,7 +528,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
             return
         }
-        for layer in document.layers.reversed() where layer.isVisible {
+        for layer in document.layersTopToBottom() {
             if let handleIndex = layer.hitTestHandle(point: point) {
                 document.saveSnapshot()
                 if document.activeTool != .select && document.activeTool != .blur {
@@ -554,7 +555,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // Callout or Text body (tip handle already handled above): a double-click edits any callout/text,
         // a click on the selected one edits on mouse-up unless it becomes a drag
-        if let hitEditable = document.layers.reversed().first(where: { $0.isVisible && ($0 as? TextEditableLayer)?.bodyRect.contains(point) == true }) as? TextEditableLayer {
+        if let hitEditable = document.layersTopToBottom().first(where: { ($0 as? TextEditableLayer)?.bodyRect.contains(point) == true }) as? TextEditableLayer {
             if event.clickCount >= 2 {
                 beginCalloutEditing(hitEditable, isNew: false, caretAt: point)
                 return
@@ -589,7 +590,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
         // If clicking any existing visible annotation element while an annotation tool is active,
         // do not add a new element; immediately select it and revert activeTool to pointer (.select)
-        if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }) {
+        if let hit = document.topLayer(at: point) {
             document.saveSnapshot()
             if document.activeTool != .select && document.activeTool != .blur {
                 document.activeTool = .select
@@ -613,7 +614,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         if document.activeTool == .spotlight {
             if let spotlight = document.layers.reversed().first(where: { ($0 as? FilterLayer)?.filterMode == .spotlight }) as? FilterLayer {
                 if let rectIdx = spotlight.rects.indices.reversed().first(where: { spotlight.rects[$0].standardized.contains(point) }) {
-                    document.saveSnapshot()
+                    // Only selects (no snapshot: nothing changes, so no empty undo step)
                     document.activeTool = .select
                     (window as? EditorPanel)?.toolbarView.updateSelectedToolVisuals()
                     document.selectLayer(spotlight)
@@ -642,7 +643,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
 
         case .arrow, .arrowText:
-            if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }) {
+            if let hit = document.topLayer(at: point) {
                 document.saveSnapshot()
                 document.selectLayer(hit)
                 activeDraggingLayer = hit
@@ -701,7 +702,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             activeCreatingLayer = hl
 
         case .counter:
-            if let hit = document.layers.reversed().first(where: { $0.isVisible && $0.contains(point: point) }), let counter = hit as? CounterLayer {
+            if let hit = document.topLayer(at: point), let counter = hit as? CounterLayer {
                 document.selectLayer(counter)
                 activeDraggingLayer = counter
                 activeHandleIndex = nil
@@ -786,6 +787,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
 
         let delta = CGPoint(x: point.x - lastDragPoint.x, y: point.y - lastDragPoint.y)
+        let changingLayer = activeDraggingLayer ?? activeCreatingLayer
+        let areaBefore = repaintArea(for: changingLayer)
 
         // Micro-Interaction: Spacebar mid-draw translation (Section 3.1)
         if isSpacePressed {
@@ -795,7 +798,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 dragStartPoint.y += delta.y
                 document.computeElasticBounds()
                 lastDragPoint = point
-                needsDisplay = true
+                repaint(changeOf: creating, from: areaBefore)
                 return
             }
         }
@@ -941,7 +944,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
             document.computeElasticBounds()
             lastDragPoint = point
-            needsDisplay = true
+            repaint(changeOf: dragging, from: areaBefore)
             return
         }
 
@@ -1035,8 +1038,37 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
 
         lastDragPoint = point
-        needsDisplay = true
+        repaint(changeOf: activeCreatingLayer, from: areaBefore)
     }
+
+    // MARK: - Partial repaint
+
+    /// The canvas area a layer's drawing covers, with its selection handles, hover outline and shadow;
+    /// nil when its change can affect the whole canvas (the spotlight dims everything outside its holes)
+    private func repaintArea(for layer: AnnotationLayer?) -> CGRect? {
+        guard let layer = layer else { return nil }
+        if let filter = layer as? FilterLayer, filter.filterMode == .spotlight { return nil }
+        var area = layer.getBoundingBox()
+        if let arrow = layer as? ArrowLayer {
+            area = area.union(CGRect(origin: arrow.control, size: .zero)) // the curve handle can sit off the curve
+        }
+        return area.insetBy(dx: -20, dy: -20)
+    }
+
+    /// Repaints only what a layer's change touched (old and new area), or everything when that can't be bounded.
+    /// A drag step used to repaint the whole visible canvas: every blur, spotlight and annotation.
+    private func repaint(changeOf layer: AnnotationLayer?, from areaBefore: CGRect?) {
+        guard let before = areaBefore, let after = repaintArea(for: layer) else {
+            onPartialRepaint?(nil)
+            needsDisplay = true
+            return
+        }
+        onPartialRepaint?(before.union(after))
+        setNeedsDisplay(canvasRect: before.union(after))
+    }
+
+    /// Observes each drag-step repaint (canvas rect; nil = whole canvas). Tests check no area is missed.
+    var onPartialRepaint: ((CGRect?) -> Void)?
 
     override public func mouseUp(with event: NSEvent) {
         if cropGesture != nil {
@@ -1223,8 +1255,8 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     override public func mouseMoved(with event: NSEvent) {
         let point = canvasPoint(from: event)
         moveBrushPreview(to: point)
-        let newlyHovered = document.layers.reversed().first { layer in
-            layer.isVisible && (layer.contains(point: point) || layer.hitTestHandle(point: point) != nil)
+        let newlyHovered = document.layersTopToBottom().first { layer in
+            layer.contains(point: point) || layer.hitTestHandle(point: point) != nil
         }
         updateHoverState(to: newlyHovered)
         updateCursorForPoint(point)
@@ -1247,6 +1279,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     func updateHoverState(to newLayer: AnnotationLayer?) {
         if newLayer?.id != hoveredLayer?.id {
+            let oldOutline = hoverOutlineLayer
             hoveredLayer = newLayer
             if let filter = newLayer as? FilterLayer, filter.filterMode != .spotlight {
                 hoverOutlineLayer = nil
@@ -1254,7 +1287,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
                 hoverOutlineLayer = newLayer
             }
             hoverAlpha = (newLayer != nil) ? 1.0 : 0.0
-            needsDisplay = true
+            repaintOutlines(oldOutline, hoverOutlineLayer)
         }
     }
 
@@ -1319,10 +1352,22 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     func clearHoverStateImmediately() {
+        let oldOutline = hoverOutlineLayer
         hoveredLayer = nil
         hoverOutlineLayer = nil
         hoverAlpha = 0.0
-        needsDisplay = true
+        repaintOutlines(oldOutline, nil)
+    }
+
+    /// Repaints where hover outlines were and are (not the whole canvas)
+    private func repaintOutlines(_ a: AnnotationLayer?, _ b: AnnotationLayer?) {
+        for layer in [a, b].compactMap({ $0 }) {
+            if let area = repaintArea(for: layer) {
+                setNeedsDisplay(canvasRect: area)
+            } else {
+                needsDisplay = true
+            }
+        }
     }
 
     private func drawBrushOutline(at point: CGPoint, in context: CGContext, strokeWidth: CGFloat) {
@@ -1502,7 +1547,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             NSCursor.sleekMove.set()
             return
         }
-        let hitsMovableLayer = document.layers.reversed().contains { layer in
+        let hitsMovableLayer = document.layersTopToBottom().contains { layer in
             layer.isVisible && layer.contains(point: point)
         }
         if hitsMovableLayer {
@@ -1528,6 +1573,28 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         default:
             NSCursor.crosshair.set()
         }
+    }
+
+    // MARK: - Undo / Redo entry points (keyboard and toolbar)
+
+    /// Whether a mouse gesture is half done: undo then would restore layers the gesture keeps editing
+    private var isGestureInProgress: Bool {
+        activeDraggingLayer != nil || activeCreatingLayer != nil || cropGesture != nil
+    }
+
+    /// Undo from the keyboard or toolbar: reverts a text being typed as one step, and waits for a gesture to end
+    public func performUndo() {
+        if isEditingCallout {
+            revertCalloutSession()
+            return
+        }
+        guard !isGestureInProgress else { return }
+        document.undo()
+    }
+
+    public func performRedo() {
+        guard !isEditingCallout, !isGestureInProgress else { return }
+        document.redo()
     }
 
     // MARK: - Crop Selection
@@ -1622,7 +1689,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         guard rect.contains(point) else { return .outside }
         let selected = document.getSelectedLayers().first
         if selected?.hitTestHandle(point: point) != nil || selected?.contains(point: point) == true
-            || document.layers.contains(where: { $0.isVisible && $0.contains(point: point) }) {
+            || document.topLayer(at: point) != nil {
             return .annotation
         }
         return .inside
@@ -1781,6 +1848,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
 
         let wasDragging = activeDraggingLayer != nil
+        // A press that hasn't moved yet changed nothing: drop its snapshot (mouseUp no longer can)
+        if wasDragging, !didDragSinceMouseDown, document.snapshotSerial == snapshotSerialAtMouseDown + 1 {
+            document.discardLastSnapshot()
+        }
         if wasDragging {
             activeDraggingLayer = nil
             activeHandleIndex = nil
@@ -1877,12 +1948,14 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             }
             document.removeSelectedLayers()
             clearHoverStateImmediately()
-        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "z" {
+        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers?.lowercased() == "z" {
             if event.modifierFlags.contains(.shift) {
-                document.redo()
+                performRedo()
             } else {
-                document.undo()
+                performUndo()
             }
+        } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers?.lowercased() == "s" {
+            (window as? EditorPanel)?.saveRequested()
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "c" {
             copySelectionOrComposition()
         } else if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "x" {

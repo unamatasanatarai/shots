@@ -197,8 +197,8 @@ public final class CaptureManager {
             executeFullscreenCapture(screen: nil)
 
         case .region(let selRect, let screenFrame, let displayID):
-            guard var image = CaptureService.shared.captureRegion(displayID: displayID, selRect: selRect, in: screenFrame.size)
-                    ?? CGDisplayCreateImage(displayID) else {
+            // No full-display fallback: a failed region capture must not silently save the whole screen
+            guard var image = CaptureService.shared.captureRegion(displayID: displayID, selRect: selRect, in: screenFrame.size) else {
                 NSLog("Failed to capture display for repeated region")
                 return
             }
@@ -223,8 +223,7 @@ public final class CaptureManager {
             AutoscrollCaptureCoordinator.shared.repeatAutoscrollCapture(region: region)
 
         case .ocr(let selRect, let screenFrame, let displayID):
-            guard let image = CaptureService.shared.captureRegion(displayID: displayID, selRect: selRect, in: screenFrame.size)
-                    ?? CGDisplayCreateImage(displayID) else {
+            guard let image = CaptureService.shared.captureRegion(displayID: displayID, selRect: selRect, in: screenFrame.size) else {
                 NSLog("Failed to capture display for repeated OCR")
                 ocrCompletion?(nil)
                 return
@@ -284,16 +283,19 @@ public final class CaptureManager {
     // MARK: - Image Processing & Fan-out Pipeline
 
     public func processCapturedImage(_ cgImage: CGImage) {
+        // May be called from background queues (autoscroll): read settings through the
+        // lock-protected snapshot, never the main-thread-only @Published storage.
         let settings = AppSettings.shared
+        let snapshot = settings.captureSnapshot
         let saveService = SaveService.shared
-        let format = settings.imageFormat
+        let format = snapshot.imageFormat
 
         // Perform encoding, save to destination, and launch Impact with the fresh file
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
             // 1. Format-aware image encoding (PNG / JPG)
-            guard let encodedData = saveService.encodeImage(cgImage, format: format, quality: settings.jpgCompressionFactor) else {
+            guard let encodedData = saveService.encodeImage(cgImage, format: format, quality: snapshot.jpgCompressionFactor) else {
                 NSLog("Failed to encode bitmap into format: %@", format.rawValue)
                 return
             }
@@ -311,7 +313,7 @@ public final class CaptureManager {
             }
 
             // 4. System Pasteboard Synchronization
-            if settings.copyToClipboard {
+            if snapshot.copyToClipboard {
                 DispatchQueue.main.async {
                     saveService.copyToPasteboard(image: cgImage, pngData: format == .png ? encodedData : nil, fileURL: savedFileURL)
                 }

@@ -809,8 +809,11 @@ public struct AppTests {
             // Test LaunchAtLoginService API invocation
             let service = LaunchAtLoginService.shared
             let prevSetting = AppSettings.shared.launchAtLogin
+            // Never register the test binary as a real login item
+            service.backendOverride = { _ in true }
             defer {
                 _ = service.setLaunchAtLogin(enabled: prevSetting)
+                service.backendOverride = nil
             }
 
             _ = service.setLaunchAtLogin(enabled: true)
@@ -1748,5 +1751,650 @@ public struct AppTests {
             controller.menuWillOpen(menu)
             assert(warningItem?.isHidden == true, "Warning item must be hidden when both permissions are granted")
         }
+
+        // MARK: - Audit Regression Suite
+        AuditRegressionTests.run(testRunner: testRunner)
+    }
+}
+
+// MARK: - Audit Regression Tests
+
+@MainActor
+enum AuditRegressionTests {
+    static func run(testRunner: @MainActor (String, () throws -> Void) -> Void) {
+        testRunner("Regression: AppSettings - Concurrent Save-Folder Reads vs Main-Thread Writes Do Not Crash") {
+            testSettingsConcurrentReadsDuringWrites()
+        }
+        testRunner("Regression: AppSettings - Out-of-Range Stored Shortcuts Fall Back to Defaults") {
+            testSettingsCorruptShortcutDefaults()
+        }
+        testRunner("Regression: OCR - Reading Order Groups Rows by Overlap (Tall Images, Indented Lines)") {
+            testOCRReadingOrder()
+        }
+        testRunner("Regression: ScrollingCapture - Sparse Content Moved 50px Is a Scroll, Not an Identical Frame") {
+            testScrollSparseContentOffsetAndStitch()
+        }
+        testRunner("Regression: Autoscroll - Second Start While Running Completes With nil") {
+            testAutoscrollReentryGuard()
+        }
+        testRunner("Regression: Overlay - Start While a Session Is Active Calls Completion With nil") {
+            testOverlayStartWhileSelectingCompletes()
+        }
+        testRunner("Regression: Color Picker - Pixel Index Floors Fractional Points (Scale 1 & 2)") {
+            testColorPickerPixelIndex()
+        }
+        testRunner("Regression: Ruler - Clipboard Text Matches On-Screen Badge (Backing Pixels)") {
+            testRulerClipboardMatchesBadge()
+        }
+        testRunner("Regression: KeyCodes - Bare F-Keys Are Assigned; Arrows/Home/PageUp Need Modifiers") {
+            testFunctionKeyShortcuts()
+        }
+        testRunner("Regression: CaptureService - cropImage Intersects Selection With Image Bounds") {
+            testCropImageIntersectsBounds()
+        }
+        testRunner("Regression: CaptureService - Top Display Edge (CG y == 0) Resolves to a Screen") {
+            testTopEdgeScreenLookup()
+        }
+        testRunner("Regression: HUD Panels - Toast & Countdown Excluded From Screen Capture") {
+            testHUDPanelsExcludedFromCapture()
+        }
+        testRunner("Regression: Launch at Login - Preference Persisted Only When Registration Succeeds") {
+            testLaunchAtLoginPersistsOnlyOnSuccess()
+        }
+        testRunner("Regression: ImpactLauncher - Stale capture_*.png Purge & Failed Write Returns nil") {
+            testImpactTempCaptureHousekeeping()
+        }
+        testRunner("Regression: Pasteboard - Copy With PNG Data Does Not Retain Decoded CGImage") {
+            testPasteboardDoesNotRetainImage()
+        }
+        testRunner("Regression: AppSettings - Reset/Clear Hotkeys Post a Single Change Notification") {
+            testHotkeyBatchNotifications()
+        }
+        testRunner("Regression: Overlay - Area/OCR Dirty Region Is Tight Around the Cursor") {
+            testOverlayDirtyReach()
+        }
+    }
+
+    private static func makeDefaults() -> (UserDefaults, String) {
+        let name = "com.test.shots.audit.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        return (defaults, name)
+    }
+
+    // 1. resolvedSaveDirectoryURL / capture settings are read on background queues
+    static func testSettingsConcurrentReadsDuringWrites() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let base = NSTemporaryDirectory() + "shots-audit-race-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        defaults.set(base + "/a", forKey: AppSettings.Keys.saveDirectoryPath)
+        let settings = AppSettings(defaults: defaults)
+
+        let iterations = 20_000
+        let group = DispatchGroup()
+        DispatchQueue.global(qos: .userInitiated).async(group: group) {
+            for _ in 0..<iterations {
+                let url = settings.resolvedSaveDirectoryURL
+                precondition(url.path.hasPrefix(base), "Resolved URL must point into the configured folder")
+                let snapshot = settings.captureSnapshot
+                precondition(snapshot.jpgCompressionFactor > 0)
+                _ = settings.jpgCompressionFactor
+            }
+        }
+        for i in 0..<iterations {
+            settings.saveDirectoryPath = base + (i % 2 == 0 ? "/a" : "/b")
+            if i % 50 == 0 {
+                settings.imageFormat = (i % 100 == 0) ? .jpg : .png
+                settings.copyToClipboard = (i % 100 == 0)
+                settings.jpgQuality = 10 + (i % 90)
+                settings.scrollingCaptureSpeed = (i % 100 == 0) ? .fast : .slow
+            }
+        }
+        group.wait()
+
+        settings.saveDirectoryPath = base + "/final"
+        assert(settings.resolvedSaveDirectoryURL.path == base + "/final", "Cache must be invalidated by the last write")
+        settings.imageFormat = .jpg
+        settings.copyToClipboard = false
+        settings.jpgQuality = 42
+        settings.scrollingCaptureSpeed = .fast
+        let snap = settings.captureSnapshot
+        assert(snap.imageFormat == .jpg && !snap.copyToClipboard && snap.jpgQuality == 42 && snap.scrollingCaptureSpeed == .fast,
+               "Snapshot must mirror the latest main-thread writes")
+        assert(abs(settings.jpgCompressionFactor - 0.42) < 0.0001, "jpgCompressionFactor must follow jpgQuality")
+
+        // A settings object restored from defaults seeds its snapshot
+        let restored = AppSettings(defaults: defaults)
+        assert(restored.captureSnapshot == snap, "Snapshot must be seeded at init")
+    }
+
+    // 2. A corrupt plist must not trap at launch
+    static func testSettingsCorruptShortcutDefaults() {
+        let keyCodeKeys: [(String, Int)] = [
+            (AppSettings.Keys.hotkeyKeyCode, kVK_ANSI_4),
+            (AppSettings.Keys.fullscreenShortcutKeyCode, kVK_ANSI_2),
+            (AppSettings.Keys.repeatShortcutKeyCode, kVK_ANSI_3),
+            (AppSettings.Keys.ocrShortcutKeyCode, kVK_ANSI_R),
+            (AppSettings.Keys.scrollingShortcutKeyCode, kVK_ANSI_5),
+            (AppSettings.Keys.rulerShortcutKeyCode, kVK_ANSI_M),
+            (AppSettings.Keys.colorPickerShortcutKeyCode, kVK_ANSI_C)
+        ]
+        let modifierKeys = [
+            AppSettings.Keys.hotkeyModifiers, AppSettings.Keys.fullscreenShortcutModifiers,
+            AppSettings.Keys.repeatShortcutModifiers, AppSettings.Keys.ocrShortcutModifiers,
+            AppSettings.Keys.scrollingShortcutModifiers, AppSettings.Keys.rulerShortcutModifiers,
+            AppSettings.Keys.colorPickerShortcutModifiers
+        ]
+        let defaultMods = UInt32(cmdKey | shiftKey)
+
+        func keyCodes(_ s: AppSettings) -> [UInt16] {
+            [s.hotkeyKeyCode, s.fullscreenShortcutKeyCode, s.repeatShortcutKeyCode, s.ocrShortcutKeyCode,
+             s.scrollingShortcutKeyCode, s.rulerShortcutKeyCode, s.colorPickerShortcutKeyCode]
+        }
+        func modifiers(_ s: AppSettings) -> [UInt32] {
+            [s.hotkeyModifiers, s.fullscreenShortcutModifiers, s.repeatShortcutModifiers, s.ocrShortcutModifiers,
+             s.scrollingShortcutModifiers, s.rulerShortcutModifiers, s.colorPickerShortcutModifiers]
+        }
+
+        for bad in [-1, 70_000, Int(UInt32.max) + 1, Int.min] {
+            let (defaults, name) = makeDefaults()
+            defer { defaults.removePersistentDomain(forName: name) }
+            for (key, _) in keyCodeKeys { defaults.set(bad, forKey: key) }
+            for key in modifierKeys { defaults.set(bad, forKey: key) }
+            let settings = AppSettings(defaults: defaults)
+            assert(keyCodes(settings) == keyCodeKeys.map { UInt16($0.1) }, "Corrupt key codes (\(bad)) must fall back to defaults")
+            assert(modifiers(settings).allSatisfy { $0 == defaultMods }, "Corrupt modifiers (\(bad)) must fall back to defaults")
+        }
+
+        // Valid stored values (including a cleared shortcut) still round-trip
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(Int(KeyCodes.noKey), forKey: AppSettings.Keys.hotkeyKeyCode)
+        defaults.set(0, forKey: AppSettings.Keys.hotkeyModifiers)
+        defaults.set(kVK_F5, forKey: AppSettings.Keys.ocrShortcutKeyCode)
+        defaults.set(Int(optionKey | controlKey), forKey: AppSettings.Keys.ocrShortcutModifiers)
+        let settings = AppSettings(defaults: defaults)
+        assert(settings.hotkeyKeyCode == KeyCodes.noKey && settings.hotkeyModifiers == 0, "Cleared shortcut must round-trip")
+        assert(settings.ocrShortcutKeyCode == UInt16(kVK_F5), "Valid key code must round-trip")
+        assert(settings.ocrShortcutModifiers == UInt32(optionKey | controlKey), "Valid modifiers must round-trip")
+    }
+
+    // MARK: - Helpers
+
+    private static func bgraContext(_ width: Int, _ height: Int) -> CGContext {
+        CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        )!
+    }
+
+    /// Renders a white canvas of `height` rows with black blocks; `blocks` are (x, topRow, width, height)
+    /// in top-down document rows, shifted up by `offset` rows
+    private static func renderBlocks(_ blocks: [(Int, Int, Int, Int)], width: Int, height: Int, offset: Int) -> CGImage {
+        let ctx = bgraContext(width, height)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        for (x, top, w, h) in blocks {
+            let rowTop = top - offset
+            ctx.fill(CGRect(x: x, y: height - rowTop - h, width: w, height: h))
+        }
+        return ctx.makeImage()!
+    }
+
+    private static func pixelBytes(_ image: CGImage) -> [UInt8] {
+        let ctx = bgraContext(image.width, image.height)
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let count = image.width * image.height * 4
+        return Array(UnsafeBufferPointer(start: ctx.data!.assumingMemoryBound(to: UInt8.self), count: count))
+    }
+
+    // 3. OCR reading order
+    static func testOCRReadingOrder() {
+        // Synthetic Vision-style boxes (y-up pixels) for an indented code block in an 1800 px tall image:
+        // 36 px line pitch, 28 px glyph boxes, indented lines start 40 px further right
+        let lines: [(x: CGFloat, width: CGFloat)] = [(20, 200), (60, 180), (60, 190), (20, 10), (20, 190), (60, 170), (20, 10)]
+        let imageHeight: CGFloat = 1800
+        var boxes: [CGRect] = []
+        for (i, line) in lines.enumerated() {
+            let top = imageHeight - 20 - CGFloat(i) * 36
+            boxes.append(CGRect(x: line.x, y: top - 28, width: line.width, height: 28))
+        }
+        // Shuffle deterministically so the input order carries no information
+        let permutation = [4, 0, 6, 2, 5, 1, 3]
+        let shuffled = permutation.map { boxes[$0] }
+        let order = RecognitionService.readingOrder(of: shuffled).map { permutation[$0] }
+        assert(order == Array(0..<lines.count), "Lines must come out top-to-bottom, got \(order)")
+
+        // Words of one line with slightly different boxes are one row, read left to right
+        let words = [CGRect(x: 300, y: 500, width: 80, height: 24), CGRect(x: 10, y: 503, width: 80, height: 20),
+                     CGRect(x: 150, y: 498, width: 60, height: 28), CGRect(x: 10, y: 460, width: 50, height: 24)]
+        assert(RecognitionService.readingOrder(of: words) == [1, 2, 0, 3], "Same-line words must be ordered by x")
+        assert(RecognitionService.readingOrder(of: []).isEmpty, "Empty input")
+
+        // End to end: real Vision OCR on a tall render keeps the indented lines in place
+        let code: [(String, CGFloat)] = [
+            ("func alpha() {", 0), ("let first = 1", 40), ("let second = 2", 40), ("}", 0),
+            ("func beta() {", 0), ("return third", 40), ("}", 0)
+        ]
+        let width = 900, height = 1800
+        let ctx = bgraContext(width, height)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 24, weight: .regular), .foregroundColor: NSColor.black
+        ]
+        for (i, (text, indent)) in code.enumerated() {
+            (text as NSString).draw(at: NSPoint(x: 20 + indent, y: CGFloat(height) - 20 - CGFloat(i + 1) * 36), withAttributes: attrs)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let image = ctx.makeImage()!
+        let items = (try? RecognitionService.shared.recognizeText(in: image)) ?? []
+        let payloads = items.map { $0.payload.trimmingCharacters(in: .whitespaces) }
+        let markers = ["alpha", "first", "second", "beta", "third"]
+        let positions = markers.compactMap { marker in payloads.firstIndex { $0.contains(marker) } }
+        if positions.count == markers.count, let closingBrace = payloads.firstIndex(of: "}") {
+            assert(positions == positions.sorted(), "OCR lines of a tall image must keep reading order, got: \(payloads)")
+            // The unindented "}" closing alpha() sits between the indented lines and beta()
+            assert(closingBrace > positions[2] && closingBrace < positions[3],
+                   "Unindented '}' must stay after the indented lines, got: \(payloads)")
+        } else {
+            NSLog("OCR end-to-end check skipped: Vision returned %@", payloads.joined(separator: " | "))
+        }
+    }
+
+    // 4. Scroll stitching with sparse content
+    static func testScrollSparseContentOffsetAndStitch() {
+        let service = ScrollingCaptureService.shared
+        let word: (Int) -> [(Int, Int, Int, Int)] = { top in [(15, top, 30, 12), (75, top, 30, 12)] }
+
+        let f1 = renderBlocks(word(105), width: 600, height: 400, offset: 0)
+        let f2 = renderBlocks(word(105), width: 600, height: 400, offset: 50)
+        assert(service.detectVerticalOffset(between: f1, and: f2) == 50, "Sparse words moved up 50 px must give shift 50")
+        assert(service.detectVerticalOffset(between: f1, and: f1) == 0, "Identical frames must still give 0")
+
+        // A sparse document seen through a 400 px window scrolled by 50 px twice
+        let document = [105, 210, 330, 420, 470].flatMap(word)
+        let frames = [0, 50, 100].map { renderBlocks(document, width: 600, height: 400, offset: $0) }
+        guard let stitched = service.stitchFrames(frames) else {
+            assertionFailure("stitchFrames returned nil")
+            return
+        }
+        assert(stitched.height == 500, "3 frames scrolled 50 px each must stitch to 500 px, got \(stitched.height)")
+        let expected = renderBlocks(document, width: 600, height: 500, offset: 0)
+        assert(pixelBytes(stitched) == pixelBytes(expected), "Stitched pixels must reproduce the document")
+    }
+
+    // 5. Autoscroll re-entry
+    static func testAutoscrollReentryGuard() {
+        let perm = PermissionsManager.shared
+        let prevSR = perm.screenRecordingOverride, prevAX = perm.accessibilityOverride
+        perm.screenRecordingOverride = true
+        perm.accessibilityOverride = true
+        let overlay = RegionSelectionCoordinator.shared
+        let coordinator = AutoscrollCaptureCoordinator.shared
+        defer {
+            perm.screenRecordingOverride = prevSR
+            perm.accessibilityOverride = prevAX
+            overlay.isSelecting = false
+            coordinator.isAborted = false
+            coordinator.isFinishedEarly = false
+        }
+        assert(!overlay.isSelecting, "No overlay session may be active at test start")
+        assert(!coordinator.isRunning, "Coordinator must be idle at test start")
+
+        // Simulate a running session
+        assert(coordinator.tryBeginRun(), "First claim must succeed")
+        coordinator.isAborted = true
+        var calls = 0
+        coordinator.startAutoscrollCapture { image in
+            assert(image == nil, "Second start must complete with nil")
+            calls += 1
+        }
+        assert(calls == 1, "Second start must complete immediately")
+        assert(coordinator.isAborted, "Second start must not reset the running session's abort flag")
+        assert(coordinator.isRunning, "Running session must remain claimed")
+
+        let screen = NSScreen.screens.first ?? NSScreen()
+        let region = SelectedRegionInfo(rect: NSRect(x: 0, y: 0, width: 100, height: 100), screen: screen, displayID: CGMainDisplayID())
+        coordinator.repeatAutoscrollCapture(region: region) { image in
+            assert(image == nil, "Repeat while running must complete with nil")
+            calls += 1
+        }
+        assert(calls == 2, "Repeat while running must complete immediately")
+        coordinator.endRun()
+        assert(!coordinator.isRunning, "endRun releases the coordinator")
+
+        // When the selection overlay is busy the flow ends at once and releases the coordinator
+        coordinator.isAborted = false
+        overlay.isSelecting = true
+        coordinator.startAutoscrollCapture { image in
+            assert(image == nil)
+            calls += 1
+        }
+        assert(calls == 3, "Busy overlay must end the autoscroll flow with nil")
+        assert(!coordinator.isRunning, "Coordinator must be released after the flow completes")
+    }
+
+    // 11. Overlay entry points must not drop completions
+    static func testOverlayStartWhileSelectingCompletes() {
+        let perm = PermissionsManager.shared
+        let prevSR = perm.screenRecordingOverride, prevAX = perm.accessibilityOverride
+        perm.screenRecordingOverride = true
+        perm.accessibilityOverride = true
+        let overlay = RegionSelectionCoordinator.shared
+        defer {
+            perm.screenRecordingOverride = prevSR
+            perm.accessibilityOverride = prevAX
+            overlay.isSelecting = false
+        }
+        assert(!overlay.isSelecting, "No overlay session may be active at test start")
+        overlay.isSelecting = true
+
+        var results: [String] = []
+        overlay.startSelection(mode: .area) { image in
+            assert(image == nil); results.append("selection")
+        }
+        overlay.startRegionSelection { info in
+            assert(info == nil); results.append("region")
+        }
+        overlay.startRuler { text in
+            assert(text == nil); results.append("ruler")
+        }
+        overlay.startColorPicker { hex in
+            assert(hex == nil); results.append("color")
+        }
+        assert(results == ["selection", "region", "ruler", "color"], "Every busy start must complete with nil, got \(results)")
+        assert(overlay.isSelecting, "The active session must be left untouched")
+    }
+
+    // 6. Color picker pixel index
+    static func testColorPickerPixelIndex() {
+        // 17 pt capture rect starting at floor(x) - 8 (as in sampleLiveColorAndPatch)
+        for scale: CGFloat in [1, 2] {
+            let count = Int(17 * scale)
+            for fraction: CGFloat in [0.0, 0.4, 0.6, 0.8] {
+                let x = 100 + fraction
+                let origin = floor(x) - 8
+                let index = RegionSelectionCoordinator.pixelIndex(coordinate: x, origin: origin, scale: scale, count: count)
+                let expected = Int(floor((x - origin) * scale))
+                assert(index == expected, "scale \(scale) x \(x): pixel \(index), expected \(expected)")
+                // The chosen pixel must cover the cursor position
+                let covers = origin + CGFloat(index) / scale
+                assert(covers <= x && x < covers + 1 / scale, "Pixel \(index) must cover x \(x) at scale \(scale)")
+            }
+        }
+        assert(RegionSelectionCoordinator.pixelIndex(coordinate: 100.6, origin: 92, scale: 1, count: 17) == 8, "Centre pixel at 1x")
+        assert(RegionSelectionCoordinator.pixelIndex(coordinate: 100.8, origin: 92, scale: 2, count: 34) == 17, "x .8 at 2x is pixel 17")
+        assert(RegionSelectionCoordinator.pixelIndex(coordinate: -5, origin: 0, scale: 2, count: 10) == 0, "Clamped low")
+        assert(RegionSelectionCoordinator.pixelIndex(coordinate: 50, origin: 0, scale: 2, count: 10) == 9, "Clamped high")
+    }
+
+    // 7. Ruler clipboard vs badge
+    static func testRulerClipboardMatchesBadge() {
+        let primary = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        // Drag (100,100) -> (200,150) in CG; the view sees the same points flipped (y up)
+        let clipboard = RegionSelectionCoordinator.rulerClipboardText(
+            startCG: CGPoint(x: 100, y: 100), endCG: CGPoint(x: 200, y: 150),
+            screenFrame: primary, primaryHeight: 900, scale: 2
+        )
+        let badge = RegionSelectionCoordinator.rulerMeasurementText(dxPoints: 200 - 100, dyPoints: 750 - 800, scale: 2)
+        assert(clipboard == badge, "Clipboard '\(clipboard)' must match badge '\(badge)'")
+        assert(badge == "W: 200 px  H: 100 px  Dist: 223.6 px", "Badge reports backing pixels, got \(badge)")
+
+        // Click without drag: position relative to the display's top-left, in pixels
+        let clickClipboard = RegionSelectionCoordinator.rulerClipboardText(
+            startCG: CGPoint(x: 100, y: 100), endCG: CGPoint(x: 100, y: 100),
+            screenFrame: primary, primaryHeight: 900, scale: 2
+        )
+        let viewPoint = NSPoint(x: 100, y: 800) // view coordinates (y up) of CG (100, 100)
+        let clickBadge = RegionSelectionCoordinator.rulerPositionText(xPoints: viewPoint.x, yPointsFromTop: 900 - viewPoint.y, scale: 2)
+        assert(clickClipboard == clickBadge, "Click clipboard '\(clickClipboard)' must match badge '\(clickBadge)'")
+        assert(clickBadge == "X: 200 px  Y: 200 px", "Got \(clickBadge)")
+
+        // Secondary display above-right of the primary (AppKit origin y = -200)
+        let secondary = NSRect(x: 1440, y: -200, width: 1920, height: 1080)
+        let secClipboard = RegionSelectionCoordinator.rulerClipboardText(
+            startCG: CGPoint(x: 1500, y: 50), endCG: CGPoint(x: 1500, y: 50),
+            screenFrame: secondary, primaryHeight: 900, scale: 1
+        )
+        let secViewY = (900 - 50) - secondary.origin.y
+        let secBadge = RegionSelectionCoordinator.rulerPositionText(xPoints: 1500 - secondary.minX, yPointsFromTop: secondary.height - secViewY, scale: 1)
+        assert(secClipboard == secBadge && secBadge == "X: 60 px  Y: 30 px", "Secondary display: '\(secClipboard)' vs '\(secBadge)'")
+    }
+
+    // 8. F-key shortcuts
+    static func testFunctionKeyShortcuts() {
+        for key in [kVK_F1, kVK_F5, kVK_F12, kVK_F13, kVK_F19, kVK_F20] {
+            let code = UInt16(key)
+            assert(KeyCodes.isShortcutAssigned(keyCode: code, carbonMods: 0), "Bare F-key \(key) must be assigned")
+            assert(KeyCodes.isRecordableShortcut(keyCode: code, carbonMods: 0), "Recorder must accept bare F-key \(key)")
+            assert(KeyCodes.shortcutString(keyCode: code, carbonMods: 0) == KeyCodes.keyName(for: code), "Display must show the F-key")
+        }
+        let navigation = [kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End,
+                          kVK_PageUp, kVK_PageDown, kVK_Help, kVK_ForwardDelete, kVK_ANSI_A, kVK_ANSI_KeypadEnter]
+        for key in navigation {
+            let code = UInt16(key)
+            assert(!KeyCodes.isFunctionKey(code), "\(key) is not an F-key")
+            assert(!KeyCodes.isRecordableShortcut(keyCode: code, carbonMods: 0), "Recorder must reject bare key \(key)")
+            assert(KeyCodes.shortcutString(keyCode: code, carbonMods: 0) == "None", "Bare \(key) displays None")
+            assert(KeyCodes.isRecordableShortcut(keyCode: code, carbonMods: UInt32(cmdKey)), "\(key) with ⌘ is recordable")
+        }
+        assert(!KeyCodes.isShortcutAssigned(keyCode: KeyCodes.noKey, carbonMods: UInt32(cmdKey)), "noKey is never assigned")
+
+        // Settings: a bare F-key takes part in conflict detection like any other assigned shortcut
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = AppSettings(defaults: defaults)
+        settings.ocrShortcutKeyCode = UInt16(kVK_F6)
+        settings.ocrShortcutModifiers = 0
+        assert(!settings.isHotkeyConflict, "Single F6 is not a conflict")
+        settings.rulerShortcutKeyCode = UInt16(kVK_F6)
+        settings.rulerShortcutModifiers = 0
+        assert(settings.isHotkeyConflict, "Two bare F6 shortcuts must conflict")
+    }
+
+    // 9. cropImage bounds
+    static func testCropImageIntersectsBounds() {
+        let ctx = bgraContext(200, 200)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+        let base = ctx.makeImage()!
+        let service = CaptureService.shared
+        let size = NSSize(width: 200, height: 200)
+
+        let left = service.cropImage(base, to: NSRect(x: -10, y: 0, width: 100, height: 50), in: size)
+        assert(left?.width == 90 && left?.height == 50, "x=-10 w=100 must crop 90x50, got \(String(describing: left?.width))x\(String(describing: left?.height))")
+        let top = service.cropImage(base, to: NSRect(x: 0, y: 180, width: 50, height: 40), in: size)
+        assert(top?.width == 50 && top?.height == 20, "y=180 h=40 must crop 50x20, got \(String(describing: top?.width))x\(String(describing: top?.height))")
+        let right = service.cropImage(base, to: NSRect(x: 180, y: -30, width: 50, height: 60), in: size)
+        assert(right?.width == 20 && right?.height == 30, "Right/bottom overhang must be trimmed")
+        let retina = service.cropImage(base, to: NSRect(x: -10, y: 0, width: 30, height: 20), in: NSSize(width: 100, height: 100))
+        assert(retina?.width == 40 && retina?.height == 40, "2x: 20 visible pt -> 40 px wide, 20 pt -> 40 px high")
+        assert(service.cropImage(base, to: NSRect(x: 300, y: 0, width: 10, height: 10), in: size) == nil, "Fully outside -> nil")
+    }
+
+    // 10. Top display edge
+    static func testTopEdgeScreenLookup() {
+        let primary = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let above = NSRect(x: 0, y: 900, width: 1920, height: 1080) // display stacked above the primary
+        let frames = [primary, above]
+        assert(CaptureService.indexOfFrame(containingCGPoint: CGPoint(x: 10, y: 0), frames: frames, primaryHeight: 900) == 0,
+               "CG y == 0 is the primary's top row")
+        assert(CaptureService.indexOfFrame(containingCGPoint: CGPoint(x: 10, y: 899.5), frames: frames, primaryHeight: 900) == 0,
+               "Bottom row belongs to the primary")
+        assert(CaptureService.indexOfFrame(containingCGPoint: CGPoint(x: 10, y: -1080), frames: frames, primaryHeight: 900) == 1,
+               "Top row of the display above")
+        assert(CaptureService.indexOfFrame(containingCGPoint: CGPoint(x: 10, y: -0.5), frames: frames, primaryHeight: 900) == 1,
+               "Bottom row of the display above")
+        assert(CaptureService.indexOfFrame(containingCGPoint: CGPoint(x: 10, y: 900), frames: frames, primaryHeight: 900) == nil,
+               "Below the primary is off-screen")
+
+        if !NSScreen.screens.isEmpty {
+            assert(CaptureService.shared.screen(containingCGPoint: CGPoint(x: 10, y: 0)) != nil, "screen(containingCGPoint: (10, 0)) must resolve")
+            let primaryFrame = NSScreen.screens[0].frame
+            let topAppKit = NSPoint(x: primaryFrame.minX + 10, y: primaryFrame.maxY)
+            assert(CaptureService.shared.screen(containing: topAppKit) != nil, "AppKit y == maxY (top row mouse location) must resolve")
+        }
+    }
+
+    // 11. Capture-excluded HUD panels
+    static func testHUDPanelsExcludedFromCapture() {
+        let toast = OCRNotificationController.makeNotificationPanel(frame: NSRect(x: 0, y: 0, width: 250, height: 52))
+        assert(toast.sharingType == .none, "OCR toast must not be captured")
+        let countdown = CountdownHUDController.makeCountdownPanel(frame: NSRect(x: 0, y: 0, width: 160, height: 160))
+        assert(countdown.sharingType == .none, "Countdown HUD must not be captured")
+        assert(!toast.isVisible && !countdown.isVisible, "Factories must not show panels")
+    }
+
+    // 11. Launch at login
+    static func testLaunchAtLoginPersistsOnlyOnSuccess() {
+        let service = LaunchAtLoginService.shared
+        let settings = AppSettings.shared
+        let previous = settings.launchAtLogin
+        defer {
+            service.backendOverride = nil
+            settings.launchAtLogin = previous
+        }
+        settings.launchAtLogin = false
+
+        struct RegistrationError: Error {}
+        service.backendOverride = { _ in throw RegistrationError() }
+        assert(!service.setLaunchAtLogin(enabled: true), "Throwing registration must report failure")
+        assert(settings.launchAtLogin == false, "Failed registration must not persist launchAtLogin = true")
+
+        service.backendOverride = { _ in false }
+        assert(!service.setLaunchAtLogin(enabled: true), "Rejected registration must report failure")
+        assert(settings.launchAtLogin == false, "Rejected registration must not persist")
+
+        var requested: [Bool] = []
+        service.backendOverride = { enabled in requested.append(enabled); return true }
+        assert(service.setLaunchAtLogin(enabled: true) && settings.launchAtLogin == true, "Success persists true")
+        assert(service.setLaunchAtLogin(enabled: false) && settings.launchAtLogin == false, "Success persists false")
+        assert(requested == [true, false], "Backend receives the requested state")
+
+        settings.launchAtLogin = true
+        service.backendOverride = { _ in throw RegistrationError() }
+        assert(!service.setLaunchAtLogin(enabled: false), "Throwing unregistration reports failure")
+        assert(settings.launchAtLogin == true, "Failed unregistration keeps the enabled state")
+    }
+
+    // 11. ImpactLauncher temp files
+    static func testImpactTempCaptureHousekeeping() {
+        let fm = FileManager.default
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("shots-audit-tmp-\(UUID().uuidString)")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let now = Date()
+        let old = now.addingTimeInterval(-2 * 3600)
+        func touch(_ name: String, _ date: Date) {
+            let url = dir.appendingPathComponent(name)
+            fm.createFile(atPath: url.path, contents: Data([1, 2, 3]))
+            try? fm.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+        }
+        touch("capture_1.png", old)
+        touch("capture_2.png", old)
+        touch("capture_3.png", now)
+        touch("other_1.png", old)
+        touch("capture_4.txt", old)
+
+        let removed = ImpactLauncher.purgeStaleTempCaptures(in: dir, now: now)
+        assert(removed == 2, "Only stale capture_*.png files are removed, removed \(removed)")
+        let remaining = Set((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
+        assert(remaining == ["capture_3.png", "other_1.png", "capture_4.txt"], "Unexpected remaining files: \(remaining)")
+
+        let image = renderBlocks([(1, 1, 2, 2)], width: 8, height: 8, offset: 0)
+        let written = ImpactLauncher.writeTempCapture(image, in: dir)
+        assert(written.map { fm.fileExists(atPath: $0.path) } == true, "Successful write returns an existing file")
+        assert(written?.lastPathComponent.hasPrefix("capture_") == true, "Temp captures keep the capture_ prefix")
+        let missing = dir.appendingPathComponent("does-not-exist", isDirectory: true)
+        assert(ImpactLauncher.writeTempCapture(image, in: missing) == nil, "Failed write must return nil (nothing to open)")
+    }
+
+    // P3. Pasteboard must not pin the decoded bitmap
+    private final class ReleaseFlag { var released = false }
+
+    static func testPasteboardDoesNotRetainImage() {
+        let flag = ReleaseFlag()
+        let width = 64, height = 48
+        autoreleasepool {
+            let size = width * height * 4
+            let bytes = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 16)
+            memset(bytes, 0x7F, size)
+            let provider = CGDataProvider(
+                dataInfo: Unmanaged.passRetained(flag).toOpaque(),
+                data: bytes,
+                size: size,
+                releaseData: { info, data, _ in
+                    let flag = Unmanaged<ReleaseFlag>.fromOpaque(info!).takeRetainedValue()
+                    flag.released = true
+                    UnsafeMutableRawPointer(mutating: data).deallocate()
+                }
+            )!
+            let image = CGImage(
+                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+            )!
+            let png = SaveService.shared.encodePNG(image: image)!
+            SaveService.shared.copyToPasteboard(image: image, pngData: png, fileURL: nil)
+        }
+        assert(flag.released, "Clipboard promise backed by PNG data must not keep the decoded CGImage alive")
+
+        // The promised TIFF is still produced (decoded from the PNG data)
+        let tiff = NSPasteboard.general.data(forType: .tiff)
+        let decoded = tiff.flatMap { NSBitmapImageRep(data: $0) }
+        assert(decoded?.pixelsWide == width && decoded?.pixelsHigh == height, "TIFF must decode to the original size")
+        assert(NSPasteboard.general.data(forType: .png) != nil, "PNG must be on the pasteboard")
+    }
+
+    // P5. Batched hotkey notifications
+    static func testHotkeyBatchNotifications() {
+        let (defaults, name) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let settings = AppSettings(defaults: defaults)
+        final class Counter { var value = 0 }
+        let counter = Counter()
+        var count: Int {
+            get { counter.value }
+            set { counter.value = newValue }
+        }
+        let token = NotificationCenter.default.addObserver(
+            forName: AppSettings.hotkeyDidChangeNotification, object: settings, queue: nil
+        ) { _ in counter.value += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        settings.clearAllHotkeys()
+        assert(count == 1, "clearAllHotkeys must post one notification, posted \(count)")
+        assert(settings.hotkeyKeyCode == KeyCodes.noKey && settings.colorPickerShortcutModifiers == 0, "All hotkeys cleared")
+        assert(!settings.isHotkeyConflict, "Cleared hotkeys never conflict")
+
+        count = 0
+        settings.resetHotkeysToDefault()
+        assert(count == 1, "resetHotkeysToDefault must post one notification, posted \(count)")
+        assert(settings.hotkeyKeyCode == UInt16(kVK_ANSI_4) && settings.colorPickerShortcutKeyCode == UInt16(kVK_ANSI_C), "Defaults restored")
+        assert(!settings.isHotkeyConflict, "Defaults do not conflict")
+
+        count = 0
+        settings.ocrShortcutKeyCode = UInt16(kVK_ANSI_4)
+        assert(count == 1, "Single edits still notify immediately")
+        assert(settings.isHotkeyConflict, "Single edits still run conflict detection")
+        assert(defaults.integer(forKey: AppSettings.Keys.ocrShortcutKeyCode) == kVK_ANSI_4, "Single edits persist")
+    }
+
+    // P2. Overlay invalidation
+    static func testOverlayDirtyReach() {
+        let area = RegionSelectionView.dirtyReach(for: .area)
+        let ocr = RegionSelectionView.dirtyReach(for: .ocr)
+        assert(area.width * area.height * 4 < 840 * 560 / 4, "Area mode must invalidate far less than 840x560")
+        assert(area == ocr, "Area and OCR draw the same decorations")
+        // Colour picker loupe (126pt) + pill (36pt) sit 20pt from the cursor on either side
+        let picker = RegionSelectionView.dirtyReach(for: .colorPicker)
+        assert(picker.width >= 20 + 126 + 12 && picker.height >= 20 + 126 + 8 + 36 + 12, "Picker reach must cover loupe and shadow")
     }
 }

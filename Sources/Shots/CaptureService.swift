@@ -12,7 +12,7 @@ public final class CaptureService {
     /// Determines the active screen based on the current mouse location, falling back to NSScreen.main or screens.first.
     public func activeScreen() -> NSScreen? {
         let mouseLoc = NSEvent.mouseLocation
-        if let screenWithMouse = NSScreen.screens.first(where: { $0.frame.contains(mouseLoc) }) {
+        if let screenWithMouse = screen(containing: mouseLoc) {
             return screenWithMouse
         }
         return NSScreen.main ?? NSScreen.screens.first
@@ -37,15 +37,30 @@ public final class CaptureService {
         return NSPoint(x: cgPoint.x, y: primaryHeight - cgPoint.y)
     }
 
+    /// A screen's frame in CoreGraphics global space (origin top-left of the primary display).
+    public static func cgDisplayRect(for appKitFrame: NSRect, primaryHeight: CGFloat) -> CGRect {
+        CGRect(x: appKitFrame.minX, y: primaryHeight - appKitFrame.maxY, width: appKitFrame.width, height: appKitFrame.height)
+    }
+
+    /// Index of the frame containing a CG point. Containment is evaluated in CG space (half-open
+    /// [minY, maxY) with y growing down), so the top pixel row (CG y == 0, i.e. AppKit y == frame.maxY,
+    /// which NSRect.contains excludes) belongs to its display.
+    public static func indexOfFrame(containingCGPoint cgPoint: CGPoint, frames: [NSRect], primaryHeight: CGFloat) -> Int? {
+        frames.firstIndex { cgDisplayRect(for: $0, primaryHeight: primaryHeight).contains(cgPoint) }
+    }
+
     /// Finds which NSScreen contains the given AppKit point across all connected displays.
+    /// AppKit points from mouse locations lie in (minY, maxY], so this is evaluated in CG space.
     public func screen(containing appKitPoint: NSPoint) -> NSScreen? {
-        return NSScreen.screens.first(where: { $0.frame.contains(appKitPoint) })
+        return screen(containingCGPoint: coreGraphicsPoint(from: appKitPoint))
     }
 
     /// Finds which NSScreen contains the given CoreGraphics point across all connected displays.
     public func screen(containingCGPoint cgPoint: CGPoint) -> NSScreen? {
-        let appKitPt = appKitPoint(from: cgPoint)
-        return screen(containing: appKitPt)
+        let screens = NSScreen.screens
+        let primaryHeight = screens.first?.frame.height ?? 0
+        return Self.indexOfFrame(containingCGPoint: cgPoint, frames: screens.map { $0.frame }, primaryHeight: primaryHeight)
+            .map { screens[$0] }
     }
 
     // MARK: - Fullscreen Capture
@@ -124,14 +139,12 @@ public final class CaptureService {
         let cropW = selRect.width * scaleX
         let cropH = selRect.height * scaleY
 
-        let cropRect = CGRect(
-            x: max(0, cropX),
-            y: max(0, cropY),
-            width: min(cropW, CGFloat(image.width) - cropX),
-            height: min(cropH, CGFloat(image.height) - cropY)
-        )
+        // Intersect with the image: clamping only the origin would keep the full width/height
+        // and return pixels outside the selection
+        let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
+            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
 
-        guard cropRect.width > 0 && cropRect.height > 0 else { return nil }
+        guard !cropRect.isNull && cropRect.width > 0 && cropRect.height > 0 else { return nil }
         return image.cropping(to: cropRect)
     }
 

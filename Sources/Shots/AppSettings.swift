@@ -67,6 +67,19 @@ public enum ScrollingCaptureSpeed: String, CaseIterable, Identifiable {
     }
 }
 
+/// Immutable copy of the settings the capture pipeline reads off the main thread.
+public struct CaptureSettingsSnapshot: Equatable {
+    public var saveDirectoryPath: String
+    public var imageFormat: ImageFormat
+    public var copyToClipboard: Bool
+    public var jpgQuality: Int
+    public var scrollingCaptureSpeed: ScrollingCaptureSpeed
+
+    public var jpgCompressionFactor: Double {
+        max(0.01, min(1.0, Double(jpgQuality) / 100.0))
+    }
+}
+
 public final class AppSettings: ObservableObject {
     public static let shared = AppSettings()
 
@@ -104,29 +117,100 @@ public final class AppSettings: ObservableObject {
     private let defaults: UserDefaults
     private var isSyncingActionFlags = false
 
+    // MARK: - Thread-safe mirror
+    // @Published storage is main-thread only. Values the capture pipeline needs on background
+    // queues (save folder, format, quality, clipboard flag, scroll speed) are mirrored here
+    // under a lock, together with the resolved save-folder URL cache.
+    private let threadSafeLock = NSLock()
+    private var _snapshot = CaptureSettingsSnapshot(
+        saveDirectoryPath: "", imageFormat: .png, copyToClipboard: true, jpgQuality: 80, scrollingCaptureSpeed: .normal
+    )
+    private var _cachedSaveDirectoryURL: URL?
+
+    private func updateSnapshot(_ mutate: (inout CaptureSettingsSnapshot) -> Void) {
+        threadSafeLock.lock()
+        let oldPath = _snapshot.saveDirectoryPath
+        mutate(&_snapshot)
+        if _snapshot.saveDirectoryPath != oldPath {
+            _cachedSaveDirectoryURL = nil
+        }
+        threadSafeLock.unlock()
+    }
+
+    /// Thread-safe copy of the capture-related settings; safe to call from any queue.
+    public var captureSnapshot: CaptureSettingsSnapshot {
+        threadSafeLock.lock()
+        defer { threadSafeLock.unlock() }
+        return _snapshot
+    }
+
+    /// Decodes a stored key code, falling back when the stored integer is out of UInt16 range
+    /// (a corrupt or hand-edited plist must not trap at launch).
+    static func storedKeyCode(_ defaults: UserDefaults, key: String, fallback: UInt16) -> UInt16 {
+        UInt16(exactly: defaults.integer(forKey: key)) ?? fallback
+    }
+
+    /// Carbon modifier bits the shortcut recorder can produce (see KeyCodes.carbonModifiers).
+    static let validModifierMask = UInt32(cmdKey | shiftKey | optionKey | controlKey)
+
+    /// Decodes stored Carbon modifiers, falling back when the stored integer is out of UInt32 range
+    /// or carries bits that are not shortcut modifiers.
+    static func storedModifiers(_ defaults: UserDefaults, key: String, fallback: UInt32) -> UInt32 {
+        guard let value = UInt32(exactly: defaults.integer(forKey: key)),
+              value & ~validModifierMask == 0 else {
+            return fallback
+        }
+        return value
+    }
+
     // MARK: - Hotkey Configurations
+
+    private var hotkeyBatchDepth = 0
+    private var hotkeyBatchDirty = false
+
+    /// Validates and broadcasts a hotkey change, or defers it while a batch update is running
+    private func hotkeyConfigurationDidChange() {
+        if hotkeyBatchDepth > 0 {
+            hotkeyBatchDirty = true
+            return
+        }
+        checkForShortcutConflicts()
+        NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+    }
+
+    /// Applies several hotkey changes with a single conflict check and a single change notification
+    /// (so observers such as HotkeyManager re-register all hotkeys once, not once per property)
+    public func performHotkeyBatchUpdate(_ updates: () -> Void) {
+        hotkeyBatchDepth += 1
+        updates()
+        hotkeyBatchDepth -= 1
+        guard hotkeyBatchDepth == 0 else { return }
+        let dirty = hotkeyBatchDirty
+        hotkeyBatchDirty = false
+        checkForShortcutConflicts()
+        if dirty {
+            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+        }
+    }
 
     @Published public var globalHotkeysEnabled: Bool {
         didSet {
             defaults.set(globalHotkeysEnabled, forKey: Keys.globalHotkeysEnabled)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var hotkeyKeyCode: UInt16 {
         didSet {
             defaults.set(Int(hotkeyKeyCode), forKey: Keys.hotkeyKeyCode)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var hotkeyModifiers: UInt32 {
         didSet {
             defaults.set(Int(hotkeyModifiers), forKey: Keys.hotkeyModifiers)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
@@ -143,96 +227,84 @@ public final class AppSettings: ObservableObject {
     @Published public var fullscreenShortcutKeyCode: UInt16 {
         didSet {
             defaults.set(Int(fullscreenShortcutKeyCode), forKey: Keys.fullscreenShortcutKeyCode)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var fullscreenShortcutModifiers: UInt32 {
         didSet {
             defaults.set(Int(fullscreenShortcutModifiers), forKey: Keys.fullscreenShortcutModifiers)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var repeatShortcutKeyCode: UInt16 {
         didSet {
             defaults.set(Int(repeatShortcutKeyCode), forKey: Keys.repeatShortcutKeyCode)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var repeatShortcutModifiers: UInt32 {
         didSet {
             defaults.set(Int(repeatShortcutModifiers), forKey: Keys.repeatShortcutModifiers)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var ocrShortcutKeyCode: UInt16 {
         didSet {
             defaults.set(Int(ocrShortcutKeyCode), forKey: Keys.ocrShortcutKeyCode)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var ocrShortcutModifiers: UInt32 {
         didSet {
             defaults.set(Int(ocrShortcutModifiers), forKey: Keys.ocrShortcutModifiers)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var scrollingShortcutKeyCode: UInt16 {
         didSet {
             defaults.set(Int(scrollingShortcutKeyCode), forKey: Keys.scrollingShortcutKeyCode)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var scrollingShortcutModifiers: UInt32 {
         didSet {
             defaults.set(Int(scrollingShortcutModifiers), forKey: Keys.scrollingShortcutModifiers)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var rulerShortcutKeyCode: UInt16 {
         didSet {
             defaults.set(Int(rulerShortcutKeyCode), forKey: Keys.rulerShortcutKeyCode)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var rulerShortcutModifiers: UInt32 {
         didSet {
             defaults.set(Int(rulerShortcutModifiers), forKey: Keys.rulerShortcutModifiers)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var colorPickerShortcutKeyCode: UInt16 {
         didSet {
             defaults.set(Int(colorPickerShortcutKeyCode), forKey: Keys.colorPickerShortcutKeyCode)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
     @Published public var colorPickerShortcutModifiers: UInt32 {
         didSet {
             defaults.set(Int(colorPickerShortcutModifiers), forKey: Keys.colorPickerShortcutModifiers)
-            checkForShortcutConflicts()
-            NotificationCenter.default.post(name: AppSettings.hotkeyDidChangeNotification, object: self)
+            hotkeyConfigurationDidChange()
         }
     }
 
@@ -266,17 +338,18 @@ public final class AppSettings: ObservableObject {
         }
     }
 
-    private var _cachedSaveDirectoryURL: URL?
-
     @Published public var saveDirectoryPath: String {
         didSet {
-            _cachedSaveDirectoryURL = nil
+            let path = saveDirectoryPath
+            updateSnapshot { $0.saveDirectoryPath = path }
             defaults.set(saveDirectoryPath, forKey: Keys.saveDirectoryPath)
         }
     }
 
     @Published public var copyToClipboard: Bool {
         didSet {
+            let value = copyToClipboard
+            updateSnapshot { $0.copyToClipboard = value }
             defaults.set(copyToClipboard, forKey: Keys.copyToClipboard)
             syncPostCaptureActionFromFlags()
         }
@@ -307,6 +380,8 @@ public final class AppSettings: ObservableObject {
 
     @Published public var imageFormat: ImageFormat {
         didSet {
+            let value = imageFormat
+            updateSnapshot { $0.imageFormat = value }
             defaults.set(imageFormat.rawValue, forKey: Keys.imageFormat)
         }
     }
@@ -318,6 +393,7 @@ public final class AppSettings: ObservableObject {
                 jpgQuality = clamped
                 return
             }
+            updateSnapshot { $0.jpgQuality = clamped }
             defaults.set(clamped, forKey: Keys.jpgQuality)
         }
     }
@@ -330,12 +406,15 @@ public final class AppSettings: ObservableObject {
 
     @Published public var scrollingCaptureSpeed: ScrollingCaptureSpeed {
         didSet {
+            let value = scrollingCaptureSpeed
+            updateSnapshot { $0.scrollingCaptureSpeed = value }
             defaults.set(scrollingCaptureSpeed.rawValue, forKey: Keys.scrollingCaptureSpeed)
         }
     }
 
+    /// Thread-safe (reads the locked mirror).
     public var jpgCompressionFactor: Double {
-        max(0.01, min(1.0, Double(jpgQuality) / 100.0))
+        captureSnapshot.jpgCompressionFactor
     }
 
 
@@ -360,85 +439,85 @@ public final class AppSettings: ObservableObject {
         self.globalHotkeysEnabled = defaults.object(forKey: Keys.globalHotkeysEnabled) as? Bool ?? true
 
         if defaults.object(forKey: Keys.hotkeyKeyCode) != nil {
-            self.hotkeyKeyCode = UInt16(defaults.integer(forKey: Keys.hotkeyKeyCode))
+            self.hotkeyKeyCode = AppSettings.storedKeyCode(defaults, key: Keys.hotkeyKeyCode, fallback: UInt16(kVK_ANSI_4))
         } else {
             self.hotkeyKeyCode = UInt16(kVK_ANSI_4)
         }
 
         if defaults.object(forKey: Keys.hotkeyModifiers) != nil {
-            self.hotkeyModifiers = UInt32(defaults.integer(forKey: Keys.hotkeyModifiers))
+            self.hotkeyModifiers = AppSettings.storedModifiers(defaults, key: Keys.hotkeyModifiers, fallback: defaultModifiers)
         } else {
             self.hotkeyModifiers = defaultModifiers
         }
 
         if defaults.object(forKey: Keys.fullscreenShortcutKeyCode) != nil {
-            self.fullscreenShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.fullscreenShortcutKeyCode))
+            self.fullscreenShortcutKeyCode = AppSettings.storedKeyCode(defaults, key: Keys.fullscreenShortcutKeyCode, fallback: UInt16(kVK_ANSI_2))
         } else {
             self.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
         }
 
         if defaults.object(forKey: Keys.fullscreenShortcutModifiers) != nil {
-            self.fullscreenShortcutModifiers = UInt32(defaults.integer(forKey: Keys.fullscreenShortcutModifiers))
+            self.fullscreenShortcutModifiers = AppSettings.storedModifiers(defaults, key: Keys.fullscreenShortcutModifiers, fallback: defaultModifiers)
         } else {
             self.fullscreenShortcutModifiers = defaultModifiers
         }
 
         if defaults.object(forKey: Keys.repeatShortcutKeyCode) != nil {
-            self.repeatShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.repeatShortcutKeyCode))
+            self.repeatShortcutKeyCode = AppSettings.storedKeyCode(defaults, key: Keys.repeatShortcutKeyCode, fallback: UInt16(kVK_ANSI_3))
         } else {
             self.repeatShortcutKeyCode = UInt16(kVK_ANSI_3)
         }
 
         if defaults.object(forKey: Keys.repeatShortcutModifiers) != nil {
-            self.repeatShortcutModifiers = UInt32(defaults.integer(forKey: Keys.repeatShortcutModifiers))
+            self.repeatShortcutModifiers = AppSettings.storedModifiers(defaults, key: Keys.repeatShortcutModifiers, fallback: defaultModifiers)
         } else {
             self.repeatShortcutModifiers = defaultModifiers
         }
 
         if defaults.object(forKey: Keys.ocrShortcutKeyCode) != nil {
-            self.ocrShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.ocrShortcutKeyCode))
+            self.ocrShortcutKeyCode = AppSettings.storedKeyCode(defaults, key: Keys.ocrShortcutKeyCode, fallback: UInt16(kVK_ANSI_R))
         } else {
             self.ocrShortcutKeyCode = UInt16(kVK_ANSI_R)
         }
 
         if defaults.object(forKey: Keys.ocrShortcutModifiers) != nil {
-            self.ocrShortcutModifiers = UInt32(defaults.integer(forKey: Keys.ocrShortcutModifiers))
+            self.ocrShortcutModifiers = AppSettings.storedModifiers(defaults, key: Keys.ocrShortcutModifiers, fallback: defaultModifiers)
         } else {
             self.ocrShortcutModifiers = defaultModifiers
         }
 
         if defaults.object(forKey: Keys.scrollingShortcutKeyCode) != nil {
-            self.scrollingShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.scrollingShortcutKeyCode))
+            self.scrollingShortcutKeyCode = AppSettings.storedKeyCode(defaults, key: Keys.scrollingShortcutKeyCode, fallback: UInt16(kVK_ANSI_5))
         } else {
             self.scrollingShortcutKeyCode = UInt16(kVK_ANSI_5)
         }
 
         if defaults.object(forKey: Keys.scrollingShortcutModifiers) != nil {
-            self.scrollingShortcutModifiers = UInt32(defaults.integer(forKey: Keys.scrollingShortcutModifiers))
+            self.scrollingShortcutModifiers = AppSettings.storedModifiers(defaults, key: Keys.scrollingShortcutModifiers, fallback: defaultModifiers)
         } else {
             self.scrollingShortcutModifiers = defaultModifiers
         }
 
         if defaults.object(forKey: Keys.rulerShortcutKeyCode) != nil {
-            self.rulerShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.rulerShortcutKeyCode))
+            self.rulerShortcutKeyCode = AppSettings.storedKeyCode(defaults, key: Keys.rulerShortcutKeyCode, fallback: UInt16(kVK_ANSI_M))
         } else {
             self.rulerShortcutKeyCode = UInt16(kVK_ANSI_M)
         }
 
         if defaults.object(forKey: Keys.rulerShortcutModifiers) != nil {
-            self.rulerShortcutModifiers = UInt32(defaults.integer(forKey: Keys.rulerShortcutModifiers))
+            self.rulerShortcutModifiers = AppSettings.storedModifiers(defaults, key: Keys.rulerShortcutModifiers, fallback: defaultModifiers)
         } else {
             self.rulerShortcutModifiers = defaultModifiers
         }
 
         if defaults.object(forKey: Keys.colorPickerShortcutKeyCode) != nil {
-            self.colorPickerShortcutKeyCode = UInt16(defaults.integer(forKey: Keys.colorPickerShortcutKeyCode))
+            self.colorPickerShortcutKeyCode = AppSettings.storedKeyCode(defaults, key: Keys.colorPickerShortcutKeyCode, fallback: UInt16(kVK_ANSI_C))
         } else {
             self.colorPickerShortcutKeyCode = UInt16(kVK_ANSI_C)
         }
 
         if defaults.object(forKey: Keys.colorPickerShortcutModifiers) != nil {
-            self.colorPickerShortcutModifiers = UInt32(defaults.integer(forKey: Keys.colorPickerShortcutModifiers))
+            self.colorPickerShortcutModifiers = AppSettings.storedModifiers(defaults, key: Keys.colorPickerShortcutModifiers, fallback: defaultModifiers)
         } else {
             self.colorPickerShortcutModifiers = defaultModifiers
         }
@@ -478,6 +557,15 @@ public final class AppSettings: ObservableObject {
         } else {
             self.scrollingCaptureSpeed = .normal
         }
+
+        // didSet does not run during init: seed the thread-safe mirror explicitly
+        _snapshot = CaptureSettingsSnapshot(
+            saveDirectoryPath: saveDirectoryPath,
+            imageFormat: imageFormat,
+            copyToClipboard: copyToClipboard,
+            jpgQuality: jpgQuality,
+            scrollingCaptureSpeed: scrollingCaptureSpeed
+        )
 
         // Ensure default directory is created immediately if missing
         _ = self.resolvedSaveDirectoryURL
@@ -539,16 +627,28 @@ public final class AppSettings: ObservableObject {
         areaShortcutDisplayString
     }
 
+    /// Thread-safe: read from background queues by the save pipeline and history scanner.
     public var resolvedSaveDirectoryURL: URL {
+        threadSafeLock.lock()
         if let cached = _cachedSaveDirectoryURL {
+            threadSafeLock.unlock()
             return cached
         }
-        let path = (saveDirectoryPath as NSString).expandingTildeInPath
+        let rawPath = _snapshot.saveDirectoryPath
+        threadSafeLock.unlock()
+
+        let path = (rawPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path, isDirectory: true)
         if !FileManager.default.fileExists(atPath: url.path) {
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
         }
-        _cachedSaveDirectoryURL = url
+
+        threadSafeLock.lock()
+        // Only cache if the folder was not changed while we were resolving it
+        if _snapshot.saveDirectoryPath == rawPath {
+            _cachedSaveDirectoryURL = url
+        }
+        threadSafeLock.unlock()
         return url
     }
 
@@ -583,6 +683,12 @@ public final class AppSettings: ObservableObject {
     }
 
     public func clearAllHotkeys() {
+        performHotkeyBatchUpdate {
+            applyClearedHotkeys()
+        }
+    }
+
+    private func applyClearedHotkeys() {
         let noKey = KeyCodes.noKey
         hotkeyKeyCode = noKey
         hotkeyModifiers = 0
@@ -598,10 +704,15 @@ public final class AppSettings: ObservableObject {
         rulerShortcutModifiers = 0
         colorPickerShortcutKeyCode = noKey
         colorPickerShortcutModifiers = 0
-        checkForShortcutConflicts()
     }
 
     public func resetHotkeysToDefault() {
+        performHotkeyBatchUpdate {
+            applyDefaultHotkeys()
+        }
+    }
+
+    private func applyDefaultHotkeys() {
         globalHotkeysEnabled = true
         hotkeyKeyCode = UInt16(kVK_ANSI_4)
         hotkeyModifiers = UInt32(cmdKey | shiftKey)
@@ -617,7 +728,6 @@ public final class AppSettings: ObservableObject {
         rulerShortcutModifiers = UInt32(cmdKey | shiftKey)
         colorPickerShortcutKeyCode = UInt16(kVK_ANSI_C)
         colorPickerShortcutModifiers = UInt32(cmdKey | shiftKey)
-        checkForShortcutConflicts()
     }
 
     public func resetHotkeyToDefault() {

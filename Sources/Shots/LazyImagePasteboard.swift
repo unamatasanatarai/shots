@@ -11,8 +11,9 @@ public final class LazyImagePasteboard: NSObject, NSPasteboardItemDataProvider {
     private static let lock = NSRecursiveLock()
 
     private let lock = NSLock()
+    /// Produces the image on demand. Not cached here: when it decodes already encoded data, the full
+    /// decoded bitmap is not kept alive for as long as the pasteboard holds the promise
     private let makeImage: () -> CGImage?
-    private var image: CGImage?
     private var pngData: Data?
     private var changeCount = 0
 
@@ -42,8 +43,19 @@ public final class LazyImagePasteboard: NSObject, NSPasteboardItemDataProvider {
         current = provider
     }
 
+    /// When PNG data is available the provider keeps only that (compressed) data and decodes it for
+    /// TIFF requests; the decoded CGImage is retained only when there is nothing encoded to fall back on.
     public static func write(image: CGImage, pngData: Data? = nil) {
-        write(pngData: pngData) { image }
+        if let png = pngData {
+            write(pngData: png) { decodeImage(from: png) }
+        } else {
+            write(pngData: nil) { image }
+        }
+    }
+
+    static func decodeImage(from data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
     }
 
     /// Fulfils the outstanding promise before the app quits, while the pasteboard still holds it
@@ -63,8 +75,7 @@ public final class LazyImagePasteboard: NSObject, NSPasteboardItemDataProvider {
         lock.lock()
         defer { lock.unlock() }
         if type == .png, let png = pngData { return png }
-        if image == nil { image = makeImage() }
-        guard let image = image else { return nil }
+        guard let image = makeImage() else { return nil }
         if type == .png {
             pngData = Self.encode(image, as: .png)
             return pngData

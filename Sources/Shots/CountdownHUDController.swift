@@ -131,6 +131,25 @@ public final class CountdownHUDController {
 
     // MARK: - HUD Presentation
 
+    /// Countdown panel; excluded from screen captures so it can never appear in the delayed shot
+    static func makeCountdownPanel(frame: NSRect) -> NSPanel {
+        let panel = NSPanel(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) + 2)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.sharingType = .none
+        return panel
+    }
+
     private func createAndShowHUD(on screen: NSScreen) {
         let panelSize = NSSize(width: 160, height: 160)
         let screenFrame = screen.frame
@@ -139,20 +158,7 @@ public final class CountdownHUDController {
             y: screenFrame.midY - (panelSize.height / 2.0)
         )
 
-        let panel = NSPanel(
-            contentRect: NSRect(origin: origin, size: panelSize),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-
-        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) + 2)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        let panel = Self.makeCountdownPanel(frame: NSRect(origin: origin, size: panelSize))
 
         let visualEffect = NSVisualEffectView(frame: NSRect(origin: .zero, size: panelSize))
         visualEffect.material = .hudWindow

@@ -20,12 +20,15 @@ struct FramePixels {
 }
 
 /// Builds a scrolling capture incrementally: each frame contributes only its newly revealed rows,
-/// copied out immediately, so captured frames can be released as soon as they are compared
+/// copied out immediately, so captured frames can be released as soon as they are compared.
+/// Rows are appended to one contiguous BGRA buffer that becomes the final image's backing store
+/// without another copy, so peak memory stays ~1x the stitched image (not slices + composite).
 final class ScrollStitcher {
     private let width: Int
     private let maxHeight: Int
     private let colorSpace: CGColorSpace
-    private var slices: [CGImage] = []
+    private let bytesPerRow: Int
+    private var buffer: NSMutableData? = NSMutableData()
     private(set) var height = 0
 
     var isFull: Bool { height >= maxHeight }
@@ -33,6 +36,7 @@ final class ScrollStitcher {
     init(firstFrame: CGImage, maxHeight: Int) {
         self.width = firstFrame.width
         self.maxHeight = maxHeight
+        self.bytesPerRow = firstFrame.width * 4
         if let space = firstFrame.colorSpace, space.model == .rgb {
             self.colorSpace = space
         } else {
@@ -47,47 +51,43 @@ final class ScrollStitcher {
         appendRows(of: frame, from: frame.height - count, count: count)
     }
 
+    private static let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+
     private func appendRows(of frame: CGImage, from sourceY: Int, count: Int) {
+        guard let buffer = buffer, width > 0 else { return }
         let rows = min(count, maxHeight - height)
         guard rows > 0 else { return }
         let sliceWidth = min(width, frame.width)
-        guard let crop = frame.cropping(to: CGRect(x: 0, y: sourceY, width: sliceWidth, height: rows)),
-              let ctx = Self.makeContext(width: width, height: rows, colorSpace: colorSpace) else { return }
+        guard let crop = frame.cropping(to: CGRect(x: 0, y: sourceY, width: sliceWidth, height: rows)) else { return }
+
+        // Grow the shared buffer and render the new rows straight into its tail
+        let offset = buffer.length
+        buffer.increaseLength(by: rows * bytesPerRow) // zero-filled
+        let tail = buffer.mutableBytes.advanced(by: offset)
+        guard let ctx = CGContext(
+            data: tail, width: width, height: rows, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: colorSpace, bitmapInfo: Self.bitmapInfo
+        ) else {
+            buffer.length = offset
+            return
+        }
         if sliceWidth < width {
             ctx.setFillColor(CGColor(gray: 1.0, alpha: 1.0))
             ctx.fill(CGRect(x: 0, y: 0, width: width, height: rows))
         }
         ctx.draw(crop, in: CGRect(x: 0, y: 0, width: sliceWidth, height: rows))
-        // Owns its own pixels: the source frame is not retained
-        guard let slice = ctx.makeImage() else { return }
-        slices.append(slice)
         height += rows
     }
 
+    /// Hands the buffer to the image; the stitcher cannot be appended to afterwards.
     func makeImage() -> CGImage? {
-        guard height > 0 else { return nil }
-        if slices.count == 1 { return slices[0] }
-        guard let ctx = Self.makeContext(width: width, height: height, colorSpace: colorSpace) else { return nil }
-        // Bitmap origin is bottom-left: lay slices out top to bottom
-        var top = 0
-        for slice in slices {
-            ctx.draw(slice, in: CGRect(x: 0, y: height - top - slice.height, width: slice.width, height: slice.height))
-            top += slice.height
-        }
-        slices.removeAll()
-        return ctx.makeImage()
-    }
-
-    /// Native BGRA (the display capture layout), so drawing captured frames is a plain copy
-    private static func makeContext(width: Int, height: Int, colorSpace: CGColorSpace) -> CGContext? {
-        CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        guard height > 0, let buffer = buffer,
+              let provider = CGDataProvider(data: buffer as CFData) else { return nil }
+        self.buffer = nil
+        return CGImage(
+            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
+            space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: Self.bitmapInfo),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
         )
     }
 }
@@ -145,6 +145,16 @@ public final class ScrollingCaptureService {
         let colStart = (width >= 20) ? 10 : 0
         let colEnd = (width >= 40) ? (width - 25) : width
         let colStep = max(1, (colEnd - colStart) / 30)
+
+        // 1. Exact full-row matching: finds the shift for sparse content that a sampling grid misses
+        if let exact = exactRowShift(
+            ptr1: ptr1, bpr1: bpr1, len1: len1, ptr2: ptr2, bpr2: bpr2, len2: len2,
+            height: height, colStart: colStart, colEnd: colEnd, maxShift: maxShift
+        ) {
+            return exact
+        }
+
+        // 2. Tolerant sampled matching (content re-rendered slightly differently between frames)
 
         func calcDiff(forShift s: Int) -> Double {
             let overlapHeight = height - s
@@ -225,6 +235,77 @@ public final class ScrollingCaptureService {
         return height
     }
 
+    /// Hashes each row's pixels in [colStart, colEnd) and flags rows that carry content
+    /// (not a single flat colour), so blank background rows cannot vote for a shift
+    private func rowSignatures(
+        ptr: UnsafePointer<UInt8>, bpr: Int, len: Int, height: Int, colStart: Int, colEnd: Int
+    ) -> (hashes: [Int], informative: [Bool])? {
+        let byteStart = colStart * 4
+        let byteCount = (colEnd - colStart) * 4
+        guard byteCount > 0, (height - 1) * bpr + byteStart + byteCount <= len else { return nil }
+        var hashes = [Int](repeating: 0, count: height)
+        var informative = [Bool](repeating: false, count: height)
+        let raw = UnsafeRawPointer(ptr)
+        for y in 0..<height {
+            let rowStart = y * bpr + byteStart
+            var hasher = Hasher()
+            hasher.combine(bytes: UnsafeRawBufferPointer(start: raw + rowStart, count: byteCount))
+            hashes[y] = hasher.finalize()
+            // A row is a single flat colour iff it equals itself shifted by one pixel
+            informative[y] = byteCount > 4 && memcmp(raw + rowStart, raw + rowStart + 4, byteCount - 4) != 0
+        }
+        return (hashes, informative)
+    }
+
+    /// Smallest-ambiguity exact shift: the shift where (nearly) every content row of the overlap
+    /// matches byte-for-byte. Returns nil when no shift matches well enough (caller falls back
+    /// to the tolerant sampled search).
+    private func exactRowShift(
+        ptr1: UnsafePointer<UInt8>, bpr1: Int, len1: Int,
+        ptr2: UnsafePointer<UInt8>, bpr2: Int, len2: Int,
+        height: Int, colStart: Int, colEnd: Int, maxShift: Int
+    ) -> Int? {
+        guard let sig1 = rowSignatures(ptr: ptr1, bpr: bpr1, len: len1, height: height, colStart: colStart, colEnd: colEnd),
+              let sig2 = rowSignatures(ptr: ptr2, bpr: bpr2, len: len2, height: height, colStart: colStart, colEnd: colEnd) else {
+            return nil
+        }
+        // Flat frames (no content rows at all) carry no alignment information
+        guard sig1.informative.contains(true) || sig2.informative.contains(true) else { return nil }
+
+        var bestShift = 0
+        var bestMatches = 0
+        sig1.hashes.withUnsafeBufferPointer { h1 in
+        sig2.hashes.withUnsafeBufferPointer { h2 in
+        sig1.informative.withUnsafeBufferPointer { i1 in
+        sig2.informative.withUnsafeBufferPointer { i2 in
+            for shift in 1...maxShift {
+                var considered = 0
+                var matches = 0
+                var y = 0
+                let overlap = height - shift
+                while y < overlap {
+                    let a = y + shift
+                    if i1[a] || i2[y] {
+                        considered += 1
+                        if h1[a] == h2[y] { matches += 1 }
+                    }
+                    y += 1
+                }
+                // Require at least two content rows and >= 95% of the content rows to line up
+                guard considered >= 2, matches * 100 >= considered * 95 else { continue }
+                // Prefer the alignment that explains the most content (largest overlap on ties)
+                if matches > bestMatches {
+                    bestMatches = matches
+                    bestShift = shift
+                }
+            }
+        }
+        }
+        }
+        }
+        return bestShift > 0 ? bestShift : nil
+    }
+
     private func areFramesIdentical(
         ptr1: UnsafePointer<UInt8>,
         bpr1: Int,
@@ -236,23 +317,17 @@ public final class ScrollingCaptureService {
         height: Int
     ) -> Bool {
         guard width > 0 && height > 0 else { return false }
-        let sampleRows = stride(from: 0, to: height, by: max(1, height / 10))
-        let sampleCols = stride(from: 0, to: width, by: max(1, width / 10))
-        var samplesChecked = 0
-        for y in sampleRows {
-            let r1 = y * bpr1
-            let r2 = y * bpr2
-            for x in sampleCols {
-                let i1 = r1 + x * 4
-                let i2 = r2 + x * 4
-                guard i1 + 2 < len1 && i2 + 2 < len2 else { return false }
-                if ptr1[i1] != ptr2[i2] || ptr1[i1 + 1] != ptr2[i2 + 1] || ptr1[i1 + 2] != ptr2[i2 + 2] {
-                    return false
-                }
-                samplesChecked += 1
+        // Compare every row in full: sparse content (a few words on a plain background) that
+        // moved would slip through a sampling grid and the scrolled frame would be dropped
+        let rowBytes = width * 4
+        guard bpr1 >= rowBytes && bpr2 >= rowBytes else { return false }
+        guard (height - 1) * bpr1 + rowBytes <= len1 && (height - 1) * bpr2 + rowBytes <= len2 else { return false }
+        for y in 0..<height {
+            if memcmp(ptr1 + y * bpr1, ptr2 + y * bpr2, rowBytes) != 0 {
+                return false
             }
         }
-        return samplesChecked > 0
+        return true
     }
 
     // MARK: - Frame Stitching & Height Clamping

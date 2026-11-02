@@ -34,6 +34,24 @@ public final class OCRNotificationController {
 
     // MARK: - Internal Presentation
 
+    /// Toast panel; excluded from screen captures so a toast never ends up in the next screenshot
+    static func makeNotificationPanel(frame: NSRect) -> NSPanel {
+        let newPanel = NSPanel(
+            contentRect: frame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        newPanel.isOpaque = false
+        newPanel.backgroundColor = .clear
+        newPanel.hasShadow = true
+        newPanel.hidesOnDeactivate = false
+        newPanel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) + 2)
+        newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        newPanel.sharingType = .none
+        return newPanel
+    }
+
     private func presentNotification(snippet: String, duration: TimeInterval) {
         dismissWorkItem?.cancel()
         dismissWorkItem = nil
@@ -67,18 +85,7 @@ public final class OCRNotificationController {
             targetPanel.contentViewController = hostingController
             targetPanel.setFrame(panelFrame, display: true)
         } else {
-            let newPanel = NSPanel(
-                contentRect: panelFrame,
-                styleMask: [.borderless, .nonactivatingPanel],
-                backing: .buffered,
-                defer: false
-            )
-            newPanel.isOpaque = false
-            newPanel.backgroundColor = .clear
-            newPanel.hasShadow = true
-            newPanel.hidesOnDeactivate = false
-            newPanel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) + 2)
-            newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            let newPanel = Self.makeNotificationPanel(frame: panelFrame)
             newPanel.contentViewController = hostingController
             self.panel = newPanel
             targetPanel = newPanel
