@@ -60,9 +60,10 @@ ifeq ($(firstword $(MAKECMDGOALS)),release)
   endif
 endif
 
-## release: Release manually bumped version (make release <version>), build DMG, tag & publish
+## release: Release via ggrel (make release <version>): Gemini notes, tests, VERSION bump, DMG, tag & publish (hooks in .release.sh)
 release:
-	@./scripts/release.sh $(if $(VERSION),$(VERSION),$(RELEASE_TARGET_VERSION))
+	@test -n "$(if $(VERSION),$(VERSION),$(RELEASE_TARGET_VERSION))" || { echo "Usage: make release <version>"; exit 1; }
+	@gemini-release-notes | ggrel $(if $(VERSION),$(VERSION),$(RELEASE_TARGET_VERSION))
 
 ## revoke: Reset permissions (ScreenCapture, Accessibility) and clear macOS caches
 revoke:
