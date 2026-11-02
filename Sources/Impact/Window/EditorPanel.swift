@@ -239,7 +239,16 @@ public final class EditorPanel: NSPanel {
 
     public var shouldCopyOnClose: Bool = true
 
+    /// Set once close() has copied and saved: AppKit closes every window again while the app terminates
+    /// (after applicationWillTerminate), and a second copy would replace the resolved clipboard image
+    private(set) var didFinishClosing = false
+
     override public func close() {
+        guard !didFinishClosing else {
+            super.close()
+            return
+        }
+        didFinishClosing = true
         // Commit any callout being typed so the copy and the saved file include it
         canvasView.endCalloutEditingIfNeeded()
 

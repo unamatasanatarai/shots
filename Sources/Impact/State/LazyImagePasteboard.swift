@@ -9,6 +9,8 @@ public final class LazyImagePasteboard: NSObject, NSPasteboardItemDataProvider {
     private static var current: LazyImagePasteboard?
     // Recursive: clearing the pasteboard can call back into pasteboardFinishedWithDataProvider
     private static let lock = NSRecursiveLock()
+    /// Set by resolveBeforeTermination: later writes are encoded immediately (tests reset it)
+    static var isTerminating = false
 
     private let lock = NSLock()
     private let makeImage: () -> CGImage?
@@ -25,6 +27,16 @@ public final class LazyImagePasteboard: NSObject, NSPasteboardItemDataProvider {
     /// already encoded PNG data is put on the pasteboard as is.
     public static func write(pngData: Data? = nil, makeImage: @escaping () -> CGImage?) {
         let provider = LazyImagePasteboard(makeImage: makeImage, pngData: pngData)
+        // Once the app is quitting nobody is left to fulfil a promise: put real PNG data on the pasteboard
+        if isTerminating {
+            lock.lock()
+            defer { lock.unlock() }
+            current = nil
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            if let png = provider.data(for: .png) { pb.setData(png, forType: .png) }
+            return
+        }
         let item = NSPasteboardItem()
         if let data = pngData {
             item.setData(data, forType: .png)
@@ -49,6 +61,7 @@ public final class LazyImagePasteboard: NSObject, NSPasteboardItemDataProvider {
     /// Fulfils the outstanding promise before the app quits, while the pasteboard still holds it
     public static func resolveBeforeTermination() {
         lock.lock()
+        isTerminating = true
         let provider = current
         current = nil
         lock.unlock()

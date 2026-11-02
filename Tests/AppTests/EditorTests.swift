@@ -4857,6 +4857,85 @@ public enum EditorTests {
             assert(areas.count == 1 && areas[0] == nil, "Spotlight drawing repaints everything")
             quietClose(doc, panel)
         }
+        testRunner("Clipboard - Closing Then Quitting Leaves The Image On The Clipboard (AppKit Re-Closes Windows)") {
+            EditorPanel.copyToClipboardOverride = true
+            defer { EditorPanel.copyToClipboardOverride = nil; LazyImagePasteboard.isTerminating = false }
+            let doc = EditorDocument(image: solidImage(120, 80))
+            let panel = EditorPanel(document: doc)
+            panel.shouldSaveOnClose = false
+            doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 40, height: 30)))
+            NSPasteboard.general.clearContents()
+            // 1. The user closes the window: the image is promised
+            panel.close()
+            // 2. No editor left: Impact quits; applicationWillTerminate fulfils the promise
+            LazyImagePasteboard.resolveBeforeTermination()
+            let resolvedCount = NSPasteboard.general.changeCount
+            let png = NSPasteboard.general.data(forType: .png)
+            assert(png != nil, "Termination must leave real PNG data")
+            // 3. AppKit closes every window again during terminate: must not replace the PNG with a dead promise
+            panel.close()
+            ImpactAppDelegate.closeEditorsForTermination([panel])
+            assert(NSPasteboard.general.changeCount == resolvedCount, "A second close must not rewrite the clipboard")
+            assert(NSPasteboard.general.data(forType: .png) == png, "The resolved image must survive")
+            if let png = png, let img = NSBitmapImageRep(data: png) {
+                assert(img.pixelsWide >= 120 && img.pixelsHigh >= 80, "Clipboard holds the composition")
+            } else { assertionFailure("Clipboard PNG must decode") }
+        }
+        testRunner("Clipboard - Copies Made While Quitting Are Written Immediately, Not Promised") {
+            defer { LazyImagePasteboard.isTerminating = false }
+            NSPasteboard.general.clearContents()
+            LazyImagePasteboard.resolveBeforeTermination()
+            var rendered = false
+            LazyImagePasteboard.write { rendered = true; return solidImage(30, 20) }
+            assert(rendered, "While terminating the image must render during write (no one is left to fulfil a promise)")
+            assert(NSPasteboard.general.data(forType: .png) != nil, "PNG must be on the pasteboard")
+            // Normal operation stays lazy
+            LazyImagePasteboard.isTerminating = false
+            rendered = false
+            LazyImagePasteboard.write { rendered = true; return solidImage(30, 20) }
+            assert(!rendered, "Outside termination the copy stays lazy")
+            NSPasteboard.general.clearContents()
+        }
+        testRunner("Editor - Closing Twice Copies And Saves Once, Fires onClose Once") {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            try withoutClipboard {
+                let src = dir.appendingPathComponent("x.png")
+                let doc = EditorDocument(image: solidImage(60, 40))
+                let panel = EditorPanel(document: doc, title: "x.png", sourceFileURL: src)
+                doc.addLayer(RectangleLayer(rect: CGRect(x: 5, y: 5, width: 20, height: 20)))
+                var closes = 0
+                panel.onClose = { closes += 1 }
+                panel.close()
+                panel.close()
+                let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+                assert(files.count == 1, "Exactly one numbered file, got \(files)")
+                assert(closes == 1, "onClose fires once, got \(closes)")
+            }
+        }
+        testRunner("Ruler - A Click Or Tiny Drag Creates No Zero-Length Ruler") {
+            let (doc, panel, canvas) = try makeCalloutPanel()
+            doc.activeTool = .dimension
+            let serial = doc.snapshotSerial
+            // Plain click
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 200, y: 200)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 200, y: 200)))
+            // Jitter under 6pt
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 300, y: 200)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 303, y: 202)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 303, y: 202)))
+            assert(!doc.layers.contains { $0 is DimensionLayer }, "A click must not leave a 0px ruler")
+            assert(doc.snapshotSerial == serial, "A rejected ruler must not add an undo step")
+            assert(!doc.hasContent, "A rejected ruler is not unsaved work")
+            assert(doc.activeTool == .dimension, "The ruler tool stays active")
+            // A real drag still works
+            canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 100)))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, CGPoint(x: 160, y: 100)))
+            canvas.mouseUp(with: mouse(.leftMouseUp, canvas, CGPoint(x: 160, y: 100)))
+            assert(doc.layers.filter { $0 is DimensionLayer }.count == 1, "A real drag creates a ruler")
+            quietClose(doc, panel)
+        }
         testRunner("Audit - Quitting Saves Unsaved Annotations Like Closing Does (Incl. Text Being Typed)") {
             try withoutClipboard {
                 let (dir, src) = tempSource("q.png")
