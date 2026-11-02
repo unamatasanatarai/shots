@@ -87,6 +87,66 @@ def extract_glyph_mask(badge_ref_path):
     return glyph_im.crop(g_bbox)
 
 
+def lowercase_i_from_h(h_mask):
+    """
+    Builds Impact's lowercase 'i' from the 'H' glyph itself, so it has the H's exact stroke width, slant and
+    rounded tube ends: the H's left stem, shortened to a lowercase stem, plus a short stem piece as the dot.
+    The result keeps the H's height (dot top = cap height, stem bottom = baseline) so both glyphs scale alike.
+    """
+    w, H = h_mask.size
+
+    def first_run(y):
+        start = None
+        for x in range(w):
+            if h_mask.getpixel((x, y)) > 128:
+                if start is None:
+                    start = x
+            elif start is not None:
+                return start, x - 1
+        return start, w - 1
+
+    # Left stem edges on clean rows above and below the crossbar -> slant (x per row) and stem width
+    ya, yb = int(H * 0.25), int(H * 0.75)
+    la, ra = first_run(ya)
+    lb, rb = first_run(yb)
+    slope = (lb - la) / float(yb - ya)
+    stem_w = ((ra - la) + (rb - lb)) / 2.0
+
+    # Isolate the left stem: clip everything right of its right edge (crossbar and right stem), anti-aliased
+    stem = Image.new("L", (w, H), 0)
+    for y in range(H):
+        edge = ra + slope * (y - ya)
+        for x in range(w):
+            v = h_mask.getpixel((x, y))
+            if v:
+                cover = max(0.0, min(1.0, edge + 1.0 - x))
+                stem.putpixel((x, y), int(round(v * cover)))
+
+    def shifted(img, dx, dy):
+        return img.transform(img.size, Image.AFFINE, (1, 0, -dx, 0, 1, -dy), resample=Image.BICUBIC)
+
+    def shortened(length):
+        """The stem with its middle removed: its top half slides down the slant onto its bottom half."""
+        k = H - length
+        if k <= 0:
+            return stem
+        a = length // 2
+        top = Image.new("L", (w, H), 0)
+        top.paste(stem.crop((0, 0, w, a)), (0, 0))
+        bottom = Image.new("L", (w, H), 0)
+        bottom.paste(stem.crop((0, a + k, w, H)), (0, a + k))
+        return ImageChops.lighter(shifted(top, slope * k, k), bottom)
+
+    dot_h = int(round(stem_w * 1.05))
+    gap = int(round(stem_w * 0.38))
+    i_stem = shortened(H - dot_h - gap)
+    # The dot is a short stem piece moved up the same slant line to the cap height
+    rise = H - dot_h
+    dot = shifted(shortened(dot_h), -slope * rise, -rise)
+    glyph = ImageChops.lighter(i_stem, dot)
+    return glyph.crop(glyph.getbbox())
+
+
 def generate_icons():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     resources_dir = os.path.join(repo_root, "Resources")
@@ -129,8 +189,19 @@ def generate_icons():
     print(f"Loaded identical tile mask ({sq_mask.size}) and slanted H glyph mask ({glyph_mask.size})")
 
     # =========================================================================
-    # 3. macOS Master AppIcon (1024x1024, supersampled at 2048x2048)
+    # 3+4. App icons: Shots (slanted 'H') and Impact (the same icon with a lowercase 'i' built from the H)
     # =========================================================================
+    shots_icon = render_app_icon(sq_mask, glyph_mask)
+    write_app_icon(shots_icon, resources_dir, "AppIcon")
+    impact_glyph = lowercase_i_from_h(glyph_mask)
+    impact_icon = render_app_icon(sq_mask, impact_glyph, glyph_height_ratio=0.54 * impact_glyph.height / glyph_mask.height)
+    write_app_icon(impact_icon, resources_dir, "ImpactAppIcon")
+
+    render_status_bar_and_svg(sq_mask, glyph_mask, resources_dir)
+
+
+def render_app_icon(sq_mask, glyph_mask, glyph_height_ratio=0.54):
+    """The 1024x1024 master: amber squircle tile with a 3D white glyph (supersampled at 2048x2048)."""
     ss = 2
     canvas_size = 1024 * ss
     master = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
@@ -196,7 +267,7 @@ def generate_icons():
     master = Image.alpha_composite(master, border_im)
 
     # Position Slanted 'H' Glyph in Center of Tile
-    target_gh = int(tile_size * 0.54)
+    target_gh = int(tile_size * glyph_height_ratio)
     target_gw = int(glyph_mask.width * (target_gh / glyph_mask.height))
 
     g_resized = glyph_mask.resize((target_gw, target_gh), Image.Resampling.LANCZOS)
@@ -274,15 +345,16 @@ def generate_icons():
     comp_glyph.paste(final_glyph, (gx, gy))
     master = Image.alpha_composite(master, comp_glyph)
 
-    app_icon_1024 = master.resize((1024, 1024), Image.Resampling.LANCZOS)
-    app_icon_path = os.path.join(resources_dir, "AppIcon.png")
+    return master.resize((1024, 1024), Image.Resampling.LANCZOS)
+
+
+def write_app_icon(app_icon_1024, resources_dir, name):
+    """Saves <name>.png (1024x1024) and the multi-resolution <name>.icns."""
+    app_icon_path = os.path.join(resources_dir, f"{name}.png")
     app_icon_1024.save(app_icon_path)
     print(f"✅ Created {app_icon_path} (1024x1024)")
 
-    # =========================================================================
-    # 4. Multi-resolution Apple .icns bundle
-    # =========================================================================
-    iconset_dir = "/tmp/Shots_AppIcon.iconset"
+    iconset_dir = f"/tmp/Shots_{name}.iconset"
     if os.path.exists(iconset_dir):
         shutil.rmtree(iconset_dir)
     os.makedirs(iconset_dir, exist_ok=True)
@@ -304,10 +376,13 @@ def generate_icons():
         resized = app_icon_1024.resize((size, size), Image.Resampling.LANCZOS)
         resized.save(os.path.join(iconset_dir, filename))
 
-    icns_path = os.path.join(resources_dir, "AppIcon.icns")
+    icns_path = os.path.join(resources_dir, f"{name}.icns")
     subprocess.run(["iconutil", "-c", "icns", iconset_dir, "-o", icns_path], check=True)
     shutil.rmtree(iconset_dir, ignore_errors=True)
     print(f"✅ Created {icns_path}")
+
+
+def render_status_bar_and_svg(sq_mask, glyph_mask, resources_dir):
 
     # =========================================================================
     # 5. Crisp Status Bar Icons (Template + Light/Dark Mode)

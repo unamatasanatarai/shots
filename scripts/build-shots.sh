@@ -39,7 +39,7 @@ export BUILD_NUMBER="$build_number"
 
 build_dir="build"
 app_name="Shots"
-bundle_id="com.local.Shots"
+bundle_id="com.unamatasanatarai.Shots"
 app_dir="${build_dir}/${app_name}.app"
 contents_dir="${app_dir}/Contents"
 macos_dir="${contents_dir}/MacOS"

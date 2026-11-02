@@ -13,7 +13,7 @@ public struct AppTests {
         testRunner("AppConfig - Properties and Defaults") {
             assert(AppConfig.appName == "Shots", "App name should be Shots")
             assert(!AppConfig.version.isEmpty, "App version should not be empty")
-            assert(AppConfig.bundleIdentifier == "com.local.Shots", "Bundle ID should be com.local.Shots")
+            assert(AppConfig.bundleIdentifier == "com.unamatasanatarai.Shots", "Bundle ID should be com.unamatasanatarai.Shots")
             assert(!AppConfig.minSystemVersion.isEmpty, "Minimum system version should be defined")
         }
 

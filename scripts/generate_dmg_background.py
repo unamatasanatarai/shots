@@ -8,6 +8,7 @@ and two vibrant rounded curved arrows guiding both apps into Applications.
 
 import math
 import os
+import sys
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
@@ -167,7 +168,7 @@ def draw_curved_arrow(draw, p0, p1, p2, p3, color, width=4, head_len=26, head_wi
     draw.polygon([(tip_x, tip_y), (left_x, left_y), (notch_x, notch_y), (right_x, right_y)], fill=color)
 
 
-def generate_background():
+def generate_background(arrows_overlay=None):
     # 2x Retina resolution: 840 x 460 points = 1680 x 920 pixels
     W, H = 1680, 920
     img = Image.new("RGBA", (W, H), (255, 255, 255, 255))
@@ -201,7 +202,9 @@ def generate_background():
     draw_glass_pedestal(odraw, impact_x, impact_y, ped_radius, accent_color=(225, 29, 72))
     draw_glass_pedestal(odraw, apps_x, apps_y, ped_radius, accent_color=(37, 99, 235))
 
-    # 4. Two Rounded Sweeping Red Arrows into Applications
+    # 4. Two arrows into Applications. Normally drawn by Impact's own ArrowLayer (scripts/dmg-arrows), so the
+    # installer shows the app's exact arrow style; the bezier arrows below are only a fallback.
+    use_overlay = arrows_overlay is not None and os.path.exists(arrows_overlay)
     arrow_color = (239, 68, 68, 255)  # Vibrant Crimson Red
 
     # Arrow 1: High arching arrow from Shots (top-right) over to Applications (top-left)
@@ -209,14 +212,16 @@ def generate_background():
     arc_p1 = (580, 210)
     arc_p2 = (1100, 210)
     arc_p3 = (apps_x - 90, apps_y - 65)
-    draw_curved_arrow(odraw, arc_p0, arc_p1, arc_p2, arc_p3, color=arrow_color, width=4, head_len=26, head_wing=18)
+    if not use_overlay:
+        draw_curved_arrow(odraw, arc_p0, arc_p1, arc_p2, arc_p3, color=arrow_color, width=4, head_len=26, head_wing=18)
 
     # Arrow 2: Lower sweeping arrow from Impact (bottom-right) under to Applications (bottom-left)
     swoop_p0 = (impact_x + 80, impact_y + 45)
     swoop_p1 = (960, 560)
     swoop_p2 = (1160, 560)
     swoop_p3 = (apps_x - 85, apps_y + 55)
-    draw_curved_arrow(odraw, swoop_p0, swoop_p1, swoop_p2, swoop_p3, color=arrow_color, width=4, head_len=26, head_wing=18)
+    if not use_overlay:
+        draw_curved_arrow(odraw, swoop_p0, swoop_p1, swoop_p2, swoop_p3, color=arrow_color, width=4, head_len=26, head_wing=18)
 
     # 5. Top Header Typography (Text on top removed as requested)
     # Main Headline (Deep Charcoal / Slate Black)
@@ -235,6 +240,13 @@ def generate_background():
 
     # Composite layers
     img = Image.alpha_composite(img, overlay)
+    if use_overlay:
+        arrows = Image.open(arrows_overlay).convert("RGBA")
+        if arrows.size != (W, H):
+            arrows = arrows.resize((W, H), Image.Resampling.LANCZOS)
+        img = Image.alpha_composite(img, arrows)
+    elif arrows_overlay is not None:
+        print(f"⚠️  Arrow overlay {arrows_overlay} not found; using fallback arrows", file=sys.stderr)
 
     # Crisp window border
     final_draw = ImageDraw.Draw(img)
@@ -255,4 +267,5 @@ def generate_background():
 
 
 if __name__ == "__main__":
-    generate_background()
+    # Optional: path to the transparent arrow overlay rendered by scripts/dmg-arrows (Impact's arrow style)
+    generate_background(sys.argv[1] if len(sys.argv) > 1 else None)

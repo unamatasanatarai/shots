@@ -39,7 +39,7 @@ export BUILD_NUMBER="$build_number"
 
 build_dir="build"
 app_name="Impact"
-bundle_id="com.local.Impact"
+bundle_id="com.unamatasanatarai.Impact"
 app_dir="${build_dir}/${app_name}.app"
 contents_dir="${app_dir}/Contents"
 macos_dir="${contents_dir}/MacOS"
@@ -49,6 +49,12 @@ mkdir -p "$macos_dir" "$resources_dir"
 
 if [[ -d "Resources" ]]; then
     cp -R Resources/. "${resources_dir}/"
+fi
+
+# Impact's own icon (Shots' icon with a lowercase 'i'; see scripts/generate_app_icons.py)
+if [[ -f "Resources/ImpactAppIcon.icns" ]]; then
+    cp "Resources/ImpactAppIcon.icns" "${resources_dir}/AppIcon.icns"
+    cp "Resources/ImpactAppIcon.png" "${resources_dir}/AppIcon.png"
 fi
 
 if [[ -f "VERSION" ]]; then

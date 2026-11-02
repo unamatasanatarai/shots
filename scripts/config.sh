@@ -5,7 +5,7 @@
 # You can override them via environment variables or modify this file directly.
 
 export APP_NAME="${APP_NAME:-Shots}"
-export BUNDLE_ID="${BUNDLE_ID:-com.local.Shots}"
+export BUNDLE_ID="${BUNDLE_ID:-com.unamatasanatarai.Shots}"
 export MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-12.0}"
 export COPYRIGHT="${COPYRIGHT:-Copyright © $(date +%Y). All rights reserved.}"
 export LS_UI_ELEMENT="${LS_UI_ELEMENT:-true}" # Set to "true" for menu-bar-only / agent apps

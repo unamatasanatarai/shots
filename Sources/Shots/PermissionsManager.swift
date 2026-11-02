@@ -160,19 +160,44 @@ public final class PermissionsManager {
 
         Both permissions must be granted in macOS System Settings before any tools can be used.
         """
+        // macOS applies a new Screen Recording grant only when the app starts again: a running Shots keeps
+        // reporting "missing" until it is relaunched
+        let screenRecordingMissing = !isScreenRecordingGranted
+        if screenRecordingMissing {
+            alert.informativeText += "\n\nAlready turned on Screen Recording for Shots? macOS applies it only after Shots restarts: click Relaunch Shots."
+        }
 
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Open Preferences...")
-        alert.addButton(withTitle: "Cancel")
+        var actions: [() -> Void] = []
+        func button(_ title: String, _ action: @escaping () -> Void) {
+            alert.addButton(withTitle: title)
+            actions.append(action)
+        }
+        button("Open System Settings") { [weak self] in self?.openSystemSettingsForMissingPermissions() }
+        if screenRecordingMissing {
+            button("Relaunch Shots") { [weak self] in self?.relaunch() }
+        }
+        button("Open Preferences...") { PreferencesWindowController.shared.showWindow() }
+        button("Cancel") {}
 
-        let response = alert.runModal()
-        switch response {
-        case .alertFirstButtonReturn:
-            openSystemSettingsForMissingPermissions()
-        case .alertSecondButtonReturn:
-            PreferencesWindowController.shared.showWindow()
-        default:
-            break
+        // Button responses are .alertFirstButtonReturn (1000), 1001, ... in the order added
+        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        if actions.indices.contains(index) {
+            actions[index]()
+        }
+    }
+
+    /// Quits and reopens Shots (a helper shell waits for this process to exit, then opens the bundle again)
+    public func relaunch() {
+        let bundlePath = Bundle.main.bundlePath
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = ["-c", "while kill -0 \(pid) 2>/dev/null; do sleep 0.1; done; /usr/bin/open \"$0\"", bundlePath]
+        do {
+            try helper.run()
+            NSApp.terminate(nil)
+        } catch {
+            NSLog("Shots: relaunch failed: %@", error.localizedDescription)
         }
     }
 

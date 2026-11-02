@@ -30,7 +30,7 @@ public final class WelcomePanel: NSPanel {
         isMovableByWindowBackground = true
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
-        backgroundColor = NSColor(white: 0.12, alpha: 0.98)
+        backgroundColor = ImpactTheme.windowBackground
         hasShadow = true
         level = .normal
         hidesOnDeactivate = false
@@ -44,7 +44,7 @@ public final class WelcomePanel: NSPanel {
         container.wantsLayer = true
 
         let visualEffect = NSVisualEffectView(frame: container.bounds)
-        visualEffect.material = .hudWindow
+        visualEffect.material = .underWindowBackground
         visualEffect.state = .active
         visualEffect.blendingMode = .behindWindow
         visualEffect.autoresizingMask = [.width, .height]
@@ -146,19 +146,19 @@ public final class WelcomeDropView: NSView {
                 .withSymbolConfiguration(config)
         }
         iconImageView.imageScaling = .scaleProportionallyDown
-        iconImageView.contentTintColor = NSColor(white: 0.85, alpha: 1.0)
+        iconImageView.contentTintColor = ImpactTheme.welcomeIcon
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
         centerContainer.addSubview(iconImageView)
 
         titleLabel.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
-        titleLabel.textColor = .white
+        titleLabel.textColor = ImpactTheme.welcomeTitle
         titleLabel.alignment = .center
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         centerContainer.addSubview(titleLabel)
 
         subtitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
-        subtitleLabel.textColor = NSColor(white: 0.65, alpha: 1.0)
+        subtitleLabel.textColor = ImpactTheme.welcomeSubtitle
         subtitleLabel.alignment = .center
         subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -171,7 +171,7 @@ public final class WelcomeDropView: NSView {
         centerContainer.addSubview(openButton)
 
         formatsLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        formatsLabel.textColor = NSColor(white: 0.42, alpha: 1.0)
+        formatsLabel.textColor = ImpactTheme.welcomeFootnote
         formatsLabel.alignment = .center
         formatsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         formatsLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -267,19 +267,24 @@ public final class WelcomeDropView: NSView {
 
             iconImageView.contentTintColor = strokeColor
         } else {
-            let fillColor = isHovered ? NSColor(white: 0.15, alpha: 0.85) : NSColor(white: 0.13, alpha: 0.70)
+            let fillColor = isHovered ? ImpactTheme.dropZoneFillHover : ImpactTheme.dropZoneFill
             fillColor.setFill()
             path.fill()
 
-            let strokeColor = isHovered ? NSColor(white: 0.40, alpha: 0.85) : NSColor(white: 0.25, alpha: 0.70)
+            let strokeColor = isHovered ? ImpactTheme.dropZoneStrokeHover : ImpactTheme.dropZoneStroke
             strokeColor.setStroke()
             let pattern: [CGFloat] = [6.0, 4.0]
             path.setLineDash(pattern, count: pattern.count, phase: 0.0)
             path.lineWidth = 1.5
             path.stroke()
 
-            iconImageView.contentTintColor = isHovered ? NSColor.white : NSColor(white: 0.80, alpha: 1.0)
+            iconImageView.contentTintColor = isHovered ? ImpactTheme.welcomeIconHover : ImpactTheme.welcomeIcon
         }
+    }
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 
     // MARK: - Drag and Drop Handling
@@ -382,11 +387,16 @@ public final class WelcomePillButton: NSView {
             iconImageView.contentTintColor = .white
             titleLabel.textColor = .white
         } else {
-            layer?.backgroundColor = NSColor(white: 0.22, alpha: 0.90).cgColor
-            layer?.borderColor = NSColor(white: 1.0, alpha: 0.15).cgColor
-            iconImageView.contentTintColor = NSColor(white: 0.90, alpha: 1.0)
-            titleLabel.textColor = NSColor(white: 0.90, alpha: 1.0)
+            layer?.backgroundColor = resolvedCGColor(ImpactTheme.pillFill)
+            layer?.borderColor = resolvedCGColor(ImpactTheme.pillBorder)
+            iconImageView.contentTintColor = ImpactTheme.pillForeground
+            titleLabel.textColor = ImpactTheme.pillForeground
         }
+    }
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateVisuals()
     }
 
     override public func mouseDown(with event: NSEvent) {

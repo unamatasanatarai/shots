@@ -10,7 +10,7 @@ public struct AppConfig {
     }()
 
     public static let bundleIdentifier: String = {
-        Bundle.main.bundleIdentifier ?? "com.local.Shots"
+        Bundle.main.bundleIdentifier ?? "com.unamatasanatarai.Shots"
     }()
 
     public static let copyright: String = {

@@ -26,8 +26,21 @@ if [[ ! -d "$app_bundle" || ! -d "$impact_bundle" ]]; then
 fi
 
 if [[ -f "${script_dir}/generate_dmg_background.py" ]]; then
+    # Arrows are drawn by Impact's own ArrowLayer so the installer matches the app's arrow style
+    arrows_tool="${cache_dir}/dmg-arrows"
+    arrows_png="${build_dir}/dmg_arrows@2x.png"
+    rm -f "$arrows_png"
+    printf '%s\n' "Rendering DMG arrows with Impact's arrow style..."
+    if swiftc -O -o "$arrows_tool" \
+        Sources/Impact/Models/ArrowLayer.swift \
+        Sources/Impact/Models/AnnotationLayer.swift \
+        "${script_dir}/dmg-arrows/main.swift" && "$arrows_tool" "$arrows_png"; then
+        :
+    else
+        printf '%s\n' "Warning: could not render Impact-style arrows; using fallback arrows" >&2
+    fi
     printf '%s\n' "Generating styled DMG background..."
-    python3 "${script_dir}/generate_dmg_background.py" || true
+    python3 "${script_dir}/generate_dmg_background.py" "$arrows_png" || true
 fi
 
 # Detach any existing mounted volumes with this name

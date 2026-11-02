@@ -29,7 +29,7 @@ public final class ImpactLauncher {
         }
 
         // 2. Check LaunchServices for registered app by bundle ID
-        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.local.Impact") {
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.unamatasanatarai.Impact") {
             cachedImpactAppURL = appURL
             return appURL
         }

@@ -96,7 +96,7 @@ public final class EditorPanel: NSPanel {
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
         isMovableByWindowBackground = true
-        backgroundColor = NSColor(white: 0.14, alpha: 0.98)
+        backgroundColor = ImpactTheme.windowBackground
         hasShadow = true
         collectionBehavior = [.managed, .participatesInCycle, .fullScreenPrimary]
 
@@ -214,7 +214,8 @@ public final class EditorPanel: NSPanel {
 
     public static var copyToClipboardOverride: Bool? = nil
 
-    private static let shotsDefaults = UserDefaults(suiteName: "com.local.Shots")
+    /// Shots' preferences (it owns the copy-to-clipboard setting)
+    private static let shotsDefaults = UserDefaults(suiteName: "com.unamatasanatarai.Shots")
     private static let numberedSuffixRegex = try? NSRegularExpression(pattern: #"^(.*?)-(\d+)$"#)
 
     public static var isCopyToClipboardEnabled: Bool {
@@ -222,10 +223,8 @@ public final class EditorPanel: NSPanel {
             if let overrideVal = copyToClipboardOverride {
                 return overrideVal
             }
-            if let shotsDefaults = shotsDefaults {
-                if let val = shotsDefaults.object(forKey: "copyToClipboard") as? Bool {
-                    return val
-                }
+            if let val = shotsDefaults?.object(forKey: "copyToClipboard") as? Bool {
+                return val
             }
             if let val = UserDefaults.standard.object(forKey: "copyToClipboard") as? Bool {
                 return val
@@ -366,7 +365,7 @@ public final class EditorPanel: NSPanel {
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
-        scrollView.backgroundColor = NSColor(white: 0.10, alpha: 1.0)
+        scrollView.backgroundColor = ImpactTheme.canvasSurround
         scrollView.documentView = canvasView
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(scrollView)

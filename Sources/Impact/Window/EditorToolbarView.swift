@@ -47,7 +47,7 @@ public final class ModernToolbarButton: NSView {
 
         titleLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .semibold)
         titleLabel.alignment = .center
-        titleLabel.textColor = NSColor(white: 0.82, alpha: 1.0)
+        titleLabel.textColor = ImpactTheme.toolbarForeground
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(titleLabel)
 
@@ -147,32 +147,37 @@ public final class ModernToolbarButton: NSView {
             layer?.backgroundColor = isHovered
                 ? NSColor(srgbRed: 0.10, green: 0.54, blue: 1.0, alpha: 1.0).cgColor
                 : NSColor(srgbRed: 0.0, green: 0.48, blue: 1.0, alpha: 0.95).cgColor
-            layer?.borderColor = isSegment ? NSColor.clear.cgColor : NSColor.white.withAlphaComponent(0.20).cgColor
+            layer?.borderColor = isSegment ? NSColor.clear.cgColor : resolvedCGColor(ImpactTheme.activeBorder)
             layer?.borderWidth = isSegment ? 0.0 : 0.5
             iconImageView.contentTintColor = .white
             titleLabel.textColor = .white
         } else if isPressed {
             // Pressed state: Darker highlight
-            layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.22).cgColor
+            layer?.backgroundColor = resolvedCGColor(ImpactTheme.pressedFill)
             layer?.borderColor = NSColor.clear.cgColor
             layer?.borderWidth = 0.0
-            iconImageView.contentTintColor = .white
-            titleLabel.textColor = .white
+            iconImageView.contentTintColor = ImpactTheme.toolbarForegroundStrong
+            titleLabel.textColor = ImpactTheme.toolbarForegroundStrong
         } else if isHovered {
-            // Hover effect: Frosted light highlight pill + white icon/text
-            layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.14).cgColor
-            layer?.borderColor = isSegment ? NSColor.clear.cgColor : NSColor(white: 1.0, alpha: 0.12).cgColor
+            // Hover effect: highlight pill, stronger icon/text
+            layer?.backgroundColor = resolvedCGColor(ImpactTheme.hoverFill)
+            layer?.borderColor = isSegment ? NSColor.clear.cgColor : resolvedCGColor(ImpactTheme.hoverBorder)
             layer?.borderWidth = isSegment ? 0.0 : 0.5
-            iconImageView.contentTintColor = .white
-            titleLabel.textColor = .white
+            iconImageView.contentTintColor = ImpactTheme.toolbarForegroundStrong
+            titleLabel.textColor = ImpactTheme.toolbarForegroundStrong
         } else {
-            // Normal state: Transparent + soft white icon/text
+            // Normal state: transparent, soft icon/text
             layer?.backgroundColor = NSColor.clear.cgColor
             layer?.borderColor = NSColor.clear.cgColor
             layer?.borderWidth = 0.0
-            iconImageView.contentTintColor = NSColor(white: 0.82, alpha: 1.0)
-            titleLabel.textColor = NSColor(white: 0.82, alpha: 1.0)
+            iconImageView.contentTintColor = ImpactTheme.toolbarForeground
+            titleLabel.textColor = ImpactTheme.toolbarForeground
         }
+    }
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateVisuals()
     }
 
     override public func updateTrackingAreas() {
@@ -255,12 +260,8 @@ public final class ModernColorButton: NSView {
         dotView.layer?.cornerRadius = 7.0
         dotView.layer?.masksToBounds = true
         dotView.layer?.backgroundColor = NSColor(hex: hex).cgColor
-        if hex.uppercased() == "#FFFFFF" {
+        if hex.uppercased() == "#FFFFFF" || hex.uppercased() == "#1E272E" {
             dotView.layer?.borderWidth = 1.0
-            dotView.layer?.borderColor = NSColor(white: 0.45, alpha: 1.0).cgColor
-        } else if hex.uppercased() == "#1E272E" {
-            dotView.layer?.borderWidth = 1.0
-            dotView.layer?.borderColor = NSColor(white: 0.30, alpha: 1.0).cgColor
         }
         dotView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(dotView)
@@ -292,15 +293,24 @@ public final class ModernColorButton: NSView {
             if hex.uppercased() == "#FF3B30" {
                 ringView.layer?.borderColor = NSColor(srgbRed: 1.0, green: 0.60, blue: 0.58, alpha: 0.95).cgColor
             } else if hex.uppercased() == "#FFFFFF" {
-                ringView.layer?.borderColor = NSColor(white: 0.85, alpha: 0.95).cgColor
+                ringView.layer?.borderColor = resolvedCGColor(ImpactTheme.whiteSwatchActiveRing)
             } else {
                 ringView.layer?.borderColor = NSColor(hex: hex).withAlphaComponent(0.85).cgColor
             }
         } else if isHovered {
-            ringView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.40).cgColor
+            ringView.layer?.borderColor = resolvedCGColor(ImpactTheme.swatchHoverRing)
         } else {
             ringView.layer?.borderColor = NSColor.clear.cgColor
         }
+        // White and near-black swatches need an outline that contrasts with the popover in either mode
+        if dotView.layer?.borderWidth ?? 0 > 0 {
+            dotView.layer?.borderColor = resolvedCGColor(ImpactTheme.swatchBorder)
+        }
+    }
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateVisuals()
     }
 
     override public func updateTrackingAreas() {
@@ -389,22 +399,18 @@ public final class ModernSingleColorButton: NSView {
     public func updateColor(hex: String) {
         self.currentColor = hex
         swatchView.layer?.backgroundColor = NSColor(hex: hex).cgColor
-        if hex.uppercased() == "#FFFFFF" {
-            swatchView.layer?.borderWidth = 1.0
-            swatchView.layer?.borderColor = NSColor(white: 0.45, alpha: 1.0).cgColor
-        } else {
-            swatchView.layer?.borderWidth = 1.0
-            swatchView.layer?.borderColor = NSColor(white: 1.0, alpha: 0.20).cgColor
-        }
+        swatchView.layer?.borderWidth = 1.0
         updateVisuals()
     }
 
     private func updateVisuals() {
-        if isHovered {
-            layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.14).cgColor
-        } else {
-            layer?.backgroundColor = NSColor.clear.cgColor
-        }
+        swatchView.layer?.borderColor = resolvedCGColor(ImpactTheme.swatchBorder)
+        layer?.backgroundColor = isHovered ? resolvedCGColor(ImpactTheme.hoverFill) : NSColor.clear.cgColor
+    }
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateVisuals()
     }
 
     override public func updateTrackingAreas() {
@@ -457,9 +463,8 @@ public final class ColorPopoutViewController: NSViewController {
     public internal(set) var swatchButtons: [ModernColorButton] = []
 
     override public func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 196, height: 104))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(white: 0.16, alpha: 0.98).cgColor
+        let container = ThemedLayerView(fill: ImpactTheme.popoverBackground)
+        container.frame = NSRect(x: 0, y: 0, width: 196, height: 104)
         container.layer?.cornerRadius = 14.0
 
         let gridStack = NSStackView()
@@ -673,9 +678,7 @@ public final class EditorToolbarView: NSVisualEffectView {
 
     private func setupMenubar() {
         // Bottom hairline border separating menubar cleanly from canvas
-        let bottomLine = NSView()
-        bottomLine.wantsLayer = true
-        bottomLine.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.12).cgColor
+        let bottomLine = ThemedLayerView(fill: ImpactTheme.separator)
         bottomLine.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bottomLine)
 
@@ -735,12 +738,9 @@ public final class EditorToolbarView: NSVisualEffectView {
         stack.addArrangedSubview(zoomSep)
 
         // 2. Compact Segmented Zoom Capsule: [-] [100% ▾] [+] [Fit] [1:1]
-        let zoomCapsule = NSView()
-        zoomCapsule.wantsLayer = true
+        let zoomCapsule = ThemedLayerView(fill: ImpactTheme.capsuleFill, border: ImpactTheme.capsuleBorder)
         zoomCapsule.layer?.cornerRadius = 6.0
         zoomCapsule.layer?.masksToBounds = true
-        zoomCapsule.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.08).cgColor
-        zoomCapsule.layer?.borderColor = NSColor(white: 1.0, alpha: 0.12).cgColor
         zoomCapsule.layer?.borderWidth = 0.5
         zoomCapsule.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1009,9 +1009,7 @@ public final class EditorToolbarView: NSVisualEffectView {
         sepContainer.widthAnchor.constraint(equalToConstant: 12).isActive = true
         sepContainer.heightAnchor.constraint(equalToConstant: 30).isActive = true
 
-        let line = NSView()
-        line.wantsLayer = true
-        line.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.14).cgColor
+        let line = ThemedLayerView(fill: ImpactTheme.separator)
         line.translatesAutoresizingMaskIntoConstraints = false
         sepContainer.addSubview(line)
 
@@ -1025,9 +1023,7 @@ public final class EditorToolbarView: NSVisualEffectView {
     }
 
     private func createSegmentDivider() -> NSView {
-        let div = NSView()
-        div.wantsLayer = true
-        div.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.12).cgColor
+        let div = ThemedLayerView(fill: ImpactTheme.separator)
         div.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             div.widthAnchor.constraint(equalToConstant: 1),
@@ -1131,7 +1127,6 @@ public final class EditorToolbarView: NSVisualEffectView {
         let popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
-        popover.appearance = NSAppearance(named: .darkAqua)
 
         let popoutVC = ColorPopoutViewController()
         let currentHex: String

@@ -4914,6 +4914,33 @@ public enum EditorTests {
                 assert(closes == 1, "onClose fires once, got \(closes)")
             }
         }
+        testRunner("Theme - Toolbar Follows Light And Dark Mode, Including A Live Switch") {
+            func brightness(_ c: CGColor?) -> CGFloat? {
+                guard let c = c, let rgb = NSColor(cgColor: c)?.usingColorSpace(.sRGB) else { return nil }
+                return (rgb.redComponent + rgb.greenComponent + rgb.blueComponent) / 3
+            }
+            let button = ModernToolbarButton(systemName: "circle", tooltip: "t")
+            button.appearance = NSAppearance(named: .darkAqua)
+            button.isHovered = true
+            assert((brightness(button.layer?.backgroundColor) ?? 0) > 0.9, "Dark: hover fill is a light tint")
+            // Switch to light mode while shown
+            button.appearance = NSAppearance(named: .aqua)
+            button.viewDidChangeEffectiveAppearance()
+            assert((brightness(button.layer?.backgroundColor) ?? 1) < 0.1, "Light: hover fill becomes a dark tint")
+            button.isHovered = false
+            let idle = ImpactTheme.toolbarForeground
+            var lightIdle: CGFloat = 0, darkIdle: CGFloat = 0
+            NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance { lightIdle = idle.usingColorSpace(.sRGB)!.redComponent }
+            NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance { darkIdle = idle.usingColorSpace(.sRGB)!.redComponent }
+            assert(lightIdle < 0.4 && darkIdle > 0.7, "Idle icons: dark on light, light on dark (\(lightIdle), \(darkIdle))")
+            // Separator views re-resolve their layer colors on a switch
+            let sep = ThemedLayerView(fill: ImpactTheme.separator)
+            sep.appearance = NSAppearance(named: .darkAqua); sep.viewDidChangeEffectiveAppearance()
+            let darkSep = brightness(sep.layer?.backgroundColor) ?? 0
+            sep.appearance = NSAppearance(named: .aqua); sep.viewDidChangeEffectiveAppearance()
+            let lightSep = brightness(sep.layer?.backgroundColor) ?? 1
+            assert(darkSep > 0.9 && lightSep < 0.1, "Separator: light line on dark, dark line on light")
+        }
         testRunner("Ruler - Label Larger Than The Ruler Moves Beside It, Otherwise Stays Centered") {
             func onLine(_ r: CGRect, _ a: CGPoint, _ b: CGPoint) -> Bool {
                 // Does the badge cover any sampled point of the ruler or its ticks?

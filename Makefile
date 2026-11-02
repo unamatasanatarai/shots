@@ -68,10 +68,10 @@ release:
 ## revoke: Reset permissions (ScreenCapture, Accessibility) and clear macOS caches
 revoke:
 	@echo "==> Revoking macOS permissions for Shots and Impact..."
-	@tccutil reset ScreenCapture com.local.Shots 2>/dev/null || true
-	@tccutil reset Accessibility com.local.Shots 2>/dev/null || true
-	@tccutil reset ScreenCapture com.local.Impact 2>/dev/null || true
-	@tccutil reset Accessibility com.local.Impact 2>/dev/null || true
+	@tccutil reset ScreenCapture com.unamatasanatarai.Shots 2>/dev/null || true
+	@tccutil reset Accessibility com.unamatasanatarai.Shots 2>/dev/null || true
+	@tccutil reset ScreenCapture com.unamatasanatarai.Impact 2>/dev/null || true
+	@tccutil reset Accessibility com.unamatasanatarai.Impact 2>/dev/null || true
 	@echo "==> Resetting macOS Icon and LaunchServices caches..."
 	@touch "build/Shots.app" "build/Impact.app" 2>/dev/null || true
 	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R "build/Shots.app" "build/Impact.app" 2>/dev/null || true
