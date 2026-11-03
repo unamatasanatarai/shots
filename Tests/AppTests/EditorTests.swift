@@ -127,7 +127,10 @@ public enum EditorTests {
 
             // Test handle hit testing
             assert(arrow.hitTestHandle(point: CGPoint(x: 10, y: 10)) == 0, "Handle 0 must be start")
-            assert(arrow.hitTestHandle(point: CGPoint(x: 50, y: 80)) == 1, "Handle 1 must be control")
+            assert(arrow.bendHandle == CGPoint(x: 52.5, y: 47.5), "The bend handle is the curve's midpoint")
+            assert(arrow.hitTestHandle(point: CGPoint(x: 52.5, y: 47.5)) == 1, "Handle 1 must be the bend handle, on the curve")
+            assert(arrow.hitTestHandle(point: CGPoint(x: 50, y: 80)) == nil, "The off-curve Bezier control point is not a handle")
+            assert(!box.contains(CGPoint(x: 50, y: 80)), "The off-curve control point must not enlarge the bounding box")
             assert(arrow.hitTestHandle(point: CGPoint(x: 100, y: 20)) == 2, "Handle 2 must be end")
         }
 
@@ -359,7 +362,11 @@ public enum EditorTests {
             let menu = toolbar.buildOverflowMenu()
             let titles = menu.items.map { $0.title }
             for def in toolbar.collapsibleToolDefinitions {
-                assert(!titles.contains(def.title), "Visible tool \(def.title) must NOT be repeated in overflow menu")
+                if toolbar.toolButtons[def.type]?.isHidden == false {
+                    assert(!titles.contains(def.title), "Visible tool \(def.title) must NOT be repeated in overflow menu")
+                } else {
+                    assert(titles.contains(def.title), "Collapsed tool \(def.title) must be in the overflow menu")
+                }
             }
         }
 
@@ -780,7 +787,7 @@ public enum EditorTests {
             // Handle 1: Bend Point (central control node)
             // Handle 2: End Point (arrowhead tip)
             assert(arrow.hitTestHandle(point: CGPoint(x: 50, y: 50)) == 0, "Handle 0 must be Start Point at arrow tail")
-            assert(arrow.hitTestHandle(point: CGPoint(x: 150, y: 80)) == 1, "Handle 1 must be Bend Point at central control node")
+            assert(arrow.hitTestHandle(point: CGPoint(x: 150, y: 65)) == 1, "Handle 1 must be the Bend Point on the curve's midpoint")
             assert(arrow.hitTestHandle(point: CGPoint(x: 250, y: 50)) == 2, "Handle 2 must be End Point at arrowhead tip")
 
             // Test independent Start Point repositioning (leaving end and control intact)
@@ -790,7 +797,7 @@ public enum EditorTests {
 
             // Test independent Bend Point pulling path into curve
             arrow.updateHandle(index: 1, to: CGPoint(x: 150, y: 140))
-            assert(arrow.control == CGPoint(x: 150, y: 140), "Bend point must update to (150, 140)")
+            assert(arrow.bendHandle == CGPoint(x: 150, y: 140), "The curve must pass through the dragged bend point (150, 140)")
             assert(arrow.start == CGPoint(x: 20, y: 60), "Start point must remain anchored during bend adjustment")
             assert(arrow.end == CGPoint(x: 250, y: 50), "End point must remain anchored during bend adjustment")
 
@@ -1450,7 +1457,8 @@ public enum EditorTests {
             let selectBtn = toolbar.toolButtons[.select]
             assert(selectBtn != nil, "Toolbar must have a .select tool button")
             assert(selectBtn?.tooltipText == "Select / Crop [V]", "Select button tooltip must be 'Select / Crop [V]'")
-            assert(toolbar.pinButton?.tooltipText == "Always on Top", "Pin button tooltip must be 'Always on Top'")
+            assert(toolbar.actionsMenuButton?.tooltipText == "More Actions", "Actions button tooltip must be 'More Actions'")
+            assert(toolbar.buildActionsMenu().item(withTitle: "Always on Top") != nil, "Always on Top lives in the actions menu")
 
             // 4. Sleek Move & Resizing Cursors
             let sleekMove = NSCursor.sleekMove
@@ -1506,32 +1514,29 @@ public enum EditorTests {
             assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur must be visible when wide")
             assert(toolbar.toolButtons[.dimension]?.isHidden == false, "Ruler must be present and visible when wide")
             assert(toolbar.overflowButton?.isHidden == true, "3-dots overflow must be hidden when wide")
-            assert(toolbar.openButton?.isHidden == false, "Open must be visible")
-            assert(toolbar.copyButton?.isHidden == false, "Copy must be visible")
-            assert(toolbar.saveButton?.isHidden == false, "Save must be visible")
-            assert(toolbar.pinButton?.isHidden == false, "Pin must be visible")
+            assert(toolbar.actionsMenuButton?.isHidden == false, "Actions menu must be visible")
 
             // Progressive one-by-one collapse:
             // Width 860pt: exactly 1 tool (Ruler, rightmost) moves to dropdown, 11 tools remain
-            toolbar.frame = NSRect(x: 0, y: 0, width: 860, height: 44)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 682, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown first")
-            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur still on toolbar at 860pt")
+            assert(toolbar.toolButtons[.blur]?.isHidden == false, "Blur still on toolbar at 682pt")
             assert(toolbar.overflowButton?.isHidden == false, "Overflow button appears when 1 tool moves to dropdown")
 
             // Width 770pt: Ruler, Blur, Highlighter, Pen moved to dropdown, 8 tools remain
-            toolbar.frame = NSRect(x: 0, y: 0, width: 770, height: 44)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 592, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.dimension]?.isHidden == true, "Ruler moves to dropdown as space narrows")
             assert(toolbar.toolButtons[.blur]?.isHidden == true, "Blur moves to dropdown as space narrows")
             assert(toolbar.toolButtons[.highlighter]?.isHidden == true, "Highlighter moves to dropdown as space narrows")
             assert(toolbar.toolButtons[.pen]?.isHidden == true, "Pen moves to dropdown as space narrows")
-            assert(toolbar.toolButtons[.text]?.isHidden == false, "Text still on toolbar at 770pt")
+            assert(toolbar.toolButtons[.text]?.isHidden == false, "Text still on toolbar at 592pt")
 
             // Every rung collapses exactly one more tool, from the end of the collapsible list
             let rungs: [(width: CGFloat, visible: Int)] = [
-                (877, 13), (844, 12), (811, 11), (778, 10), (745, 9), (740, 8), (600, 8), (567, 7),
-                (534, 6), (501, 5), (468, 4), (435, 3), (402, 2), (369, 1), (368, 0)
+                (699, 13), (666, 12), (633, 11), (600, 10), (567, 9), (562, 8), (468, 8), (435, 7),
+                (402, 6), (369, 5), (336, 4), (303, 3), (270, 2), (237, 1), (236, 0)
             ]
             for rung in rungs {
                 toolbar.frame = NSRect(x: 0, y: 0, width: rung.width, height: 44)
@@ -1544,30 +1549,27 @@ public enum EditorTests {
             }
 
             // Callout collapses after Text, Pen, Highlighter, Blur, and Ruler and stays reachable from the overflow menu
-            toolbar.frame = NSRect(x: 0, y: 0, width: 600, height: 44)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 468, height: 44)
             toolbar.layout()
-            assert(toolbar.toolButtons[.callout]?.isHidden == false, "Callout still on toolbar at 600pt")
+            assert(toolbar.toolButtons[.callout]?.isHidden == false, "Callout still on toolbar at 468pt")
             assert(toolbar.toolButtons[.text]?.isHidden == true, "Text moves to dropdown before Callout")
             assert(toolbar.toolButtons[.pen]?.isHidden == true, "Pen moves to dropdown before Callout")
-            toolbar.frame = NSRect(x: 0, y: 0, width: 580, height: 44)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 448, height: 44)
             toolbar.layout()
-            assert(toolbar.toolButtons[.callout]?.isHidden == true, "Callout moves to dropdown below 600pt")
-            assert(toolbar.toolButtons[.counter]?.isHidden == false, "Counter still on toolbar at 580pt")
+            assert(toolbar.toolButtons[.callout]?.isHidden == true, "Callout moves to dropdown below 468pt")
+            assert(toolbar.toolButtons[.counter]?.isHidden == false, "Counter still on toolbar at 448pt")
             let narrowMenuTitles = toolbar.buildOverflowMenu().items.map { $0.title }
             assert(narrowMenuTitles.contains("Callout"), "Collapsed Callout must be listed in the overflow menu")
             assert(narrowMenuTitles.contains("Text"), "Collapsed Text must be listed in the overflow menu")
             assert(!narrowMenuTitles.contains("Counter"), "Visible Counter must not be repeated in the overflow menu")
 
             // 2. Narrow window (450pt): Rightmost tools hide under 3-dots
-            toolbar.frame = NSRect(x: 0, y: 0, width: 450, height: 44)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 318, height: 44)
             toolbar.layout()
 
             // Essential icons strictly preserved
             assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must ALWAYS remain visible when narrow")
-            assert(toolbar.openButton?.isHidden == false, "Open must ALWAYS remain visible when narrow")
-            assert(toolbar.copyButton?.isHidden == false, "Copy must ALWAYS remain visible when narrow")
-            assert(toolbar.saveButton?.isHidden == false, "Save must ALWAYS remain visible when narrow")
-            assert(toolbar.pinButton?.isHidden == false, "Pin must ALWAYS remain visible when narrow")
+            assert(toolbar.actionsMenuButton?.isHidden == false, "Actions menu must ALWAYS remain visible when narrow")
 
             // Rightmost tools collapsed under 3-dots
             assert(toolbar.toolButtons[.blur]?.isHidden == true, "Rightmost tool (Blur) must hide when narrow")
@@ -1577,10 +1579,7 @@ public enum EditorTests {
             toolbar.frame = NSRect(x: 0, y: 0, width: 340, height: 44)
             toolbar.layout()
             assert(toolbar.toolButtons[.select]?.isHidden == false, "Pointer must remain visible even at 340pt")
-            assert(toolbar.openButton?.isHidden == false, "Open must remain visible even at 340pt")
-            assert(toolbar.copyButton?.isHidden == false, "Copy must remain visible even at 340pt")
-            assert(toolbar.saveButton?.isHidden == false, "Save must remain visible even at 340pt")
-            assert(toolbar.pinButton?.isHidden == false, "Pin must remain visible even at 340pt")
+            assert(toolbar.actionsMenuButton?.isHidden == false, "Actions menu must remain visible even at 340pt")
             assert(toolbar.overflowButton?.isHidden == false, "3-dots overflow button must be visible at 340pt")
 
             // 4. Overflow menu tool activation & dropdown items matching reference image
@@ -1697,19 +1696,22 @@ public enum EditorTests {
             assert(panel.toolbarView.zoomResetButton == nil, "Toolbar zoomResetButton must be removed from capsule")
             assert(panel.toolbarView.zoomFitButton == nil, "Toolbar zoomFitButton must be removed from capsule")
             assert(panel.toolbarView.zoomPercentButton != nil, "Toolbar must have zoomPercentButton")
-            assert(panel.toolbarView.zoomInButton != nil, "Toolbar must have zoomInButton")
-            assert(panel.toolbarView.zoomOutButton != nil, "Toolbar must have zoomOutButton")
+            let zoomMenu = panel.toolbarView.buildZoomPresetsMenu()
+            assert(zoomMenu.item(withTitle: "Zoom In") != nil && zoomMenu.item(withTitle: "Zoom Out") != nil, "Zoom In / Zoom Out live in the zoom menu")
+            assert(panel.toolbarView.zoomContainerView?.subviews.first?.subviews.count == 1, "The zoom capsule shows only the current zoom")
             assert(panel.toolbarView.zoomContainerView != nil, "Toolbar must have compact zoomContainerView")
 
             // Test Zoom In button
             let magBeforeIn = sv.magnification
-            panel.toolbarView.zoomInButton?.onAction?()
-            assert(sv.magnification > magBeforeIn, "Clicking zoomInButton must increase magnification")
+            let zoomIn = zoomMenu.item(withTitle: "Zoom In")!
+            _ = (zoomIn.target as AnyObject).perform(zoomIn.action, with: zoomIn)
+            assert(sv.magnification > magBeforeIn, "Zoom In from the menu must increase magnification")
 
             // Test Zoom Out button
             let magBeforeOut = sv.magnification
-            panel.toolbarView.zoomOutButton?.onAction?()
-            assert(sv.magnification < magBeforeOut, "Clicking zoomOutButton must decrease magnification")
+            let zoomOut = zoomMenu.item(withTitle: "Zoom Out")!
+            _ = (zoomOut.target as AnyObject).perform(zoomOut.action, with: zoomOut)
+            assert(sv.magnification < magBeforeOut, "Zoom Out from the menu must decrease magnification")
 
             // Test Zoom Reset (100% / Actual Size) via callback / menu action
             sv.magnification = 3.25
@@ -1939,14 +1941,14 @@ public enum EditorTests {
             assert(panel.toolbarView.toolButtons[.callout]?.isHidden == false, "Callout visible at 900pt")
             assert(panel.toolbarView.overflowButton?.isHidden == true, "3-dots overflow button hidden when all tools fit at 900pt")
 
-            // 3. Window resizing to 600pt (Medium): Window decides width; Blur hides under 3-dots
-            panel.setFrame(NSRect(x: 100, y: 100, width: 600, height: 500), display: true)
-            assert(panel.frame.width == 600.0)
-            assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer visible at 600pt")
-            assert(panel.toolbarView.toolButtons[.blur]?.isHidden == true, "Blur hidden at 600pt")
-            assert(panel.toolbarView.toolButtons[.pen]?.isHidden == true, "Pen hidden at 600pt")
-            assert(panel.toolbarView.toolButtons[.callout]?.isHidden == false, "Callout visible at 600pt")
-            assert(panel.toolbarView.overflowButton?.isHidden == false, "3-dots overflow visible at 600pt")
+            // 3. Window resizing to 520pt (Medium): Window decides width; Blur hides under 3-dots
+            panel.setFrame(NSRect(x: 100, y: 100, width: 520, height: 500), display: true)
+            assert(panel.frame.width == 520.0)
+            assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer visible at 520pt")
+            assert(panel.toolbarView.toolButtons[.blur]?.isHidden == true, "Blur hidden at 520pt")
+            assert(panel.toolbarView.toolButtons[.pen]?.isHidden == true, "Pen hidden at 520pt")
+            assert(panel.toolbarView.toolButtons[.callout]?.isHidden == false, "Callout visible at 520pt")
+            assert(panel.toolbarView.overflowButton?.isHidden == false, "3-dots overflow visible at 520pt")
 
             // 4. Window resizing to 280pt (Narrow): Menu must NOT force window to stay wider than 280pt
             panel.setFrame(NSRect(x: 100, y: 100, width: 280, height: 500), display: true)
@@ -1956,13 +1958,11 @@ public enum EditorTests {
             // Essential buttons strictly preserved at 280pt
             assert(panel.toolbarView.toolButtons[.select]?.isHidden == false, "Pointer strictly visible at 280pt")
             assert(panel.toolbarView.overflowButton?.isHidden == false, "3-dots overflow strictly visible at 280pt")
-            assert(panel.toolbarView.openButton?.isHidden == false, "Open strictly visible at 280pt")
-            assert(panel.toolbarView.copyButton?.isHidden == false, "Copy strictly visible at 280pt")
-            assert(panel.toolbarView.saveButton?.isHidden == false, "Save strictly visible at 280pt")
-            assert(panel.toolbarView.pinButton?.isHidden == false, "Pin strictly visible at 280pt")
+            assert(panel.toolbarView.actionsMenuButton?.isHidden == false, "Actions menu strictly visible at 280pt")
 
             // Non-essential tools cleanly collapsed into 3-dots
-            assert(panel.toolbarView.toolButtons[.arrow]?.isHidden == true, "Arrow collapsed at 280pt")
+            assert(panel.toolbarView.toolButtons[.arrow]?.isHidden == false, "Arrow still fits at 280pt (actions are one menu button)")
+            assert(panel.toolbarView.toolButtons[.line]?.isHidden == true, "Line collapsed at 280pt")
             assert(panel.toolbarView.toolButtons[.blur]?.isHidden == true, "Blur collapsed at 280pt")
 
             panel.close()
@@ -2065,8 +2065,8 @@ public enum EditorTests {
             panel.toolbarView.onOpenRequested = {
                 openRequested = true
             }
-            panel.toolbarView.openButton?.onAction?()
-            assert(openRequested == true, "Triggering openButton action must fire onOpenRequested")
+            panel.toolbarView.performOpenAction()
+            assert(openRequested == true, "The actions menu's Open must fire onOpenRequested")
 
             // Verify drag target overlay toggle
             panel.showDropTargetOverlay(true)
@@ -2120,8 +2120,8 @@ public enum EditorTests {
             doc.selectedLayerIDs.removeAll()
             toolbar.updateSelectedToolVisuals()
             assert(toolbar.shouldShowColorPicker == false, "Color picker must not show up in select mode with no annotation selected")
-            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must be hidden in select mode")
-            assert(toolbar.toolsSeparatorView?.isHidden == true, "Tools separator must be hidden when color picker is hidden")
+            assert(toolbar.colorStackView?.isHidden == false, "Color swatch is always visible, also in select mode")
+            assert(toolbar.toolsSeparatorView?.isHidden == false, "The separator after the swatch is always visible")
 
             // 2. Only ONE color button in toolbar
             assert(toolbar.singleColorButton != nil, "Single color button must exist")
@@ -2143,7 +2143,7 @@ public enum EditorTests {
             doc.activeTool = .blur
             toolbar.updateSelectedToolVisuals()
             assert(toolbar.shouldShowColorPicker == false, "Color picker must be hidden when blur is active because only blur has no outline")
-            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must be hidden when blur is active")
+            assert(toolbar.colorStackView?.isHidden == false, "Color swatch is always visible, also when blur is active")
 
             // 5. In Select mode, selecting a colorable annotation makes color picker VISIBLE with that annotation's color
             doc.activeTool = .select
@@ -2172,7 +2172,7 @@ public enum EditorTests {
             doc.selectLayer(blurLayer)
             toolbar.updateSelectedToolVisuals()
             assert(toolbar.shouldShowColorPicker == false, "Color picker must remain invisible when blur annotation is selected")
-            assert(toolbar.colorStackView?.isHidden == true, "Color picker must be hidden for blur annotation")
+            assert(toolbar.colorStackView?.isHidden == false, "Color swatch is always visible, also for a blur annotation")
 
             // 7. Popout grid contains exactly 8 predefined swatches and operates without custom color
             let popoutVC = ColorPopoutViewController()
@@ -2261,7 +2261,7 @@ public enum EditorTests {
             toolbar.updateSelectedToolVisuals()
             assert(doc.activeColor.uppercased() == "#007AFF", "Switching to blur tool must preserve activeColor")
             assert(toolbar.shouldShowColorPicker == false, "Color picker must be hidden when blur tool is active because only blur has no outline")
-            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must be hidden when blur is active")
+            assert(toolbar.colorStackView?.isHidden == false, "Color swatch is always visible, also when blur is active")
 
             // 3. Adding and selecting a blur layer must not mutate activeColor
             let blurLayer = FilterLayer(
@@ -2276,7 +2276,7 @@ public enum EditorTests {
 
             assert(doc.activeColor.uppercased() == "#007AFF", "Selecting blur layer must not overwrite activeColor")
             assert(toolbar.shouldShowColorPicker == false, "Color picker must remain hidden for blur layer")
-            assert(toolbar.colorStackView?.isHidden == true, "Color picker stack must remain hidden for blur layer")
+            assert(toolbar.colorStackView?.isHidden == false, "Color swatch is always visible, also for a blur layer")
 
             // 4. Hit-testing selection on blur layer must also not mutate activeColor
             _ = doc.selectLayer(at: CGPoint(x: 60, y: 60))
@@ -4767,7 +4767,7 @@ public enum EditorTests {
             doc.addLayer(rect)
             let (_, editor) = try createCallout(doc, canvas, at: CGPoint(x: 300, y: 300))
             typeText(editor, "hello")
-            panel.toolbarView.undoButton?.onAction?()
+            panel.toolbarView.performUndoAction()
             assert(!canvas.isEditingCallout, "Undo must end the typing session")
             assert(doc.layers.contains { ($0 as? RectangleLayer)?.rect == rect.rect }, "The rectangle must survive (undo restores clones)")
             assert(!doc.layers.contains { $0 is CalloutLayer }, "The callout being created is reverted")
@@ -4872,17 +4872,17 @@ public enum EditorTests {
             let (doc, panel, canvas) = try makeCalloutPanel()
             var areas: [CGRect?] = []
             canvas.onPartialRepaint = { areas.append($0) }
-            // A curved arrow: its control handle sits well off the curve's box
+            // A curved arrow
             let arrow = ArrowLayer(start: CGPoint(x: 100, y: 300), control: CGPoint(x: 200, y: 100), end: CGPoint(x: 300, y: 300), strokeWidth: 6)
             doc.addLayer(arrow)
             var steps: [(before: [CGPoint], after: [CGPoint], boxBefore: CGRect, boxAfter: CGRect)] = []
             canvas.mouseDown(with: mouse(.leftMouseDown, canvas, CGPoint(x: 100, y: 300)))
             var p = CGPoint(x: 100, y: 300)
             for _ in 0..<5 {
-                let handlesBefore = [arrow.start, arrow.control, arrow.end], boxBefore = arrow.getBoundingBox()
+                let handlesBefore = [arrow.start, arrow.bendHandle, arrow.end], boxBefore = arrow.getBoundingBox()
                 p = CGPoint(x: p.x + 40, y: p.y + 15)
                 canvas.mouseDragged(with: mouse(.leftMouseDragged, canvas, p))
-                steps.append((handlesBefore, [arrow.start, arrow.control, arrow.end], boxBefore, arrow.getBoundingBox()))
+                steps.append((handlesBefore, [arrow.start, arrow.bendHandle, arrow.end], boxBefore, arrow.getBoundingBox()))
             }
             canvas.mouseUp(with: mouse(.leftMouseUp, canvas, p))
             assert(areas.count == steps.count, "One repaint per drag step, got \(areas.count)")
@@ -4890,7 +4890,7 @@ public enum EditorTests {
                 guard let area = area else { assertionFailure("A vector drag must not repaint everything"); continue }
                 assert(area.contains(step.boxBefore) && area.contains(step.boxAfter), "Repaint must cover old and new drawing")
                 for h in step.before + step.after {
-                    assert(area.insetBy(dx: 6, dy: 6).contains(h), "Repaint must cover every handle (incl. the control point) \(h)")
+                    assert(area.insetBy(dx: 6, dy: 6).contains(h), "Repaint must cover every handle (incl. the bend handle) \(h)")
                 }
                 assert(area.width * area.height < doc.activeCanvasBounds.width * doc.activeCanvasBounds.height / 3, "Repaint must be much smaller than the canvas")
             }
@@ -5201,5 +5201,108 @@ public enum EditorTests {
             doc.layers.removeAll()
             assert(doc.topLayer(at: p) == nil, "Direct array edits refresh")
         }
-    }
+            testRunner("Color Picker - Samples The Pixel Under The Pointer In sRGB") {
+            // 20x10 sRGB image, all #102030 except image pixel (3, 1) (top-left origin) which is #FFDD00
+            let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
+            let ctx = CGContext(data: nil, width: 20, height: 10, bitsPerComponent: 8, bytesPerRow: 0, space: srgb, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            ctx.setFillColor(CGColor(colorSpace: srgb, components: [16.0 / 255, 32.0 / 255, 48.0 / 255, 1])!)
+            ctx.fill(CGRect(x: 0, y: 0, width: 20, height: 10))
+            ctx.setFillColor(CGColor(colorSpace: srgb, components: [1, 221.0 / 255, 0, 1])!)
+            ctx.fill(CGRect(x: 3, y: 10 - 1 - 1, width: 1, height: 1))
+            let image = ctx.makeImage()!
+
+            let hit = PixelSample.sample(image, x: 3, y: 1, columns: 9, rows: 5)
+            assert(hit?.hex == "#FFDD00", "Center pixel hex, got \(String(describing: hit?.hex))")
+            assert(hit?.patch.width == 9 && hit?.patch.height == 5, "Patch is columns x rows")
+            assert(PixelSample.sample(image, x: 4, y: 1, columns: 9, rows: 5)?.hex == "#102030", "Neighbor pixel hex")
+            assert(PixelSample.sample(image, x: 0, y: 0, columns: 9, rows: 5)?.hex == "#102030", "Corner pixel samples despite the patch hanging off the image")
+            assert(PixelSample.sample(image, x: -1, y: 0, columns: 9, rows: 5)?.hex == nil, "Outside the image there is no color")
+            assert(PixelSample.sample(image, x: 20, y: 9, columns: 9, rows: 5)?.hex == nil, "Past the right edge there is no color")
+            assert(PixelSample.sample(image, x: 500, y: 500, columns: 9, rows: 5) != nil, "Far outside still yields an empty patch")
+        }
+        testRunner("Color Picker - Canvas Pointer Feeds The Toolbar Readout And Copies The Hex") {
+            let doc = EditorDocument(image: solidImage(300, 200, gray: 1.0))
+            let panel = EditorPanel(document: doc, title: "picker.png")
+            panel.setContentSize(NSSize(width: 1400, height: 600))
+            panel.toolbarView.layoutSubtreeIfNeeded()
+            panel.toolbarView.layout()
+            guard let readout = panel.toolbarView.colorReadoutView else {
+                assert(false, "Toolbar has a color readout"); return
+            }
+            assert(readout.isHidden == false, "Readout is visible in a wide window")
+            assert(readout.hex == nil, "No color before the pointer reaches the image")
+
+            panel.canvasView.trackPointerPixel(at: CGPoint(x: 10.5, y: 20.5))
+            assert(readout.hex == "#FFFFFF", "Readout shows the pixel under the pointer, got \(String(describing: readout.hex))")
+            assert(readout.loupeView.patch != nil, "Loupe shows the neighborhood")
+
+            let previousClipboard = NSPasteboard.general.string(forType: .string)
+            panel.copyPickedColor()
+            assert(NSPasteboard.general.string(forType: .string) == "#FFFFFF", "Tab copies the hex")
+            if let previousClipboard = previousClipboard {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(previousClipboard, forType: .string)
+            }
+
+            panel.canvasView.trackPointerPixel(at: CGPoint(x: -5, y: 20))
+            assert(readout.hex == nil, "Off the image there is no color to copy")
+
+            panel.toolbarView.frame.size.width = 700
+            panel.toolbarView.layout()
+            assert(readout.isHidden == true, "The readout gives way to tools in a narrow toolbar")
+            withoutClipboard { panel.close() }
+        }
+        testRunner("Arrow - The Bend Handle Stays On The Arrow And Empty Space Never Grows The Canvas") {
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let arrow = ArrowLayer(start: CGPoint(x: 100, y: 150), end: CGPoint(x: 300, y: 150), strokeWidth: 4)
+            doc.addLayer(arrow)
+            // Pull the bend handle close to the top edge: the curve follows it exactly
+            arrow.updateHandle(index: 1, to: CGPoint(x: 200, y: 30))
+            doc.computeElasticBounds()
+            assert(abs(arrow.bendHandle.x - 200) < 0.001 && abs(arrow.bendHandle.y - 30) < 0.001, "The handle is where it was dragged")
+            let path = arrow.pathForArrow().copy(strokingWithWidth: 2, lineCap: .round, lineJoin: .round, miterLimit: 10)
+            assert(path.contains(arrow.bendHandle) || arrow.pathForArrow().contains(arrow.bendHandle), "The bend handle lies on the drawn arrow")
+            // The Bezier control point is far above the image (y = -90); only the drawn curve may matter
+            assert(arrow.control.y < 0, "Control point sits off the curve, outside the image")
+            assert(doc.activeCanvasBounds == doc.originalImageBounds, "The canvas must not grow for empty space beyond the curve, got \(doc.activeCanvasBounds)")
+            assert(!arrow.getBoundingBox().contains(arrow.control), "Bounding box excludes the off-curve control point")
+            // Moving the ends keeps the bend's shape and the handle on the curve
+            arrow.updateHandle(index: 2, to: CGPoint(x: 350, y: 200))
+            let mid = arrow.bendHandle
+            let onCurve = CGPoint(x: 0.25 * arrow.start.x + 0.5 * arrow.control.x + 0.25 * arrow.end.x, y: 0.25 * arrow.start.y + 0.5 * arrow.control.y + 0.25 * arrow.end.y)
+            assert(abs(mid.x - onCurve.x) < 0.001 && abs(mid.y - onCurve.y) < 0.001, "Handle stays at the curve's midpoint")
+        }
+            testRunner("Toolbar - Undo, Open, Copy, Save And Always On Top Live In The Actions Menu") {
+            let doc = EditorDocument(image: solidImage(300, 200))
+            let canvas = EditorCanvasView(document: doc)
+            let toolbar = EditorToolbarView(canvasView: canvas)
+            toolbar.frame = NSRect(x: 0, y: 0, width: 900, height: 44)
+            toolbar.layout()
+            let stack = toolbar.contentStackView!
+            assert(stack.arrangedSubviews.last === toolbar.actionsMenuButton, "The actions menu is the rightmost item")
+            let titles = toolbar.buildActionsMenu().items.filter { !$0.isSeparatorItem }.map { $0.title }
+            assert(titles == ["Undo", "Open Image…", "Copy", "Save", "Always on Top"], "Menu items, got \(titles)")
+
+            var opened = 0, saved = 0, copied = 0, pins: [Bool] = []
+            toolbar.onOpenRequested = { opened += 1 }
+            toolbar.onSaveRequested = { saved += 1 }
+            toolbar.onCopyRequested = { copied += 1 }
+            toolbar.onPinToggle = { pins.append($0) }
+            let menu = toolbar.buildActionsMenu()
+            for title in ["Open Image…", "Save", "Copy", "Always on Top"] {
+                let item = menu.item(withTitle: title)!
+                _ = (item.target as AnyObject).perform(item.action, with: item)
+            }
+            assert(opened == 1 && saved == 1 && copied == 1, "Menu items fire their actions")
+            assert(pins == [true] && toolbar.isPinned, "Always on Top pins the window")
+            assert(toolbar.buildActionsMenu().item(withTitle: "Always on Top")?.state == .on, "Pinned shows a checkmark")
+            assert(toolbar.actionsMenuButton?.isActive == true, "The ⋯ button shows the window is pinned")
+            toolbar.togglePinned()
+            assert(pins == [true, false] && toolbar.buildActionsMenu().item(withTitle: "Always on Top")?.state == .off, "Unpins")
+
+            doc.addLayer(RectangleLayer(rect: CGRect(x: 10, y: 10, width: 50, height: 40)))
+            toolbar.performUndoAction()
+            assert(doc.layers.isEmpty, "Undo from the menu undoes")
+        }
+}
 }

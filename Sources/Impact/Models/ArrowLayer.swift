@@ -29,6 +29,23 @@ public final class ArrowLayer: AnnotationLayer {
 
     public var relativeControl: (u: CGFloat, v: CGFloat) = (u: 0.5, v: 0.0)
 
+    /// The bend handle: the curve's midpoint, always on the arrow. The Bezier `control` point itself sits
+    /// off the curve (twice as far from the chord), so it is never shown and never grows the canvas.
+    public var bendHandle: CGPoint {
+        CGPoint(
+            x: 0.25 * start.x + 0.5 * control.x + 0.25 * end.x,
+            y: 0.25 * start.y + 0.5 * control.y + 0.25 * end.y
+        )
+    }
+
+    /// The control point that puts the curve's midpoint at `point`
+    public func control(forBendHandleAt point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: 2.0 * point.x - (start.x + end.x) / 2.0,
+            y: 2.0 * point.y - (start.y + end.y) / 2.0
+        )
+    }
+
     // MARK: - Fast Performance Caches
     private var _cachedBoundingBox: CGRect?
     private var _cachedPath: CGPath?
@@ -86,10 +103,11 @@ public final class ArrowLayer: AnnotationLayer {
         let padding = max(strokeWidth * 2.0 + 8.0, 16.0)
         let box: CGRect
         if bounds.isNull || bounds.isEmpty || bounds.isInfinite {
-            let minX = min(start.x, end.x, control.x)
-            let minY = min(start.y, end.y, control.y)
-            let maxX = max(start.x, end.x, control.x)
-            let maxY = max(start.y, end.y, control.y)
+            let handle = bendHandle
+            let minX = min(start.x, end.x, handle.x)
+            let minY = min(start.y, end.y, handle.y)
+            let maxX = max(start.x, end.x, handle.x)
+            let maxY = max(start.y, end.y, handle.y)
             box = CGRect(
                 x: minX - padding,
                 y: minY - padding,
@@ -100,7 +118,8 @@ public final class ArrowLayer: AnnotationLayer {
             var b = bounds.insetBy(dx: -padding, dy: -padding)
             b = b.union(CGRect(x: start.x - padding, y: start.y - padding, width: padding * 2, height: padding * 2))
             b = b.union(CGRect(x: end.x - padding, y: end.y - padding, width: padding * 2, height: padding * 2))
-            b = b.union(CGRect(x: control.x - padding, y: control.y - padding, width: padding * 2, height: padding * 2))
+            let handle = bendHandle // on the curve: covers its handle without reaching into empty space
+            b = b.union(CGRect(x: handle.x - padding, y: handle.y - padding, width: padding * 2, height: padding * 2))
             box = b
         }
         _cachedBoundingBox = box
@@ -117,7 +136,7 @@ public final class ArrowLayer: AnnotationLayer {
     }
 
     public func hitTestHandle(point: CGPoint, radius: CGFloat = 8.0) -> Int? {
-        nearestHandle([start, control, end], to: point, radius: radius)
+        nearestHandle([start, bendHandle, end], to: point, radius: radius)
     }
 
     public func move(by delta: CGPoint) {
@@ -138,7 +157,7 @@ public final class ArrowLayer: AnnotationLayer {
                 y: start.y + relativeControl.u * dy + relativeControl.v * dx
             )
         case 1:
-            control = point
+            control = control(forBendHandleAt: point)
             updateRelativeControl()
         case 2:
             end = point

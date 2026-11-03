@@ -726,6 +726,23 @@ public final class EditorPanel: NSPanel {
             self.canvasView.copyCompositionToClipboard()
             self.showCopiedToClipboardToast()
         }
+
+        toolbarView.onPickedColorCopyRequested = { [weak self] in // a click on the color readout
+            self?.copyPickedColor()
+        }
+    }
+
+    /// Tab or a click on the color readout: copies the hex of the color under the pointer
+    public func copyPickedColor() {
+        guard hasImage, let hex = toolbarView.colorReadoutView?.hex else {
+            NSSound.beep()
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(hex, forType: .string)
+        guard let container = contentView else { return }
+        EditorToastView.show(in: container, below: toolbarView, text: "Copied \(hex)")
     }
 
     public func showCopiedToClipboardToast() {

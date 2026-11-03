@@ -601,19 +601,19 @@ public final class EditorToolbarView: NSVisualEffectView {
     public internal(set) var singleColorButton: ModernSingleColorButton?
     public internal(set) var colorStackView: NSStackView?
     public internal(set) var toolsSeparatorView: NSView?
+    /// Fixed-width slot left of the tools holding the color swatch and its separator
+    public internal(set) var colorSlotView: NSView?
     public internal(set) var zoomSeparatorView: NSView?
     public internal(set) var zoomContainerView: NSView?
-    public internal(set) var zoomOutButton: ModernToolbarButton?
     public internal(set) var zoomPercentButton: ModernToolbarButton?
-    public internal(set) var zoomInButton: ModernToolbarButton?
     public internal(set) var zoomFitButton: ModernToolbarButton?
     public internal(set) var zoomResetButton: ModernToolbarButton?
     public internal(set) var actionSeparatorView: NSView?
-    public internal(set) var undoButton: ModernToolbarButton?
-    public internal(set) var openButton: ModernToolbarButton?
-    public internal(set) var copyButton: ModernToolbarButton?
-    public internal(set) var saveButton: ModernToolbarButton?
-    public internal(set) var pinButton: ModernToolbarButton?
+    /// "⋯" at the right edge: Undo, Open, Copy, Save and Always on Top
+    public internal(set) var actionsMenuButton: ModernToolbarButton?
+    public internal(set) var colorReadoutView: ColorPickerReadoutView?
+    /// Arranged views to ignore when measuring free space (the flexible spacer)
+    private var toolbarSpacerView: NSView?
 
     public static let predefinedSwatches: [(hex: String, name: String)] = [
         ("#FF3B30", "Red"),
@@ -636,8 +636,9 @@ public final class EditorToolbarView: NSVisualEffectView {
     public var onZoomResetRequested: (() -> Void)?
     public var onZoomFitRequested: (() -> Void)?
     public var onZoomSetRequested: ((CGFloat) -> Void)?
+    public var onPickedColorCopyRequested: (() -> Void)?
 
-    private var isPinned: Bool = false
+    public private(set) var isPinned: Bool = false
     public let metaLabel = NSTextField(labelWithString: "")
 
     public internal(set) var contentStackView: NSStackView?
@@ -654,6 +655,10 @@ public final class EditorToolbarView: NSVisualEffectView {
 
         canvasView.document.onSelectionChanged = { [weak self] in
             self?.updateSelectedToolVisuals()
+        }
+        canvasView.onPointerPixelChanged = { [weak self] x, y in
+            guard let self = self, let canvas = self.canvasView else { return }
+            self.colorReadoutView?.showSample(of: canvas.document.originalImage, x: x, y: y)
         }
 
         setupMenubar()
@@ -700,6 +705,41 @@ public final class EditorToolbarView: NSVisualEffectView {
         self.contentStackView = stack
         let initialW = max(0, bounds.width - 76 - 14)
         stack.frame = NSRect(x: 76, y: 0, width: initialW, height: bounds.height)
+
+        // 0. Active color swatch, left of the tools, then a separator. They sit in a fixed-width slot so the
+        // tools never shift when the swatch hides (Select and Blur have no color)
+        let initialHex = canvasView?.document.activeColor ?? "#FF3B30"
+        let singleBtn = ModernSingleColorButton(initialColor: initialHex)
+        singleBtn.onAction = { [weak self] in
+            self?.showColorPopout()
+        }
+        self.singleColorButton = singleBtn
+
+        let colorStack = NSStackView()
+        colorStack.orientation = .horizontal
+        colorStack.alignment = .centerY
+        colorStack.spacing = 0
+        colorStack.translatesAutoresizingMaskIntoConstraints = false
+        colorStack.addArrangedSubview(singleBtn)
+        self.colorStackView = colorStack
+
+        let toolsSep = createSeparator()
+        self.toolsSeparatorView = toolsSep
+
+        let colorSlot = NSView()
+        colorSlot.translatesAutoresizingMaskIntoConstraints = false
+        colorSlot.addSubview(colorStack)
+        colorSlot.addSubview(toolsSep)
+        NSLayoutConstraint.activate([
+            colorSlot.widthAnchor.constraint(equalToConstant: 30 + 3 + 12),
+            colorSlot.heightAnchor.constraint(equalToConstant: 30),
+            colorStack.leadingAnchor.constraint(equalTo: colorSlot.leadingAnchor),
+            colorStack.centerYAnchor.constraint(equalTo: colorSlot.centerYAnchor),
+            toolsSep.trailingAnchor.constraint(equalTo: colorSlot.trailingAnchor),
+            toolsSep.centerYAnchor.constraint(equalTo: colorSlot.centerYAnchor)
+        ])
+        self.colorSlotView = colorSlot
+        stack.addArrangedSubview(colorSlot)
 
         // 1. Tool buttons: Select [V] (ALWAYS VISIBLE)
         let selectBtn = ModernToolbarButton(image: ModernToolbarButton.ufoPointerIcon, tooltip: "Select / Crop [V]")
@@ -759,30 +799,13 @@ public final class EditorToolbarView: NSVisualEffectView {
             zoomCapsule.heightAnchor.constraint(equalToConstant: 26)
         ])
 
-        let zoomOutBtn = ModernToolbarButton(systemName: "minus", tooltip: "Zoom Out [Cmd -]", size: NSSize(width: 24, height: 26), pointSize: 11.0, isSegment: true)
-        zoomOutBtn.onAction = { [weak self] in
-            self?.onZoomOutRequested?()
-        }
-        self.zoomOutButton = zoomOutBtn
-        zoomStack.addArrangedSubview(zoomOutBtn)
-
-        zoomStack.addArrangedSubview(createSegmentDivider())
-
-        let zoomPercentBtn = ModernToolbarButton(text: "100%", tooltip: "Zoom Presets", size: NSSize(width: 44, height: 26), isSegment: true)
+        // Only the current zoom shows; Zoom In / Zoom Out live in its menu with the presets
+        let zoomPercentBtn = ModernToolbarButton(text: "100%", tooltip: "Zoom", size: NSSize(width: 48, height: 26), isSegment: true)
         zoomPercentBtn.onAction = { [weak self] in
             self?.showZoomPresetsMenu()
         }
         self.zoomPercentButton = zoomPercentBtn
         zoomStack.addArrangedSubview(zoomPercentBtn)
-
-        zoomStack.addArrangedSubview(createSegmentDivider())
-
-        let zoomInBtn = ModernToolbarButton(systemName: "plus", tooltip: "Zoom In [Cmd +]", size: NSSize(width: 24, height: 26), pointSize: 11.0, isSegment: true)
-        zoomInBtn.onAction = { [weak self] in
-            self?.onZoomInRequested?()
-        }
-        self.zoomInButton = zoomInBtn
-        zoomStack.addArrangedSubview(zoomInBtn)
 
         self.zoomContainerView = zoomCapsule
         stack.addArrangedSubview(zoomCapsule)
@@ -791,76 +814,29 @@ public final class EditorToolbarView: NSVisualEffectView {
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         stack.addArrangedSubview(spacer)
+        self.toolbarSpacerView = spacer
 
-        // 3. Right-aligned Single color picker button
-        let initialHex = canvasView?.document.activeColor ?? "#FF3B30"
-        let singleBtn = ModernSingleColorButton(initialColor: initialHex)
-        singleBtn.onAction = { [weak self] in
-            self?.showColorPopout()
+        // Always-on color picker readout: loupe, swatch, hex and "tab to copy"
+        let readout = ColorPickerReadoutView(frame: .zero)
+        readout.onCopyRequested = { [weak self] in
+            self?.onPickedColorCopyRequested?()
         }
-        self.singleColorButton = singleBtn
+        self.colorReadoutView = readout
+        stack.addArrangedSubview(readout)
+        stack.setCustomSpacing(8.0, after: readout)
 
-        let colorStack = NSStackView()
-        colorStack.orientation = .horizontal
-        colorStack.alignment = .centerY
-        colorStack.spacing = 0
-        colorStack.addArrangedSubview(singleBtn)
-        self.colorStackView = colorStack
-        stack.addArrangedSubview(colorStack)
-
-        // Tools Separator (separates color swatch from action buttons)
-        let toolsSep = createSeparator()
-        self.toolsSeparatorView = toolsSep
-        stack.addArrangedSubview(toolsSep)
-
-        // Action Separator (separates spacer from action buttons when color swatch is hidden)
+        // Action Separator (separates the color readout from the action buttons)
         let actionSep = createSeparator()
         self.actionSeparatorView = actionSep
         stack.addArrangedSubview(actionSep)
 
-        // 4. Action Buttons: Undo [Cmd Z], Open [Cmd O], Copy [Cmd C], Save [Cmd S], Pin Window (Always on Top)
-        let undoBtn = ModernToolbarButton(systemName: "arrow.uturn.backward", tooltip: "Undo [Cmd Z]", pointSize: 12.0)
-        undoBtn.onAction = { [weak self] in
-            self?.canvasView?.performUndo()
+        // 4. Actions (Undo, Open, Copy, Save, Always on Top) live in a "⋯" menu at the right edge
+        let actionsBtn = ModernToolbarButton(systemName: "ellipsis", tooltip: "More Actions", pointSize: 13.0)
+        actionsBtn.onAction = { [weak self] in
+            self?.showActionsMenu()
         }
-        self.undoButton = undoBtn
-        stack.addArrangedSubview(undoBtn)
-
-        let openBtn = ModernToolbarButton(systemName: "folder", tooltip: "Open Image… [Cmd O]", pointSize: 12.0)
-        openBtn.onAction = { [weak self] in
-            self?.onOpenRequested?()
-        }
-        self.openButton = openBtn
-        stack.addArrangedSubview(openBtn)
-
-        let copyBtn = ModernToolbarButton(systemName: "doc.on.doc", tooltip: "Copy [Cmd C]", pointSize: 12.0)
-        copyBtn.onAction = { [weak self] in
-            if let onCopy = self?.onCopyRequested {
-                onCopy() // the panel copies and shows the toast
-            } else {
-                self?.canvasView?.copyCompositionToClipboard()
-            }
-        }
-        self.copyButton = copyBtn
-        stack.addArrangedSubview(copyBtn)
-
-        let saveBtn = ModernToolbarButton(systemName: "square.and.arrow.down", tooltip: "Save [Cmd S]", pointSize: 12.0)
-        saveBtn.onAction = { [weak self] in
-            self?.onSaveRequested?()
-        }
-        self.saveButton = saveBtn
-        stack.addArrangedSubview(saveBtn)
-
-        let pinBtn = ModernToolbarButton(systemName: "pin", tooltip: "Always on Top", pointSize: 12.0)
-        pinBtn.onAction = { [weak self] in
-            guard let self = self else { return }
-            self.isPinned.toggle()
-            self.pinButton?.isActive = self.isPinned
-            self.pinButton?.setIcon(systemName: self.isPinned ? "pin.fill" : "pin", pointSize: 12.0)
-            self.onPinToggle?(self.isPinned)
-        }
-        self.pinButton = pinBtn
-        stack.addArrangedSubview(pinBtn)
+        self.actionsMenuButton = actionsBtn
+        stack.addArrangedSubview(actionsBtn)
 
         updateSelectedToolVisuals()
         updateSelectedColorVisuals()
@@ -873,59 +849,54 @@ public final class EditorToolbarView: NSVisualEffectView {
 
         // Progressive collapsing based directly on window width:
         // 1. Zoom controls (Zoom capsule)
-        let showZoom = (totalW >= 740.0)
+        let showZoom = (totalW >= 562.0)
         zoomContainerView?.isHidden = !showZoom
-        zoomOutButton?.isHidden = !showZoom
         zoomPercentButton?.isHidden = !showZoom
-        zoomInButton?.isHidden = !showZoom
         zoomSeparatorView?.isHidden = !showZoom
 
         // 2. Single color picker & tools separator
         updateColorVisibility()
-        let isColorVisible = (colorStackView?.isHidden == false)
 
-        // 3. Undo button & action separator
-        let showUndo = (totalW >= 400.0)
-        undoButton?.isHidden = !showUndo
-        actionSeparatorView?.isHidden = isColorVisible || !showUndo
+        // 3. Separator before the actions menu
+        actionSeparatorView?.isHidden = false
 
         // 4. Collapsible tools (Arrow, Line, Rectangle, Oval, Spotlight, Counter, Callout, Text, Pen, Highlighter, Blur, Ruler)
         // Calibrated from the measured layout so each rung adds exactly one tool and nothing is ever clipped.
         // Every tool slot is a 30pt button plus 3pt stack spacing (33pt). Rungs assume the widest case
-        // (color picker and Undo visible, overflow shown): 481pt of fixed chrome with zoom, 369pt without.
+        // (color swatch visible, overflow shown): 303pt of fixed chrome with zoom, 237pt without.
         // All 12 tools need one extra slot over 11 so Ruler collapses on its own rung (the overflow
-        // button takes its place). Below the 740pt zoom cutoff the count stays capped at 7 so tools
+        // button takes its place). Below the 562pt zoom cutoff the count stays capped at 8 so tools
         // never reappear when the zoom capsule hides.
         let totalCount = collapsibleToolDefinitions.count
         let visibleCount: Int
-        if totalW >= 877.0 {
+        if totalW >= 699.0 {
             visibleCount = totalCount // All 13 tools visible, overflow button hidden
-        } else if totalW >= 844.0 {
+        } else if totalW >= 666.0 {
             visibleCount = 12 // Ruler in dropdown
-        } else if totalW >= 811.0 {
+        } else if totalW >= 633.0 {
             visibleCount = 11 // Ruler, Blur in dropdown
-        } else if totalW >= 778.0 {
-            visibleCount = 10 // Ruler, Blur, Highlighter in dropdown
-        } else if totalW >= 745.0 {
-            visibleCount = 9 // Ruler, Blur, Highlighter, Pen in dropdown, Text visible
         } else if totalW >= 600.0 {
-            visibleCount = 8 // Text in dropdown, Callout visible (zoom capsule hidden below 740pt)
+            visibleCount = 10 // Ruler, Blur, Highlighter in dropdown
         } else if totalW >= 567.0 {
-            visibleCount = 7 // Callout in dropdown, Counter visible
-        } else if totalW >= 534.0 {
-            visibleCount = 6
-        } else if totalW >= 501.0 {
-            visibleCount = 5
+            visibleCount = 9 // Ruler, Blur, Highlighter, Pen in dropdown, Text visible
         } else if totalW >= 468.0 {
-            visibleCount = 4
+            visibleCount = 8 // Text in dropdown, Callout visible (zoom capsule hidden below 562pt)
         } else if totalW >= 435.0 {
-            visibleCount = 3
+            visibleCount = 7 // Callout in dropdown, Counter visible
         } else if totalW >= 402.0 {
-            visibleCount = 2
+            visibleCount = 6
         } else if totalW >= 369.0 {
+            visibleCount = 5
+        } else if totalW >= 336.0 {
+            visibleCount = 4
+        } else if totalW >= 303.0 {
+            visibleCount = 3
+        } else if totalW >= 270.0 {
+            visibleCount = 2
+        } else if totalW >= 237.0 {
             visibleCount = 1
         } else {
-            visibleCount = 0 // Below 369pt: only Select and the overflow button remain
+            visibleCount = 0 // Below 237pt: only Select and the overflow button remain
         }
 
         if visibleCount >= totalCount {
@@ -940,16 +911,88 @@ public final class EditorToolbarView: NSVisualEffectView {
             }
         }
 
-        // Pointer, Open, Copy, Save, Pin are strictly always visible
+        // Pointer and the actions menu are strictly always visible
         toolButtons[.select]?.isHidden = false
-        openButton?.isHidden = false
-        copyButton?.isHidden = false
-        saveButton?.isHidden = false
-        pinButton?.isHidden = false
+        actionsMenuButton?.isHidden = false
 
         updateSelectedToolVisuals()
+        updateColorReadoutVisibility()
         contentStackView?.layoutSubtreeIfNeeded()
     }
+
+    /// The color readout takes only space the spacer would leave empty: it gives way to tools and actions
+    func updateColorReadoutVisibility() {
+        guard let readout = colorReadoutView, let stack = contentStackView else { return }
+        let others = stack.arrangedSubviews.filter { $0 !== readout && !$0.isHidden }
+        let used = others.reduce(CGFloat(0)) { sum, view in
+            view === toolbarSpacerView ? sum : sum + view.fittingSize.width
+        } + stack.spacing * CGFloat(max(0, others.count - 1))
+        let needed = ColorPickerReadoutView.preferredWidth + stack.spacing + 8.0
+        readout.isHidden = stack.frame.width - used < needed
+    }
+
+    // MARK: - Actions Menu ("⋯")
+
+    public func buildActionsMenu() -> NSMenu {
+        let menu = NSMenu(title: "Actions")
+        menu.autoenablesItems = false
+        func add(_ title: String, _ symbol: String, _ key: String, _ action: Selector) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.target = self
+            item.keyEquivalentModifierMask = key.isEmpty ? [] : [.command]
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)?.withSymbolConfiguration(config)
+            menu.addItem(item)
+            return item
+        }
+        _ = add("Undo", "arrow.uturn.backward", "z", #selector(actionsUndoSelected(_:)))
+        menu.addItem(.separator())
+        _ = add("Open Image…", "folder", "o", #selector(actionsOpenSelected(_:)))
+        _ = add("Copy", "doc.on.doc", "c", #selector(actionsCopySelected(_:)))
+        _ = add("Save", "square.and.arrow.down", "s", #selector(actionsSaveSelected(_:)))
+        menu.addItem(.separator())
+        let pin = add("Always on Top", isPinned ? "pin.fill" : "pin", "", #selector(actionsPinSelected(_:)))
+        pin.state = isPinned ? .on : .off
+        return menu
+    }
+
+    public func showActionsMenu() {
+        guard let btn = actionsMenuButton else { return }
+        let menu = buildActionsMenu()
+        menu.popUp(positioning: nil, at: NSPoint(x: btn.bounds.maxX - menu.size.width, y: btn.bounds.minY - 4), in: btn)
+    }
+
+    public func performUndoAction() {
+        canvasView?.performUndo()
+    }
+
+    public func performOpenAction() {
+        onOpenRequested?()
+    }
+
+    public func performCopyAction() {
+        if let onCopy = onCopyRequested {
+            onCopy() // the panel copies and shows the toast
+        } else {
+            canvasView?.copyCompositionToClipboard()
+        }
+    }
+
+    public func performSaveAction() {
+        onSaveRequested?()
+    }
+
+    public func togglePinned() {
+        isPinned.toggle()
+        actionsMenuButton?.isActive = isPinned // the "⋯" button shows the window is pinned
+        onPinToggle?(isPinned)
+    }
+
+    @objc private func actionsUndoSelected(_ sender: NSMenuItem) { performUndoAction() }
+    @objc private func actionsOpenSelected(_ sender: NSMenuItem) { performOpenAction() }
+    @objc private func actionsCopySelected(_ sender: NSMenuItem) { performCopyAction() }
+    @objc private func actionsSaveSelected(_ sender: NSMenuItem) { performSaveAction() }
+    @objc private func actionsPinSelected(_ sender: NSMenuItem) { togglePinned() }
 
     public func buildOverflowMenu() -> NSMenu {
         let menu = NSMenu(title: "Tools")
@@ -1022,16 +1065,6 @@ public final class EditorToolbarView: NSVisualEffectView {
         return sepContainer
     }
 
-    private func createSegmentDivider() -> NSView {
-        let div = ThemedLayerView(fill: ImpactTheme.separator)
-        div.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            div.widthAnchor.constraint(equalToConstant: 1),
-            div.heightAnchor.constraint(equalToConstant: 16)
-        ])
-        return div
-    }
-
     public func showZoomPresetsMenu() {
         guard let btn = zoomPercentButton else { return }
         let menu = buildZoomPresetsMenu()
@@ -1045,6 +1078,18 @@ public final class EditorToolbarView: NSVisualEffectView {
 
         let currentMag = canvasView?.zoomScale ?? 1.0
         let currentPercent = Int(round(currentMag * 100))
+
+        let zoomInItem = NSMenuItem(title: "Zoom In", action: #selector(zoomInSelected(_:)), keyEquivalent: "+")
+        zoomInItem.keyEquivalentModifierMask = [.command]
+        zoomInItem.target = self
+        menu.addItem(zoomInItem)
+
+        let zoomOutItem = NSMenuItem(title: "Zoom Out", action: #selector(zoomOutSelected(_:)), keyEquivalent: "-")
+        zoomOutItem.keyEquivalentModifierMask = [.command]
+        zoomOutItem.target = self
+        menu.addItem(zoomOutItem)
+
+        menu.addItem(NSMenuItem.separator())
 
         let fitItem = NSMenuItem(title: "Best Fit", action: #selector(zoomPresetFitSelected(_:)), keyEquivalent: "1")
         fitItem.keyEquivalentModifierMask = [.command]
@@ -1069,6 +1114,14 @@ public final class EditorToolbarView: NSVisualEffectView {
         }
 
         return menu
+    }
+
+    @objc private func zoomInSelected(_ sender: NSMenuItem) {
+        onZoomInRequested?()
+    }
+
+    @objc private func zoomOutSelected(_ sender: NSMenuItem) {
+        onZoomOutRequested?()
     }
 
     @objc private func zoomPresetFitSelected(_ sender: NSMenuItem) {
@@ -1106,15 +1159,18 @@ public final class EditorToolbarView: NSVisualEffectView {
     }
 
     public func updateColorVisibility() {
+        // The swatch is always shown (it sets the color the next annotation gets); only very narrow
+        // windows drop it to make room
         let totalW = bounds.width
-        let visible = shouldShowColorPicker && (totalW >= 340.0 || totalW == 0)
+        let visible = (totalW >= 340.0 || totalW == 0)
+        colorSlotView?.isHidden = !visible
         colorStackView?.isHidden = !visible
         toolsSeparatorView?.isHidden = !visible
-        let showUndo = (totalW >= 420.0 || totalW == 0)
-        actionSeparatorView?.isHidden = visible || !showUndo
+        actionSeparatorView?.isHidden = false
         if !visible {
             colorPopover?.close()
         }
+        updateColorReadoutVisibility()
     }
 
     public func showColorPopout() {

@@ -25,6 +25,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private var canvasTrackingArea: NSTrackingArea?
     private var currentMouseCanvasPoint: CGPoint?
 
+    /// The color picker follows the image pixel under the pointer (top-left origin); fires only when it changes
+    public var onPointerPixelChanged: ((Int, Int) -> Void)?
+    private var lastPointerPixel: (x: Int, y: Int)?
+
     // Crop selection (Select tool): dragging on empty canvas draws it; Enter crops, Esc or a click outside removes it
     public private(set) var cropSelection: CGRect?
     private enum CropGesture {
@@ -392,7 +396,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             } else if let ellipseLayer = layer as? EllipseLayer {
                 handlePoints = ellipseLayer.getHandlePoints()
             } else if let arrow = layer as? ArrowLayer {
-                handlePoints = [arrow.start, arrow.control, arrow.end]
+                handlePoints = [arrow.start, arrow.bendHandle, arrow.end]
             } else if let line = layer as? LineLayer {
                 handlePoints = [line.start, line.end]
             } else if let dim = layer as? DimensionLayer {
@@ -758,6 +762,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
 
     override public func mouseDragged(with event: NSEvent) {
         let point = canvasPoint(from: event)
+        trackPointerPixel(at: point)
         // A pending edit click stays a click until it moves more than 3 pt; the callout only
         // starts moving then, so a click that edits leaves the layer untouched
         if pendingEditCallout != nil {
@@ -1049,10 +1054,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     private func repaintArea(for layer: AnnotationLayer?) -> CGRect? {
         guard let layer = layer else { return nil }
         if let filter = layer as? FilterLayer, filter.filterMode == .spotlight { return nil }
-        var area = layer.getBoundingBox()
-        if let arrow = layer as? ArrowLayer {
-            area = area.union(CGRect(origin: arrow.control, size: .zero)) // the curve handle can sit off the curve
-        }
+        let area = layer.getBoundingBox() // includes an arrow's bend handle, which sits on the curve
         return area.insetBy(dx: -20, dy: -20)
     }
 
@@ -1250,7 +1252,33 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     override public func mouseEntered(with event: NSEvent) {
-        moveBrushPreview(to: canvasPoint(from: event))
+        let point = canvasPoint(from: event)
+        moveBrushPreview(to: point)
+        trackPointerPixel(at: point)
+    }
+
+    /// Reports the image pixel under `point` to the color picker
+    func trackPointerPixel(at point: CGPoint) {
+        let origin = document.originalImageBounds.origin
+        let x = Int(floor(point.x - origin.x))
+        let y = Int(floor(point.y - origin.y))
+        if let last = lastPointerPixel, last.x == x, last.y == y { return }
+        lastPointerPixel = (x, y)
+        onPointerPixelChanged?(x, y)
+    }
+
+    /// Re-samples after scrolling or zooming moved the image under a still pointer
+    func trackPointerPixelAtCurrentMouseLocation() {
+        guard let window = window else { return }
+        let viewPoint = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        guard visibleRect.contains(viewPoint) else { return }
+        let origin = document.activeCanvasBounds.origin
+        trackPointerPixel(at: CGPoint(x: viewPoint.x + origin.x, y: viewPoint.y + origin.y))
+    }
+
+    /// Tab: copies the hex of the color under the pointer
+    public func copyPickedColor() {
+        (window as? EditorPanel)?.copyPickedColor()
     }
 
     override public func mouseExited(with event: NSEvent) {
@@ -1261,6 +1289,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     override public func mouseMoved(with event: NSEvent) {
         let point = canvasPoint(from: event)
         moveBrushPreview(to: point)
+        trackPointerPixel(at: point)
         let newlyHovered = document.layersTopToBottom().first { layer in
             layer.contains(point: point) || layer.hitTestHandle(point: point) != nil
         }
@@ -1929,6 +1958,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             handleEscapeKey()
             return
         }
+        if event.keyCode == 48, event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty { // Tab
+            copyPickedColor()
+            return
+        }
         if (event.keyCode == 36 || event.keyCode == 76), commitCropSelection() { // Return / keypad Enter
             return
         }
@@ -2068,6 +2101,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
             sv.setMagnification(newMag, centeredAt: anchor)
             zoomScale = sv.magnification
             (window as? EditorPanel)?.updateMetaLabel()
+            trackPointerPixelAtCurrentMouseLocation()
         } else {
             super.magnify(with: event)
         }
@@ -2078,9 +2112,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     override public func scrollWheel(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
             handleZoomWheel(with: event)
-            return
+        } else {
+            super.scrollWheel(with: event)
         }
-        super.scrollWheel(with: event)
+        trackPointerPixelAtCurrentMouseLocation()
     }
 
     public func handleZoomWheel(with event: NSEvent) {
