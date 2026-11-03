@@ -1698,8 +1698,7 @@ public enum EditorTests {
             assert(panel.toolbarView.zoomPercentButton != nil, "Toolbar must have zoomPercentButton")
             let zoomMenu = panel.toolbarView.buildZoomPresetsMenu()
             assert(zoomMenu.item(withTitle: "Zoom In") != nil && zoomMenu.item(withTitle: "Zoom Out") != nil, "Zoom In / Zoom Out live in the zoom menu")
-            assert(panel.toolbarView.zoomContainerView?.subviews.first?.subviews.count == 1, "The zoom capsule shows only the current zoom")
-            assert(panel.toolbarView.zoomContainerView != nil, "Toolbar must have compact zoomContainerView")
+            assert(panel.toolbarView.zoomContainerView === panel.toolbarView.zoomPercentButton, "The toolbar shows only the current zoom, without a capsule")
 
             // Test Zoom In button
             let magBeforeIn = sv.magnification

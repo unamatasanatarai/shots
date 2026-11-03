@@ -777,38 +777,16 @@ public final class EditorToolbarView: NSVisualEffectView {
         self.zoomSeparatorView = zoomSep
         stack.addArrangedSubview(zoomSep)
 
-        // 2. Compact Segmented Zoom Capsule: [-] [100% ▾] [+] [Fit] [1:1]
-        let zoomCapsule = ThemedLayerView(fill: ImpactTheme.capsuleFill, border: ImpactTheme.capsuleBorder)
-        zoomCapsule.layer?.cornerRadius = 6.0
-        zoomCapsule.layer?.masksToBounds = true
-        zoomCapsule.layer?.borderWidth = 0.5
-        zoomCapsule.translatesAutoresizingMaskIntoConstraints = false
-
-        let zoomStack = NSStackView()
-        zoomStack.orientation = .horizontal
-        zoomStack.alignment = .centerY
-        zoomStack.spacing = 0.0
-        zoomStack.translatesAutoresizingMaskIntoConstraints = false
-        zoomCapsule.addSubview(zoomStack)
-
-        NSLayoutConstraint.activate([
-            zoomStack.leadingAnchor.constraint(equalTo: zoomCapsule.leadingAnchor),
-            zoomStack.trailingAnchor.constraint(equalTo: zoomCapsule.trailingAnchor),
-            zoomStack.topAnchor.constraint(equalTo: zoomCapsule.topAnchor),
-            zoomStack.bottomAnchor.constraint(equalTo: zoomCapsule.bottomAnchor),
-            zoomCapsule.heightAnchor.constraint(equalToConstant: 26)
-        ])
-
-        // Only the current zoom shows; Zoom In / Zoom Out live in its menu with the presets
-        let zoomPercentBtn = ModernToolbarButton(text: "100%", tooltip: "Zoom", size: NSSize(width: 48, height: 26), isSegment: true)
+        // 2. Current zoom as plain text (no capsule), a regular button like the tools: hover shows the
+        // rounded highlight; Zoom In / Zoom Out live in its menu with the presets
+        let zoomPercentBtn = ModernToolbarButton(text: "100%", tooltip: "Zoom", size: NSSize(width: 48, height: 30))
+        zoomPercentBtn.titleLabel.alignment = .center
         zoomPercentBtn.onAction = { [weak self] in
             self?.showZoomPresetsMenu()
         }
         self.zoomPercentButton = zoomPercentBtn
-        zoomStack.addArrangedSubview(zoomPercentBtn)
-
-        self.zoomContainerView = zoomCapsule
-        stack.addArrangedSubview(zoomCapsule)
+        self.zoomContainerView = zoomPercentBtn
+        stack.addArrangedSubview(zoomPercentBtn)
 
         // Flexible spacer to right-align color swatch & action buttons
         let spacer = NSView()

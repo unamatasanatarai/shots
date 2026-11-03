@@ -21,8 +21,6 @@ public enum ImpactTheme {
     static let hoverBorder = dynamic(light: NSColor(white: 0.0, alpha: 0.08), dark: NSColor(white: 1.0, alpha: 0.12))
     static let activeBorder = dynamic(light: NSColor(white: 0.0, alpha: 0.10), dark: NSColor(white: 1.0, alpha: 0.20))
     static let separator = dynamic(light: NSColor(white: 0.0, alpha: 0.13), dark: NSColor(white: 1.0, alpha: 0.13))
-    static let capsuleFill = dynamic(light: NSColor(white: 0.0, alpha: 0.04), dark: NSColor(white: 1.0, alpha: 0.08))
-    static let capsuleBorder = dynamic(light: NSColor(white: 0.0, alpha: 0.12), dark: NSColor(white: 1.0, alpha: 0.12))
     static let popoverBackground = dynamic(light: NSColor(white: 0.97, alpha: 0.98), dark: NSColor(white: 0.16, alpha: 0.98))
     /// Outline around color swatches so light/dark swatches stay visible on the toolbar
     static let swatchBorder = dynamic(light: NSColor(white: 0.0, alpha: 0.18), dark: NSColor(white: 1.0, alpha: 0.20))
