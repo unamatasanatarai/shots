@@ -63,6 +63,9 @@ public final class CaptureManager {
         executeOCRRecognition(completion: completion)
     }
 
+    /// Bumped (main thread) for each OCR started; only the newest one's result reaches the clipboard
+    private static var ocrGeneration = 0
+
     private func executeOCRRecognition(completion: ((RecognitionItem?) -> Void)? = nil) {
         guard PermissionsManager.shared.ensurePermissions(for: "OCR Recognition") else {
             completion?(nil)
@@ -73,10 +76,13 @@ public final class CaptureManager {
                 completion?(nil)
                 return
             }
+            Self.ocrGeneration += 1
+            let generation = Self.ocrGeneration
             RecognitionService.shared.recognizeUnifiedAsync(in: image) { result in
                 switch result {
                 case .success(let item):
-                    if let recognized = item {
+                    // A slower, older recognition must not overwrite the clipboard after a newer one
+                    if let recognized = item, generation == Self.ocrGeneration {
                         RecognitionService.shared.copyPayloadToPasteboard(recognized)
                         OCRNotificationController.shared.show(snippet: recognized.payload)
                         NSLog("OCR Recognition succeeded (%@): %@", recognized.type.rawValue, recognized.payload)
@@ -228,10 +234,13 @@ public final class CaptureManager {
                 ocrCompletion?(nil)
                 return
             }
+            Self.ocrGeneration += 1
+            let generation = Self.ocrGeneration
             RecognitionService.shared.recognizeUnifiedAsync(in: image) { result in
                 switch result {
                 case .success(let item):
-                    if let recognized = item {
+                    // A slower, older recognition must not overwrite the clipboard after a newer one
+                    if let recognized = item, generation == Self.ocrGeneration {
                         RecognitionService.shared.copyPayloadToPasteboard(recognized)
                         OCRNotificationController.shared.show(snippet: recognized.payload)
                         NSLog("Repeated OCR Recognition succeeded (%@): %@", recognized.type.rawValue, recognized.payload)
@@ -315,7 +324,14 @@ public final class CaptureManager {
             // 4. System Pasteboard Synchronization
             if snapshot.copyToClipboard {
                 DispatchQueue.main.async {
-                    saveService.copyToPasteboard(image: cgImage, pngData: format == .png ? encodedData : nil, fileURL: savedFileURL)
+                    if format == .png {
+                        saveService.copyToPasteboard(image: cgImage, pngData: encodedData, fileURL: savedFileURL)
+                    } else {
+                        // Promise only the (much smaller) JPG bytes, decoded if something pastes: capturing the
+                        // CGImage would pin the raw bitmap (hundreds of MB for a scroll capture) until the
+                        // clipboard changes. Pasted pixels then match the saved JPG.
+                        LazyImagePasteboard.write(pngData: nil) { LazyImagePasteboard.decodeImage(from: encodedData) }
+                    }
                 }
             }
         }

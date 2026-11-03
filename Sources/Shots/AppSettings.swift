@@ -589,6 +589,10 @@ public final class AppSettings: ObservableObject {
         }
 
         // 2. Otherwise default to ~/Pictures/shots
+        return picturesShotsPath()
+    }
+
+    static func picturesShotsPath() -> String {
         if let picturesURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first {
             return picturesURL.appendingPathComponent("shots").path
         }
@@ -639,8 +643,19 @@ public final class AppSettings: ObservableObject {
 
         let path = (rawPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: path, isDirectory: true)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+        var isDirectory: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
+            do {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+            } catch {
+                // The configured (or inherited com.apple.screencapture) folder is unusable, e.g. on an unmounted
+                // volume: save to ~/Pictures/shots rather than failing every capture. Not cached, so the
+                // configured folder is used again once it is reachable.
+                let fallback = URL(fileURLWithPath: Self.picturesShotsPath(), isDirectory: true)
+                NSLog("Shots: save folder %@ unusable (%@); using %@", url.path, error.localizedDescription, fallback.path)
+                try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true, attributes: nil)
+                return fallback
+            }
         }
 
         threadSafeLock.lock()

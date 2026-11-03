@@ -40,6 +40,19 @@ public final class LaunchAtLoginService {
         return succeeded
     }
 
+    /// Makes the stored preference match the system: the user can remove the login item in System Settings,
+    /// or leave it awaiting approval, while the stored flag still says "on" (macOS 13+; older systems have no
+    /// status API)
+    public func reconcileWithSystem() {
+        guard backendOverride == nil else { return }
+        if #available(macOS 13.0, *) {
+            let actual = SMAppService.mainApp.status == .enabled
+            if AppSettings.shared.launchAtLogin != actual {
+                AppSettings.shared.launchAtLogin = actual
+            }
+        }
+    }
+
     private static func systemSetLaunchAtLogin(_ enabled: Bool) throws -> Bool {
         if #available(macOS 13.0, *) {
             if enabled {

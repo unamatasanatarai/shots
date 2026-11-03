@@ -28,13 +28,8 @@ public final class ImpactLauncher {
             }
         }
 
-        // 2. Check LaunchServices for registered app by bundle ID
-        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.unamatasanatarai.Impact") {
-            cachedImpactAppURL = appURL
-            return appURL
-        }
-
-        // 3. Check /Applications and ~/Applications
+        // 2. Check /Applications and ~/Applications before asking LaunchServices: any bundle anywhere on
+        // disk can claim Impact's bundle ID, and whichever LaunchServices picks receives every screenshot
         let systemApp = URL(fileURLWithPath: "/Applications/\(candidateName)")
         if FileManager.default.fileExists(atPath: systemApp.path) {
             cachedImpactAppURL = systemApp
@@ -46,14 +41,11 @@ public final class ImpactLauncher {
             return userApp
         }
 
-        // 4. Check relative to executable parent structure
-        if let execURL = Bundle.main.executableURL {
-            let projectOrContainingDir = execURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            let buildImpact = projectOrContainingDir.appendingPathComponent("build/\(candidateName)")
-            if FileManager.default.fileExists(atPath: buildImpact.path) {
-                cachedImpactAppURL = buildImpact
-                return buildImpact
-            }
+        // 3. Last resort: LaunchServices, accepted only for a bundle actually named Impact.app
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.unamatasanatarai.Impact"),
+           appURL.lastPathComponent == candidateName {
+            cachedImpactAppURL = appURL
+            return appURL
         }
 
         return nil
@@ -64,21 +56,18 @@ public final class ImpactLauncher {
     static let tempCapturePrefix = "capture_"
 
     public func openImpact(with image: CGImage, title: String = "Impact") {
-        let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        Self.purgeStaleTempCaptures(in: tempDirectory)
+        // PNG-encoding a 20,000 px scrolling capture takes hundreds of ms: never on the caller's (main) thread
+        DispatchQueue.global(qos: .userInitiated).async {
+            let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            Self.purgeStaleTempCaptures(in: tempDirectory)
 
-        // Save to temporary PNG file via fast hardware ImageIO and launch Impact.app
-        guard let tempURL = Self.writeTempCapture(image, in: tempDirectory) else {
-            // Nothing to open: never hand Impact (or the default app) a URL that does not exist
-            NSLog("ImpactLauncher: failed to write temporary capture; not opening Impact")
-            return
-        }
-
-        if let impactURL = findImpactAppURL() {
-            let config = NSWorkspace.OpenConfiguration()
-            NSWorkspace.shared.open([tempURL], withApplicationAt: impactURL, configuration: config, completionHandler: nil)
-        } else {
-            NSWorkspace.shared.open(tempURL)
+            // Save to temporary PNG file via fast hardware ImageIO and launch Impact.app
+            guard let tempURL = Self.writeTempCapture(image, in: tempDirectory) else {
+                // Nothing to open: never hand Impact (or the default app) a URL that does not exist
+                NSLog("ImpactLauncher: failed to write temporary capture; not opening Impact")
+                return
+            }
+            DispatchQueue.main.async { self.openImageFile(url: tempURL) }
         }
     }
 

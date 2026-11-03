@@ -21,9 +21,9 @@ fi
 IFS= read -r sdk_path <"$sdk_file"
 rm -f "$sdk_file"
 
-test_dir="${XDG_RUNTIME_DIR:-/tmp}"
-test_bin="${test_dir}/RunImpactTests_${RANDOM}"
-trap 'rm -f "$test_bin"' EXIT INT TERM
+test_dir="$(mktemp -d "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/RunImpactTests.XXXXXX")"
+test_bin="${test_dir}/RunImpactTests"
+trap 'rm -rf "$test_dir"' EXIT INT TERM
 
 # Collect Impact app sources excluding entry points with @main (e.g. ImpactMain.swift)
 sources=()

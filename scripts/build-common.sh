@@ -119,7 +119,19 @@ compile_swift() {
 sign_and_register() {
     local app_dir="$1" bundle_id="$2" arch="$3"
     printf '%s\n' "Signing $(basename "$app_dir")..."
-    codesign --force --deep --sign - --requirements "=designated => identifier \"${bundle_id}\"" "$app_dir"
+    # TCC (Screen Recording, Accessibility) trusts whatever satisfies the designated requirement. An
+    # identifier-only requirement is satisfied by ANY ad-hoc signed bundle claiming the same ID, so a
+    # distributed build signed that way hands its privacy grants to impostors. With a real identity
+    # (CODESIGN_IDENTITY) the default certificate-anchored requirement is used. Without one, only the
+    # native dev bundle keeps the identifier-only requirement (so grants survive rebuilds on the
+    # developer's machine); distributable builds keep the default ad-hoc requirement, pinned to the cdhash.
+    if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
+        codesign --force --deep --options runtime --sign "$CODESIGN_IDENTITY" "$app_dir"
+    elif [[ "$arch" == "native" ]]; then
+        codesign --force --deep --sign - --requirements "=designated => identifier \"${bundle_id}\"" "$app_dir"
+    else
+        codesign --force --deep --sign - "$app_dir"
+    fi
 
     local lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
     if [[ "$arch" == "native" ]]; then

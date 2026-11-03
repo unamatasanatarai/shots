@@ -2162,16 +2162,32 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         LazyImagePasteboard.write { snapshot.renderComposition() }
     }
 
-    public func saveCompositionToFile(url: URL, format: NSBitmapImageRep.FileType = .png) {
+    /// The composition encoded for `format`; nil when it cannot be rendered or encoded
+    public func encodedComposition(format: NSBitmapImageRep.FileType = .png) -> Data? {
         endCalloutEditingIfNeeded()
-        guard let rendered = document.renderComposition() else { return }
+        guard let rendered = document.renderComposition() else {
+            NSLog("EditorCanvasView: Failed to render composition")
+            return nil
+        }
         let rep = NSBitmapImageRep(cgImage: rendered)
         let properties: [NSBitmapImageRep.PropertyKey: Any] = (format == .jpeg) ? [.compressionFactor: 0.95] : [:]
-        guard let data = rep.representation(using: format, properties: properties) else { return }
+        guard let data = rep.representation(using: format, properties: properties) else {
+            NSLog("EditorCanvasView: Failed to encode composition")
+            return nil
+        }
+        return data
+    }
+
+    /// True only when the file was actually written: callers must not mark work saved otherwise
+    @discardableResult
+    public func saveCompositionToFile(url: URL, format: NSBitmapImageRep.FileType = .png) -> Bool {
+        guard let data = encodedComposition(format: format) else { return false }
         do {
             try data.write(to: url, options: .atomic)
+            return true
         } catch {
             NSLog("EditorCanvasView: Failed to save composition to %@: %@", url.path, error.localizedDescription)
+            return false
         }
     }
 

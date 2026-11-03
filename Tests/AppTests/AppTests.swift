@@ -1774,6 +1774,18 @@ enum AuditRegressionTests {
         testRunner("Regression: ScrollingCapture - Sparse Content Moved 50px Is a Scroll, Not an Identical Frame") {
             testScrollSparseContentOffsetAndStitch()
         }
+        testRunner("Regression: ScrollingCapture - Blinking Caret On An Unmoved Page Is No Movement") {
+            testScrollAnimatedPixelsIsNoMovement()
+        }
+        testRunner("Regression: ScrollingCapture - Periodic Rows Use The Posted Scroll To Pick The Shift") {
+            testScrollPeriodicContentUsesExpectedShift()
+        }
+        testRunner("Regression: ScrollingCapture - Unmoved Periodic Page Bottom Is No Movement") {
+            testScrollPeriodicPageBottomIsNoMovement()
+        }
+        testRunner("Regression: ScrollingCapture - Stitch Buffer Height Is Capped By A Byte Budget") {
+            testScrollStitcherByteBudget()
+        }
         testRunner("Regression: Autoscroll - Second Start While Running Completes With nil") {
             testAutoscrollReentryGuard()
         }
@@ -2004,6 +2016,48 @@ enum AuditRegressionTests {
         } else {
             NSLog("OCR end-to-end check skipped: Vision returned %@", payloads.joined(separator: " | "))
         }
+    }
+
+    static func testScrollAnimatedPixelsIsNoMovement() {
+        let service = ScrollingCaptureService.shared
+        // Dense text lines (alternating widths so no two adjacent rows hash alike) and a 1 px caret that blinked
+        let lines = stride(from: 10, to: 390, by: 20).map { (20, $0, 200 + ($0 % 40), 12) }
+        let f1 = renderBlocks(lines, width: 600, height: 400, offset: 0)
+        let f2 = renderBlocks(lines + [(300, 200, 1, 8)], width: 600, height: 400, offset: 0)
+        assert(service.detectVerticalOffset(between: f1, and: f2) == 0, "A blinking caret must not read as a scroll")
+    }
+
+    static func testScrollPeriodicContentUsesExpectedShift() {
+        let service = ScrollingCaptureService.shared
+        // Identical rows every 20 px scrolled by 50: shifts 10, 30, 50, 70... all line up equally well
+        let rows = stride(from: -200, to: 800, by: 20).map { (20, $0, 300, 12) }
+        let f1 = FramePixels(renderBlocks(rows, width: 600, height: 400, offset: 0))
+        let f2 = FramePixels(renderBlocks(rows, width: 600, height: 400, offset: 50))
+        let shift = service.detectVerticalOffset(between: f1, and: f2, expectedShift: 50)
+        assert(shift == 50, "The posted 50 px scroll must win among periodic alignments, got \(shift)")
+    }
+
+    static func testScrollPeriodicPageBottomIsNoMovement() {
+        let service = ScrollingCaptureService.shared
+        // Periodic rows that did not move, plus a flashing overlay-scrollbar pixel that defeats byte identity
+        let rows = stride(from: -200, to: 800, by: 20).map { (20, $0, 300, 12) }
+        let f1 = FramePixels(renderBlocks(rows, width: 600, height: 400, offset: 0))
+        let f2 = FramePixels(renderBlocks(rows + [(590, 300, 4, 30)], width: 600, height: 400, offset: 0))
+        let shift = service.detectVerticalOffset(between: f1, and: f2, expectedShift: 60)
+        assert(shift == 0, "An unmoved periodic page must read as no movement even with an expected scroll, got \(shift)")
+    }
+
+    static func testScrollStitcherByteBudget() {
+        let width = 8192 // 32 KiB per row
+        let ctx = bgraContext(width, 1000)
+        ctx.setFillColor(CGColor(gray: 0.5, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: 1000))
+        let frame = ctx.makeImage()!
+        let stitcher = ScrollStitcher(firstFrame: frame, maxHeight: ScrollingCaptureService.maxAllowedHeight)
+        var steps = 0
+        while !stitcher.isFull && steps < 40 { stitcher.append(frame, newRows: 1000); steps += 1 }
+        let budgetRows = ScrollStitcher.byteBudget / (width * 4)
+        assert(stitcher.isFull && stitcher.height == budgetRows, "Height must stop at the byte budget (\(budgetRows)), got \(stitcher.height)")
     }
 
     // 4. Scroll stitching with sparse content

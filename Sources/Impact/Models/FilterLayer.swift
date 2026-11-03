@@ -468,6 +468,9 @@ public final class FilterLayer: AnnotationLayer {
             cornerRadius: cornerRadius
         )
         copy.detectedTextRects = detectedTextRects
+        // Entries are immutable CGImages keyed by source image: sharing them saves undo/redo and clipboard
+        // snapshots from re-running the blur on the next draw
+        copy.filterCache = filterCache
         return copy
     }
 }

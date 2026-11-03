@@ -28,15 +28,22 @@ final class ScrollStitcher {
     private let maxHeight: Int
     private let colorSpace: CGColorSpace
     private let bytesPerRow: Int
-    private var buffer: NSMutableData? = NSMutableData()
+    private var buffer: NSMutableData?
     private(set) var height = 0
+    /// Bytes the stitched image may occupy: the height cap alone lets a full-width 6K region reach ~480 MB,
+    /// before the encoded file and clipboard copies pile on
+    static let byteBudget = 256 * 1024 * 1024
 
     var isFull: Bool { height >= maxHeight }
 
     init(firstFrame: CGImage, maxHeight: Int) {
         self.width = firstFrame.width
-        self.maxHeight = maxHeight
         self.bytesPerRow = firstFrame.width * 4
+        let rowsInBudget = bytesPerRow > 0 ? Self.byteBudget / bytesPerRow : maxHeight
+        self.maxHeight = max(min(firstFrame.height, maxHeight), min(maxHeight, rowsInBudget))
+        // Reserve the whole budget once: growing in steps reallocates, briefly holding old and new copies
+        // (~2x peak). Untouched pages of the reservation are never committed.
+        self.buffer = NSMutableData(capacity: self.maxHeight * bytesPerRow) ?? NSMutableData()
         if let space = firstFrame.colorSpace, space.model == .rgb {
             self.colorSpace = space
         } else {
@@ -109,7 +116,9 @@ public final class ScrollingCaptureService {
     }
 
     /// Same as above on pixel buffers fetched once, so a frame compared twice is copied only once
-    func detectVerticalOffset(between frame1: FramePixels, and frame2: FramePixels) -> Int {
+    /// `expectedShift` (pixels the synthetic scroll should have moved) breaks ties on periodic content
+    /// (grids, list separators), where several shifts line up equally well; nil keeps the smallest best shift.
+    func detectVerticalOffset(between frame1: FramePixels, and frame2: FramePixels, expectedShift: Int? = nil) -> Int {
         guard frame1.width > 0 && frame1.height > 0 && frame2.width > 0 && frame2.height > 0 else {
             return frame2.height
         }
@@ -149,7 +158,7 @@ public final class ScrollingCaptureService {
         // 1. Exact full-row matching: finds the shift for sparse content that a sampling grid misses
         if let exact = exactRowShift(
             ptr1: ptr1, bpr1: bpr1, len1: len1, ptr2: ptr2, bpr2: bpr2, len2: len2,
-            height: height, colStart: colStart, colEnd: colEnd, maxShift: maxShift
+            height: height, colStart: colStart, colEnd: colEnd, maxShift: maxShift, expectedShift: expectedShift
         ) {
             return exact
         }
@@ -263,7 +272,7 @@ public final class ScrollingCaptureService {
     private func exactRowShift(
         ptr1: UnsafePointer<UInt8>, bpr1: Int, len1: Int,
         ptr2: UnsafePointer<UInt8>, bpr2: Int, len2: Int,
-        height: Int, colStart: Int, colEnd: Int, maxShift: Int
+        height: Int, colStart: Int, colEnd: Int, maxShift: Int, expectedShift: Int? = nil
     ) -> Int? {
         guard let sig1 = rowSignatures(ptr: ptr1, bpr: bpr1, len: len1, height: height, colStart: colStart, colEnd: colEnd),
               let sig2 = rowSignatures(ptr: ptr2, bpr: bpr2, len: len2, height: height, colStart: colStart, colEnd: colEnd) else {
@@ -272,13 +281,15 @@ public final class ScrollingCaptureService {
         // Flat frames (no content rows at all) carry no alignment information
         guard sig1.informative.contains(true) || sig2.informative.contains(true) else { return nil }
 
-        var bestShift = 0
-        var bestMatches = 0
+        // Every shift where (nearly) all content rows of the overlap line up, with its match count
+        var candidates: [(shift: Int, matches: Int)] = []
         sig1.hashes.withUnsafeBufferPointer { h1 in
         sig2.hashes.withUnsafeBufferPointer { h2 in
         sig1.informative.withUnsafeBufferPointer { i1 in
         sig2.informative.withUnsafeBufferPointer { i2 in
-            for shift in 1...maxShift {
+            // Shift 0 too: the byte-identity check fails on any animated pixel (blinking caret, spinner,
+            // flashing overlay scrollbar), yet the page did not move
+            for shift in 0...maxShift {
                 var considered = 0
                 var matches = 0
                 var y = 0
@@ -293,17 +304,34 @@ public final class ScrollingCaptureService {
                 }
                 // Require at least two content rows and >= 95% of the content rows to line up
                 guard considered >= 2, matches * 100 >= considered * 95 else { continue }
-                // Prefer the alignment that explains the most content (largest overlap on ties)
-                if matches > bestMatches {
-                    bestMatches = matches
-                    bestShift = shift
-                }
+                candidates.append((shift, matches))
             }
         }
         }
         }
         }
-        return bestShift > 0 ? bestShift : nil
+        // No movement wins when it explains at least as much content as any real shift: at the bottom of a
+        // periodic page (grid, ruled rows) every period multiple lines up too, but the page did not move
+        let bestPositiveMatches = candidates.filter { $0.shift > 0 }.map(\.matches).max() ?? 0
+        if let still = candidates.first(where: { $0.shift == 0 }), still.matches >= bestPositiveMatches {
+            return 0
+        }
+        if let expected = expectedShift, expected > 0 {
+            // The scroll that was actually posted decides between equally good periodic alignments, but only
+            // close to it: a shorter final scroll must not be pulled to a period multiple near `expected`
+            // (Match counts are not compared across shifts: a smaller shift has more overlap, so more matches.)
+            let near = candidates.filter { $0.shift > 0 && abs($0.shift - expected) <= expected / 2 }
+            if let pick = near.min(by: { a, b in
+                let da = abs(a.shift - expected), db = abs(b.shift - expected)
+                return da != db ? da < db : a.matches > b.matches
+            }) {
+                return pick.shift
+            }
+        }
+        // Prefer the alignment that explains the most content (smallest shift on ties)
+        var best: (shift: Int, matches: Int)?
+        for c in candidates where c.shift > 0 && c.matches > (best?.matches ?? 0) { best = c }
+        return best?.shift
     }
 
     private func areFramesIdentical(

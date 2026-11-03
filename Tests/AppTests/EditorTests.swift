@@ -87,6 +87,32 @@ public enum EditorTests {
             assert(doc.activeCanvasBounds == doc.originalImageBounds, "Canvas must auto-shrink back to original bounds")
         }
 
+        testRunner("Editor - Elastic Canvas Growth Is Capped (Far-Away Annotation Cannot Force A Huge Export)") {
+            guard let ctx = CGContext(data: nil, width: 200, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let image = ctx.makeImage() else { throw NSError(domain: "EditorTests", code: 5) }
+            let doc = EditorDocument(image: image)
+            let arrow = ArrowLayer(start: CGPoint(x: -1_000_000, y: -1_000_000), end: CGPoint(x: 1_000_000, y: 1_000_000), strokeWidth: 4.0)
+            doc.addLayer(arrow)
+            let margin = EditorDocument.maxElasticMargin
+            assert(doc.activeCanvasBounds == CGRect(x: -margin, y: -margin, width: 200 + 2 * margin, height: 100 + 2 * margin),
+                   "Canvas must stop growing at the margin cap, got \(doc.activeCanvasBounds)")
+        }
+
+        testRunner("Editor - Elastic Margin Shrinks So Image Plus Margins Fit The Pixel Budget") {
+            assert(EditorDocument.elasticMargin(forImage: CGSize(width: 1000, height: 800)) == EditorDocument.maxElasticMargin, "Small images get the full margin")
+            assert(EditorDocument.elasticMargin(forImage: CGSize(width: 32768, height: 8192)) == 0, "An image at the budget gets no margin")
+            let m = EditorDocument.elasticMargin(forImage: CGSize(width: 20000, height: 10000))
+            assert((20000 + 2 * m) * (10000 + 2 * m) <= EditorDocument.maxCanvasPixels, "Canvas with margin must fit the budget, margin \(m)")
+        }
+
+        testRunner("Editor - Failed Save Is Not Reported As Saved And Keeps The Work Unsaved") {
+            let (doc, panel, _) = try makeCalloutPanel()
+            let missing = URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)/dir/file.png")
+            assert(!panel.canvasView.saveCompositionToFile(url: missing), "Writing into a missing folder must report failure")
+            quietClose(doc, panel)
+        }
+
         testRunner("Editor - Quadratic Bezier Arrow Math & Handles") {
             let arrow = ArrowLayer(
                 start: CGPoint(x: 10, y: 10),
@@ -4420,6 +4446,26 @@ public enum EditorTests {
             while !coordinator.isIdle && Date() < deadline2 { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
             assert(coordinator.isIdle, "Idle after a failed open")
             EditorPanel.copyToClipboardOverride = nil
+        }
+
+        testRunner("Coordinator - Refuses To Decode Images Whose Header Declares Oversized Dimensions") {
+            func pngSource(width: Int, height: Int) throws -> CGImageSource {
+                guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
+                      let image = ctx.makeImage() else { throw NSError(domain: "EditorTests", code: 2) }
+                let data = NSMutableData()
+                guard let dest = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { throw NSError(domain: "EditorTests", code: 3) }
+                CGImageDestinationAddImage(dest, image, nil)
+                guard CGImageDestinationFinalize(dest),
+                      let source = CGImageSourceCreateWithData(data, nil) else { throw NSError(domain: "EditorTests", code: 4) }
+                return source
+            }
+            let ordinary = try pngSource(width: 100, height: 100)
+            let tall = try pngSource(width: 1, height: 20_000)
+            let oversized = try pngSource(width: 1, height: ImpactAppCoordinator.maxDecodeDimension + 1)
+            assert(ImpactAppCoordinator.isDecodeSizeAcceptable(ordinary), "Ordinary image accepted")
+            assert(ImpactAppCoordinator.isDecodeSizeAcceptable(tall), "Max-height scrolling capture accepted")
+            assert(!ImpactAppCoordinator.isDecodeSizeAcceptable(oversized), "Side over the limit rejected")
         }
         testRunner("Editor - Handles On The Canvas Edge Are Drawn Fully On The Canvas") {
             let canvas = CGRect(x: 0, y: 0, width: 800, height: 600)

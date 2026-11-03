@@ -179,6 +179,9 @@ public struct PreferencesView: View {
     private func startRecording(for target: ShortcutTarget) {
         stopRecording()
         recordingTarget = target
+        // Registered global hotkeys are consumed before this app-local monitor sees them: pressing an
+        // in-use combo would fire that action instead of being recorded (or flagged as a conflict)
+        HotKeyManager.shared.unregisterHotkey()
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown]) { event in
             if event.type == .leftMouseDown || event.type == .rightMouseDown {
@@ -204,28 +207,31 @@ public struct PreferencesView: View {
                 // Require at least one modifier key or a true F-key (F1–F20); arrows, Home/End,
                 // Page Up/Down and Help need a modifier, matching what HotkeyManager registers
                 if KeyCodes.isRecordableShortcut(keyCode: event.keyCode, carbonMods: carbonMods) {
-                    switch target {
-                    case .area:
-                        self.settings.hotkeyKeyCode = event.keyCode
-                        self.settings.hotkeyModifiers = carbonMods
-                    case .fullscreen:
-                        self.settings.fullscreenShortcutKeyCode = event.keyCode
-                        self.settings.fullscreenShortcutModifiers = carbonMods
-                    case .repeatCapture:
-                        self.settings.repeatShortcutKeyCode = event.keyCode
-                        self.settings.repeatShortcutModifiers = carbonMods
-                    case .ocr:
-                        self.settings.ocrShortcutKeyCode = event.keyCode
-                        self.settings.ocrShortcutModifiers = carbonMods
-                    case .scrolling:
-                        self.settings.scrollingShortcutKeyCode = event.keyCode
-                        self.settings.scrollingShortcutModifiers = carbonMods
-                    case .ruler:
-                        self.settings.rulerShortcutKeyCode = event.keyCode
-                        self.settings.rulerShortcutModifiers = carbonMods
-                    case .colorPicker:
-                        self.settings.colorPickerShortcutKeyCode = event.keyCode
-                        self.settings.colorPickerShortcutModifiers = carbonMods
+                    // Key and modifiers as one change: one re-registration, never a half-updated combo
+                    self.settings.performHotkeyBatchUpdate {
+                        switch target {
+                        case .area:
+                            self.settings.hotkeyKeyCode = event.keyCode
+                            self.settings.hotkeyModifiers = carbonMods
+                        case .fullscreen:
+                            self.settings.fullscreenShortcutKeyCode = event.keyCode
+                            self.settings.fullscreenShortcutModifiers = carbonMods
+                        case .repeatCapture:
+                            self.settings.repeatShortcutKeyCode = event.keyCode
+                            self.settings.repeatShortcutModifiers = carbonMods
+                        case .ocr:
+                            self.settings.ocrShortcutKeyCode = event.keyCode
+                            self.settings.ocrShortcutModifiers = carbonMods
+                        case .scrolling:
+                            self.settings.scrollingShortcutKeyCode = event.keyCode
+                            self.settings.scrollingShortcutModifiers = carbonMods
+                        case .ruler:
+                            self.settings.rulerShortcutKeyCode = event.keyCode
+                            self.settings.rulerShortcutModifiers = carbonMods
+                        case .colorPicker:
+                            self.settings.colorPickerShortcutKeyCode = event.keyCode
+                            self.settings.colorPickerShortcutModifiers = carbonMods
+                        }
                     }
                     self.stopRecording()
                     return nil
@@ -236,64 +242,72 @@ public struct PreferencesView: View {
     }
 
     private func stopRecording() {
+        let wasRecording = recordingTarget != nil || eventMonitor != nil
         recordingTarget = nil
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil
         }
+        if wasRecording {
+            _ = HotKeyManager.shared.registerCurrentHotkey()
+        }
     }
 
     private func clearShortcut(for target: ShortcutTarget) {
         let noKey = KeyCodes.noKey
-        switch target {
-        case .area:
-            settings.hotkeyKeyCode = noKey
-            settings.hotkeyModifiers = 0
-        case .fullscreen:
-            settings.fullscreenShortcutKeyCode = noKey
-            settings.fullscreenShortcutModifiers = 0
-        case .repeatCapture:
-            settings.repeatShortcutKeyCode = noKey
-            settings.repeatShortcutModifiers = 0
-        case .ocr:
-            settings.ocrShortcutKeyCode = noKey
-            settings.ocrShortcutModifiers = 0
-        case .scrolling:
-            settings.scrollingShortcutKeyCode = noKey
-            settings.scrollingShortcutModifiers = 0
-        case .ruler:
-            settings.rulerShortcutKeyCode = noKey
-            settings.rulerShortcutModifiers = 0
-        case .colorPicker:
-            settings.colorPickerShortcutKeyCode = noKey
-            settings.colorPickerShortcutModifiers = 0
+        settings.performHotkeyBatchUpdate {
+            switch target {
+            case .area:
+                settings.hotkeyKeyCode = noKey
+                settings.hotkeyModifiers = 0
+            case .fullscreen:
+                settings.fullscreenShortcutKeyCode = noKey
+                settings.fullscreenShortcutModifiers = 0
+            case .repeatCapture:
+                settings.repeatShortcutKeyCode = noKey
+                settings.repeatShortcutModifiers = 0
+            case .ocr:
+                settings.ocrShortcutKeyCode = noKey
+                settings.ocrShortcutModifiers = 0
+            case .scrolling:
+                settings.scrollingShortcutKeyCode = noKey
+                settings.scrollingShortcutModifiers = 0
+            case .ruler:
+                settings.rulerShortcutKeyCode = noKey
+                settings.rulerShortcutModifiers = 0
+            case .colorPicker:
+                settings.colorPickerShortcutKeyCode = noKey
+                settings.colorPickerShortcutModifiers = 0
+            }
         }
     }
 
     private func resetShortcut(for target: ShortcutTarget) {
         let defaultMods = UInt32(cmdKey | shiftKey)
-        switch target {
-        case .area:
-            settings.hotkeyKeyCode = UInt16(kVK_ANSI_4)
-            settings.hotkeyModifiers = defaultMods
-        case .fullscreen:
-            settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
-            settings.fullscreenShortcutModifiers = defaultMods
-        case .repeatCapture:
-            settings.repeatShortcutKeyCode = UInt16(kVK_ANSI_3)
-            settings.repeatShortcutModifiers = defaultMods
-        case .ocr:
-            settings.ocrShortcutKeyCode = UInt16(kVK_ANSI_R)
-            settings.ocrShortcutModifiers = defaultMods
-        case .scrolling:
-            settings.scrollingShortcutKeyCode = UInt16(kVK_ANSI_5)
-            settings.scrollingShortcutModifiers = defaultMods
-        case .ruler:
-            settings.rulerShortcutKeyCode = UInt16(kVK_ANSI_M)
-            settings.rulerShortcutModifiers = defaultMods
-        case .colorPicker:
-            settings.colorPickerShortcutKeyCode = UInt16(kVK_ANSI_C)
-            settings.colorPickerShortcutModifiers = defaultMods
+        settings.performHotkeyBatchUpdate {
+            switch target {
+            case .area:
+                settings.hotkeyKeyCode = UInt16(kVK_ANSI_4)
+                settings.hotkeyModifiers = defaultMods
+            case .fullscreen:
+                settings.fullscreenShortcutKeyCode = UInt16(kVK_ANSI_2)
+                settings.fullscreenShortcutModifiers = defaultMods
+            case .repeatCapture:
+                settings.repeatShortcutKeyCode = UInt16(kVK_ANSI_3)
+                settings.repeatShortcutModifiers = defaultMods
+            case .ocr:
+                settings.ocrShortcutKeyCode = UInt16(kVK_ANSI_R)
+                settings.ocrShortcutModifiers = defaultMods
+            case .scrolling:
+                settings.scrollingShortcutKeyCode = UInt16(kVK_ANSI_5)
+                settings.scrollingShortcutModifiers = defaultMods
+            case .ruler:
+                settings.rulerShortcutKeyCode = UInt16(kVK_ANSI_M)
+                settings.rulerShortcutModifiers = defaultMods
+            case .colorPicker:
+                settings.colorPickerShortcutKeyCode = UInt16(kVK_ANSI_C)
+                settings.colorPickerShortcutModifiers = defaultMods
+            }
         }
     }
 
@@ -414,6 +428,7 @@ private struct GeneralTab: View {
                         }
                     )
                 )
+                .onAppear { LaunchAtLoginService.shared.reconcileWithSystem() }
 
                 Divider().padding(.horizontal, 12)
 

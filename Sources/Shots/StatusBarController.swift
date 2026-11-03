@@ -243,11 +243,32 @@ public final class StatusBarController: NSObject, NSMenuDelegate {
 
     public func menuDidClose(_ menu: NSMenu) {}
 
+    /// Main thread only. A scan already running when the menu opens again is not duplicated; the newest
+    /// request's result is the one that lands in the menu (a slower older scan cannot overwrite it).
+    private var historyScanGeneration = 0
+    private var isHistoryScanRunning = false
+    private var historyScanPending = false
+
     private func refreshRecentScreenshotsInBackground() {
+        historyScanGeneration += 1
+        guard !isHistoryScanRunning else {
+            historyScanPending = true
+            return
+        }
+        isHistoryScanRunning = true
+        let generation = historyScanGeneration
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fresh = ScreenshotHistoryService.shared.fetchRecentScreenshots()
             DispatchQueue.main.async {
-                self?.updateRecentScreenshotsMenu(using: fresh)
+                guard let self = self else { return }
+                self.isHistoryScanRunning = false
+                if generation == self.historyScanGeneration {
+                    self.updateRecentScreenshotsMenu(using: fresh)
+                }
+                if self.historyScanPending {
+                    self.historyScanPending = false
+                    self.refreshRecentScreenshotsInBackground()
+                }
             }
         }
     }

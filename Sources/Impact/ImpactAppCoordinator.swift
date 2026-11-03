@@ -107,7 +107,27 @@ public final class ImpactAppCoordinator {
         // Decode off the main thread, up front: a lazily decoded image would decode during the first paint
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let decodeOptions = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+            if let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(imageSource) > 0,
+               !Self.isDecodeSizeAcceptable(imageSource) {
+                NSLog("ImpactAppCoordinator: Refusing oversized image %@", url.path)
+                DispatchQueue.main.async {
+                    // Say why nothing opened instead of silently quitting (not under the test runner)
+                    if NSApp.isRunning {
+                        let alert = NSAlert()
+                        alert.alertStyle = .warning
+                        alert.messageText = "Image Too Large"
+                        alert.informativeText = "“\(url.lastPathComponent)” is larger than Impact can open "
+                            + "(\(Self.maxDecodeDimension) px per side, \(Self.maxDecodePixels / (1024 * 1024)) megapixels in total)."
+                        self?.activate()
+                        alert.runModal()
+                    }
+                    self?.pendingOpenCount -= 1
+                    self?.terminateIfNoEditorSoon()
+                }
+                return
+            }
             guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  Self.isDecodeSizeAcceptable(imageSource),
                   let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, decodeOptions) else {
                 NSLog("ImpactAppCoordinator: Failed to load image from %@", url.path)
                 DispatchQueue.main.async {
@@ -120,6 +140,25 @@ public final class ImpactAppCoordinator {
             // openEditor shows the panel in a main-queue block queued just above: count down after it
             DispatchQueue.main.async { self?.pendingOpenCount -= 1 }
         }
+    }
+
+    /// Longest side Impact will decode (scrolling captures reach 20,000 px tall)
+    static let maxDecodeDimension = 32_768
+    /// Total pixel budget: 256 Mpx is ~1 GiB of RGBA before the canvas, undo and export copies
+    static let maxDecodePixels = 256 * 1024 * 1024
+
+    /// Rejects images whose header declares dimensions that would force a multi-gigabyte eager decode
+    /// (a tiny crafted PNG can claim 100k x 100k). Headers without dimensions are rejected too.
+    static func isDecodeSizeAcceptable(_ source: CGImageSource) -> Bool {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              width > 0, height > 0,
+              width <= maxDecodeDimension, height <= maxDecodeDimension else {
+            return false
+        }
+        let (pixels, overflow) = width.multipliedReportingOverflow(by: height)
+        return !overflow && pixels <= maxDecodePixels
     }
 
     public func openImageFileDialog() {

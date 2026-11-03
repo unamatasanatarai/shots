@@ -662,6 +662,10 @@ public final class RegionSelectionCoordinator {
         colorPickerRefreshTimer = nil
     }
 
+    /// Minimum spacing of mouse-driven live color samples (120 Hz)
+    private static let mouseColorSampleInterval: TimeInterval = 1.0 / 120.0
+    private var lastMouseColorSampleTime: TimeInterval = 0
+
     private func refreshLiveColorPicker() {
         guard isSelecting, activeMode == .colorPicker else { return }
         let point = liveCurrentPoint ?? CGEvent(source: nil)?.location ?? .zero
@@ -833,8 +837,17 @@ public final class RegionSelectionCoordinator {
         let appKitGlobal = NSPoint(x: globalCGPoint.x, y: screenHeight - globalCGPoint.y)
 
         if activeMode == .colorPicker {
-            // Sample once here; draw() only renders the cached sample
-            updateLiveColorSample(at: globalCGPoint)
+            // Sample here; draw() only renders the cached sample. A 500-1000 Hz mouse would otherwise trigger a
+            // window-server capture per event: sample at most at display rate and only when the pixel under the
+            // cursor changed. A skipped final position is picked up by the 30 Hz refresh timer.
+            let now = ProcessInfo.processInfo.systemUptime
+            let samePixel = liveColorSample.map {
+                floor($0.point.x) == floor(globalCGPoint.x) && floor($0.point.y) == floor(globalCGPoint.y)
+            } ?? false
+            if !samePixel && now - lastMouseColorSampleTime >= Self.mouseColorSampleInterval {
+                lastMouseColorSampleTime = now
+                updateLiveColorSample(at: globalCGPoint)
+            }
         }
 
         for panel in overlayPanels {

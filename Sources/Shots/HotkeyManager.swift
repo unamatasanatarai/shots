@@ -66,8 +66,9 @@ public final class HotKeyManager {
                     nil,
                     &hotKeyID
                 )
-                let id = (paramStatus == noErr) ? hotKeyID.id : 1
-                manager.handleHotkeyEvent(id: id)
+                // An unreadable event must not default to a hotkey ID (that started an area capture)
+                guard paramStatus == noErr else { return paramStatus }
+                manager.handleHotkeyEvent(id: hotKeyID.id)
                 return noErr
             },
             1,

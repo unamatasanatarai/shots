@@ -110,6 +110,11 @@ git show-ref --verify --quiet "refs/tags/v${version}" &&
 git diff --cached --quiet ||
     die "You have staged changes. Commit or unstage them before releasing."
 
+# The DMGs are built from the working tree while the tag points at a commit: any unstaged edit would ship
+# in binaries that match no published source.
+[[ -z "$(git status --porcelain --untracked-files=no)" ]] ||
+    die "You have uncommitted changes. Commit or stash them before releasing."
+
 # Refuse to overwrite an existing, uncommitted VERSION change.
 git diff --quiet -- VERSION ||
     die "VERSION has uncommitted changes. Commit or revert them first."
@@ -229,6 +234,11 @@ info "Generating release summary via Gemini (${GEMINI_MODEL})..."
 
 build_request_payload "true" >"$request_file"
 
+# The API key goes through a 0600 header file: on the curl command line it is readable by any local
+# process (ps) for the length of the request
+header_file="${tmp_dir}/gemini_headers"
+(umask 077 && printf 'x-goog-api-key: %s\n' "$GEMINI_API_KEY" >"$header_file")
+
 if ! curl \
     --silent \
     --show-error \
@@ -236,7 +246,7 @@ if ! curl \
     --connect-timeout 15 \
     --max-time 180 \
     -X POST "$GEMINI_API_URL" \
-    -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+    -H "@${header_file}" \
     -H 'Content-Type: application/json' \
     --data-binary "@${request_file}" \
     -o "$response_file"; then
@@ -251,7 +261,7 @@ if ! curl \
             --connect-timeout 15 \
             --max-time 180 \
             -X POST "$GEMINI_API_URL" \
-            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+            -H "@${header_file}" \
             -H 'Content-Type: application/json' \
             --data-binary "@${request_file}" \
             -o "$response_file"; then
@@ -318,7 +328,9 @@ printf 'DMG artifacts:   %s\n' "$dmg_silicon"
 printf '                 %s\n' "$dmg_intel"
 printf '\n%s\n' 'Release notes to be published:'
 printf '%s\n' '--------------------------------------------------'
-cat "$release_notes_file"
+# LLM output built from commit text: strip control characters so escape sequences cannot hide or rewrite
+# what is shown before the confirmation prompt
+LC_ALL=C tr -d '\000-\010\013-\037\177' <"$release_notes_file"
 printf '%s\n' '--------------------------------------------------'
 printf '\n'
 

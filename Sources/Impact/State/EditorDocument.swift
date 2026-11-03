@@ -399,6 +399,27 @@ public final class EditorDocument {
         if undoStack.count > 50 { undoStack.removeFirst() }
         redoBeforeLastSnapshot = redoStack
         redoStack.removeAll()
+        // After the redo images are set aside: they come back if this snapshot is discarded (a no-op click),
+        // and must not cost the undo history its steps
+        trimUndoStackToImageBudget()
+    }
+
+    /// Undo snapshots keep whole images (crops): cap the bytes held by images other than the current one,
+    /// not just the step count, or 50 crops of a large capture retain gigabytes
+    public static let undoImageByteBudget = 512 * 1024 * 1024
+
+    private func trimUndoStackToImageBudget() {
+        func retainedBytes() -> Int {
+            var seen = Set<ObjectIdentifier>([ObjectIdentifier(originalImage)])
+            var total = 0
+            for snapshot in undoStack where seen.insert(ObjectIdentifier(snapshot.image)).inserted {
+                total += snapshot.image.bytesPerRow * snapshot.image.height
+            }
+            return total
+        }
+        while undoStack.count > 1, retainedBytes() > Self.undoImageByteBudget {
+            undoStack.removeFirst()
+        }
     }
 
     /// Pushes a snapshot captured earlier (e.g. before a callout editing session) as one undo step
@@ -458,7 +479,10 @@ public final class EditorDocument {
         let minY = snap(clipped.minY, low: canvas.minY, high: canvas.maxY)
         let maxY = snap(clipped.maxY, low: canvas.minY, high: canvas.maxY)
         guard maxX - minX >= Self.minimumCropSize, maxY - minY >= Self.minimumCropSize else { return nil }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        // Oversized selections are clamped, not rejected (rejecting cleared the selection mid-drag)
+        let width = min(maxX - minX, Self.maxImageDimension)
+        let height = min(maxY - minY, Self.maxImageDimension)
+        return CGRect(x: minX, y: minY, width: width, height: height)
     }
 
     /// Crops to `rect` (canvas coordinates) as one undo step. The result behaves exactly like a newly opened
@@ -557,6 +581,26 @@ public final class EditorDocument {
 
     // MARK: - Elastic Canvas Auto-Sizing (Section 4)
 
+    /// How far (points) the canvas may grow past each image edge
+    public static let maxElasticMargin: CGFloat = 4096
+    /// Largest side a crop may produce: crops reaching past the image enlarge it, and repeated crops must not
+    /// ratchet it to a size no export can allocate
+    public static let maxImageDimension: CGFloat = 32_768
+
+    /// Total canvas pixels (image + margins) an export may allocate: 256 Mpx is ~1 GiB of BGRA
+    public static let maxCanvasPixels: CGFloat = 256 * 1024 * 1024
+
+    /// The per-edge growth allowed for an image of `size`: maxElasticMargin, reduced so the whole canvas stays
+    /// within maxCanvasPixels (a 32k x 8k image gets almost none)
+    static func elasticMargin(forImage size: CGSize) -> CGFloat {
+        let w = size.width, h = size.height
+        guard w * h < maxCanvasPixels else { return 0 }
+        // Largest m with (w + 2m)(h + 2m) <= budget
+        let sum = w + h
+        let m = (-sum + (sum * sum - 4 * (w * h - maxCanvasPixels)).squareRoot()) / 4
+        return max(0, min(maxElasticMargin, m.rounded(.down)))
+    }
+
     public func computeElasticBounds() {
         // 1. Initialize computedBounds = originalImageBounds
         var computedMinX = originalImageBounds.minX
@@ -593,6 +637,15 @@ public final class EditorDocument {
         if computedMinY < image.minY { computedMinY = (computedMinY - 10.0).rounded(.down) }
         if computedMaxX > image.maxX { computedMaxX = (computedMaxX + 10.0).rounded(.up) }
         if computedMaxY > image.maxY { computedMaxY = (computedMaxY + 10.0).rounded(.up) }
+
+        // Hard cap on growth: nudging (key repeat), dragging off-window or repeated pastes can push an
+        // annotation arbitrarily far, and every export allocates width x height x 4 bytes of canvas.
+        // Anything past the cap is clipped from the composition instead of growing it.
+        let margin = Self.elasticMargin(forImage: image.size)
+        computedMinX = max(computedMinX, image.minX - margin)
+        computedMinY = max(computedMinY, image.minY - margin)
+        computedMaxX = min(computedMaxX, image.maxX + margin)
+        computedMaxY = min(computedMaxY, image.maxY + margin)
 
         // 4. Original Integrity: never shrink smaller than exact original background dimensions
         computedMinX = min(computedMinX, originalImageBounds.minX)

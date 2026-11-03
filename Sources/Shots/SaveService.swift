@@ -127,9 +127,10 @@ public final class SaveService {
     /// Persists encoded image data to the target directory with the given filename.
     @discardableResult
     public func saveImageData(_ data: Data, to directoryURL: URL, filename: String) throws -> URL {
-        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
         let destinationURL = directoryURL.appendingPathComponent(filename)
         do {
+            // Inside the do: a failure here must still release the name resolveUniqueDestinationURL reserved
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
             try data.write(to: destinationURL, options: .atomic)
             lock.lock()
             reservedPaths.remove(destinationURL.path)

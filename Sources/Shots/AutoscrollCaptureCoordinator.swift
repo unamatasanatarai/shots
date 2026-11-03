@@ -168,6 +168,9 @@ public final class AutoscrollCaptureCoordinator: NSObject {
             let speedConfig = AppSettings.shared.captureSnapshot.scrollingCaptureSpeed
             let scrollPixels = speedConfig.scrollDeltaPixels(forRegionHeight: regionRect.height)
             let stepDelay = speedConfig.stepDelayMicroseconds
+            // The posted scroll in frame pixels (frames are captured at backing scale)
+            let pixelsPerPoint = regionRect.height > 0 ? CGFloat(firstFrame.height) / regionRect.height : 1
+            let expectedShift = Int((CGFloat(abs(scrollPixels)) * pixelsPerPoint).rounded())
 
             for _ in 0..<maxSteps {
                 guard !self.isAborted && !self.isFinishedEarly else { break }
@@ -188,9 +191,13 @@ public final class AutoscrollCaptureCoordinator: NSObject {
 
                     // Detect vertical pixel offset
                     let currentPixels = FramePixels(currentFrame)
-                    let shift = ScrollingCaptureService.shared.detectVerticalOffset(between: lastPixels, and: currentPixels)
+                    let shift = ScrollingCaptureService.shared.detectVerticalOffset(
+                        between: lastPixels, and: currentPixels, expectedShift: expectedShift > 0 ? expectedShift : nil
+                    )
 
-                    if shift == 0 {
+                    // No movement, or no overlap found at all (a full-height "shift"): appending the whole frame
+                    // would stitch a duplicate or a discontinuity, so it counts toward stopping instead
+                    if shift == 0 || shift >= currentFrame.height {
                         consecutiveIdenticalCount += 1
                         // If content didn't move 2 consecutive times, bottom of page is reached
                         return consecutiveIdenticalCount >= 2

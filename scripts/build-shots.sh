@@ -22,6 +22,12 @@ contents_dir="${app_dir}/Contents"
 macos_dir="${contents_dir}/MacOS"
 resources_dir="${contents_dir}/Resources"
 
+# Start from an empty bundle: files left by earlier builds (or removed from Resources/) must not be sealed
+# into the signed bundle and shipped
+case "$app_dir" in
+*/build/*.app | build/*.app) rm -rf -- "$app_dir" ;;
+*) build_die "Refusing to clean unexpected bundle path: ${app_dir}" ;;
+esac
 mkdir -p "$macos_dir" "$resources_dir"
 
 if [[ -d "Resources" ]]; then

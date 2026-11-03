@@ -17,6 +17,10 @@ public final class EditorPanel: NSPanel {
     public private(set) var sourceFileURL: URL?
     /// document.editSerial when the composition was last saved (nil: never saved)
     private var savedEditSerial: Int?
+    /// Set when the last save could not write next to the source and went to ~/Pictures instead
+    private(set) var lastSaveUsedFallbackFolder = false
+    /// Block observers registered by this panel, removed when it closes (block observers outlive their owner)
+    private var notificationTokens: [NSObjectProtocol] = []
 
     /// Whether closing (or replacing the image, or quitting) writes a numbered file. Tests turn it off.
     public var shouldSaveOnClose: Bool = true
@@ -43,7 +47,14 @@ public final class EditorPanel: NSPanel {
         canvasView.endCalloutEditingIfNeeded()
         if let savedURL = saveToNextNumberedFile() {
             NSLog("Impact: Saved composition to %@", savedURL.path)
-            showImageSavedToast()
+            if lastSaveUsedFallbackFolder, let container = contentView {
+                EditorToastView.show(in: container, below: toolbarView, text: "Saved to Pictures: \(savedURL.lastPathComponent)")
+            } else {
+                showImageSavedToast()
+            }
+        } else {
+            NSSound.beep()
+            showSaveFailedToast()
         }
     }
 
@@ -110,13 +121,13 @@ public final class EditorPanel: NSPanel {
         toolbarView.layoutSubtreeIfNeeded()
         toolbarView.updateResponsiveOverflow()
 
-        NotificationCenter.default.addObserver(
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification,
             object: self,
             queue: .main
         ) { [weak self] _ in
             self?.updateToolbarForWidthChange()
-        }
+        })
     }
 
     override public func setFrame(_ frameRect: NSRect, display displayFlag: Bool) {
@@ -248,6 +259,8 @@ public final class EditorPanel: NSPanel {
             return
         }
         didFinishClosing = true
+        notificationTokens.forEach { NotificationCenter.default.removeObserver($0) }
+        notificationTokens.removeAll()
         // Commit any callout being typed so the copy and the saved file include it
         canvasView.endCalloutEditingIfNeeded()
 
@@ -271,6 +284,9 @@ public final class EditorPanel: NSPanel {
         onClose?()
     }
 
+    /// Extensions saveToNextNumberedFile encodes in their own format (everything else is written as PNG)
+    static let writableExtensions: Set<String> = ["png", "jpg", "jpeg", "tiff", "tif", "gif", "bmp"]
+
     /// Computes the next available numbered filename without overwriting existing files
     /// e.g. "arero.jpg" -> "arero-2.jpg", "arero-2.jpg" -> "arero-3.jpg"
     public func nextAvailableFileURL() -> URL {
@@ -281,7 +297,10 @@ public final class EditorPanel: NSPanel {
         if let source = sourceFileURL {
             baseDir = source.deletingLastPathComponent()
             let fullFilename = source.deletingPathExtension().lastPathComponent
-            ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
+            // Only formats the encoder writes keep their extension: a .heic/.webp source gets PNG bytes,
+            // so it must get a .png name too
+            let sourceExt = source.pathExtension
+            ext = Self.writableExtensions.contains(sourceExt.lowercased()) ? sourceExt : "png"
 
             // Check if fullFilename already ends with "-<digits>"
             if let regex = EditorPanel.numberedSuffixRegex,
@@ -299,7 +318,7 @@ public final class EditorPanel: NSPanel {
             let titleURL = URL(fileURLWithPath: isAppTitle ? "" : title)
             let fullFilename = isAppTitle ? "" : titleURL.deletingPathExtension().lastPathComponent
             let titleExt = titleURL.pathExtension.lowercased()
-            ext = ["png", "jpg", "jpeg", "tiff", "tif", "gif", "bmp", "heic"].contains(titleExt) ? titleExt : "png"
+            ext = Self.writableExtensions.contains(titleExt) ? titleExt : "png"
             if !fullFilename.isEmpty {
                 if let regex = EditorPanel.numberedSuffixRegex,
                    let match = regex.firstMatch(in: fullFilename, range: NSRange(fullFilename.startIndex..., in: fullFilename)) {
@@ -325,6 +344,7 @@ public final class EditorPanel: NSPanel {
     /// Saves the current composition directly without showing a Save As dialog
     @discardableResult
     public func saveToNextNumberedFile() -> URL? {
+        lastSaveUsedFallbackFolder = false
         let targetURL = nextAvailableFileURL()
         let ext = targetURL.pathExtension.lowercased()
         let format: NSBitmapImageRep.FileType
@@ -342,9 +362,39 @@ public final class EditorPanel: NSPanel {
         default:
             format = .png
         }
-        canvasView.saveCompositionToFile(url: targetURL, format: format)
+        // Render and encode once: a write failure retries only the write, never the full-canvas render
+        guard let data = canvasView.encodedComposition(format: format) else { return nil }
+        var savedURL: URL?
+        do {
+            try data.write(to: targetURL, options: .atomic)
+            savedURL = targetURL
+        } catch {
+            NSLog("Impact: Failed to save composition to %@: %@", targetURL.path, error.localizedDescription)
+            // The source folder may be read-only or gone (unmounted volume): keep the work in Pictures instead
+            // of losing it on close
+            if let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first,
+               pictures.standardizedFileURL != targetURL.deletingLastPathComponent().standardizedFileURL {
+                let stem = targetURL.deletingPathExtension().lastPathComponent
+                let ext = targetURL.pathExtension
+                var fallback = pictures.appendingPathComponent(targetURL.lastPathComponent)
+                var n = 2
+                while FileManager.default.fileExists(atPath: fallback.path) {
+                    fallback = pictures.appendingPathComponent("\(stem)-\(n).\(ext)")
+                    n += 1
+                }
+                do {
+                    try data.write(to: fallback, options: .atomic)
+                    savedURL = fallback
+                    lastSaveUsedFallbackFolder = true
+                    NSLog("Impact: Saved composition to fallback %@", fallback.path)
+                } catch {
+                    NSLog("Impact: Fallback save to %@ failed too: %@", fallback.path, error.localizedDescription)
+                }
+            }
+        }
+        guard let url = savedURL else { return nil }
         savedEditSerial = document.editSerial
-        return targetURL
+        return url
     }
 
     private func setupContentView() {
@@ -403,7 +453,7 @@ public final class EditorPanel: NSPanel {
         }
 
         clipView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification,
             object: clipView,
             queue: .main
@@ -413,9 +463,9 @@ public final class EditorPanel: NSPanel {
                 self.canvasView.zoomScale = sv.magnification
                 self.updateMetaLabel()
             }
-        }
+        })
 
-        NotificationCenter.default.addObserver(
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: NSScrollView.didEndLiveMagnifyNotification,
             object: scrollView,
             queue: .main
@@ -424,7 +474,7 @@ public final class EditorPanel: NSPanel {
             self.canvasView.zoomScale = sv.magnification
             self.updateMetaLabel()
             self.canvasView.needsDisplay = true
-        }
+        })
     }
 
     public func setupWelcomeDropView() {
@@ -686,6 +736,11 @@ public final class EditorPanel: NSPanel {
     public func showImageSavedToast() {
         guard let container = contentView else { return }
         EditorToastView.show(in: container, below: toolbarView, text: "Image Saved")
+    }
+
+    public func showSaveFailedToast() {
+        guard let container = contentView else { return }
+        EditorToastView.show(in: container, below: toolbarView, text: "Could Not Save Image")
     }
 
     override public func magnify(with event: NSEvent) {
