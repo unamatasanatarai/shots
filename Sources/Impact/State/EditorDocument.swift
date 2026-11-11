@@ -9,7 +9,10 @@ public final class EditorDocument {
     public private(set) var activeCanvasBounds: CGRect
 
     public var layers: [AnnotationLayer] = [] {
-        didSet { cachedTopToBottom = nil }
+        didSet {
+            cachedTopToBottom = nil
+            onLayersChanged?()
+        }
     }
     /// Draw order cache for hit testing (several lookups per mouse move); rebuilt when `layers` changes.
     /// zIndex/visibility only change on layers before they're inserted, which also resets it.
@@ -134,6 +137,8 @@ public final class EditorDocument {
     /// Fires when a crop (or undoing one) replaces the base image
     public var onImageChanged: ((CGImage) -> Void)?
     public var onNeedsDisplay: (() -> Void)?
+    /// Fires whenever the `layers` array is modified or replaced (e.g. undo, redo, delete)
+    public var onLayersChanged: (() -> Void)?
 
     public init(image: CGImage) {
         self.originalImage = image

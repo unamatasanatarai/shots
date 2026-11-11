@@ -1825,6 +1825,9 @@ enum AuditRegressionTests {
         testRunner("Regression: Overlay - Area/OCR Dirty Region Is Tight Around the Cursor") {
             testOverlayDirtyReach()
         }
+        testRunner("Regression: Overlay - Coordinates and Crosshair Remain Visible at Top Display Edge") {
+            testTopEdgeOverlayRendering()
+        }
     }
 
     private static func makeDefaults() -> (UserDefaults, String) {
@@ -2450,5 +2453,115 @@ enum AuditRegressionTests {
         // Colour picker loupe (126pt) + pill (36pt) sit 20pt from the cursor on either side
         let picker = RegionSelectionView.dirtyReach(for: .colorPicker)
         assert(picker.width >= 20 + 126 + 12 && picker.height >= 20 + 126 + 8 + 36 + 12, "Picker reach must cover loupe and shadow")
+    }
+
+    static func testTopEdgeOverlayRendering() {
+        let width = 400
+        let height = 300
+        let screen = NSScreen.screens.first ?? NSScreen()
+        let view = RegionSelectionView(
+            frame: NSRect(x: 0, y: 0, width: width, height: height),
+            screen: screen,
+            mode: .area
+        )
+
+        // Same containment as CaptureService.cgDisplayRect: top edge (CG y == 0 -> AppKit y == bounds.maxY) and
+        // left edge are in; right edge and bottom edge belong to the neighbouring display
+        assert(view.containsPoint(NSPoint(x: 200, y: CGFloat(height))), "Top edge y == maxY must be in bounds")
+        assert(view.containsPoint(NSPoint(x: 0, y: 150)), "Left edge x == minX must be in bounds")
+        assert(view.containsPoint(NSPoint(x: 0, y: CGFloat(height))), "Top-left corner must be in bounds")
+        assert(!view.containsPoint(NSPoint(x: CGFloat(width), y: 150)), "Right edge x == maxX belongs to the display on the right")
+        assert(!view.containsPoint(NSPoint(x: 200, y: 0)), "Bottom edge y == minY belongs to the display below")
+        // Agrees with CG-space containment on every edge, corner and just outside
+        let cgRect = CaptureService.cgDisplayRect(for: view.bounds, primaryHeight: CGFloat(height))
+        for x in [-1.0, 0.0, 0.5, 200.0, CGFloat(width) - 0.5, CGFloat(width), CGFloat(width) + 1] {
+            for y in [-1.0, 0.0, 0.5, 150.0, CGFloat(height) - 0.5, CGFloat(height), CGFloat(height) + 1] {
+                let cg = CGPoint(x: x, y: CGFloat(height) - y)
+                assert(view.containsPoint(NSPoint(x: x, y: y)) == cgRect.contains(cg), "containsPoint disagrees with cgDisplayRect at (\(x), \(y))")
+            }
+        }
+        assert(!view.containsPoint(NSPoint(x: 200, y: CGFloat(height) + 1)), "Above top edge must be out of bounds")
+        assert(!view.containsPoint(NSPoint(x: -1, y: 150)), "Left of minX must be out of bounds")
+
+        func renderOverlayAndCountInk(inSampleRect sample: CGRect, setup: (RegionSelectionView) -> Void) -> Int {
+            setup(view)
+            var bytes = [UInt8](repeating: 0, count: width * height * 4)
+            let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+            let ctx = CGContext(
+                data: &bytes,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: cs,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+            view.draw(view.bounds)
+            NSGraphicsContext.restoreGraphicsState()
+
+            // CGContext origin is bottom-left in memory unless top-down; row 0 in `bytes` is top row in CoreGraphics bitmap context
+            let minX = max(0, Int(sample.minX))
+            let maxX = min(width, Int(sample.maxX))
+            let minY = max(0, height - Int(sample.maxY))
+            let maxY = min(height, height - Int(sample.minY))
+            var nonZero = 0
+            for py in minY..<maxY {
+                for px in minX..<maxX {
+                    if bytes[(py * width + px) * 4 + 3] > 0 {
+                        nonZero += 1
+                    }
+                }
+            }
+            return nonZero
+        }
+
+        // 1. Area hover at top edge (y == 300): coordinate badge draws at x >= 208, y in [276, 294]
+        let badgeInkHover = renderOverlayAndCountInk(inSampleRect: CGRect(x: 206, y: 270, width: 60, height: 26)) { v in
+            v.configure(screen: screen, mode: .area, screenImage: nil)
+            v.externalUpdate(
+                mousePoint: NSPoint(x: 200, y: CGFloat(height)),
+                isDragging: false,
+                selectionStart: nil,
+                selectionCurrent: nil
+            )
+        }
+        assert(badgeInkHover > 0, "Coordinate badge must render when cursor touches top edge (got \(badgeInkHover) pixels)")
+
+        // 2. Area drag to top edge (start (100, 200) -> current (200, 300)): crosshair at (200, 300) and dimensions badge must render
+        let crosshairInkDrag = renderOverlayAndCountInk(inSampleRect: CGRect(x: 196, y: 288, width: 8, height: 12)) { v in
+            v.configure(screen: screen, mode: .area, screenImage: nil)
+            v.externalUpdate(
+                mousePoint: NSPoint(x: 200, y: CGFloat(height)),
+                isDragging: true,
+                selectionStart: NSPoint(x: 100, y: 200),
+                selectionCurrent: NSPoint(x: 200, y: CGFloat(height))
+            )
+        }
+        assert(crosshairInkDrag > 0, "Crosshair must render when dragging to top edge")
+
+        // 3. Ruler and Color Picker at top edge (y == 300) must also render
+        let rulerInk = renderOverlayAndCountInk(inSampleRect: CGRect(x: 0, y: 250, width: width, height: 50)) { v in
+            v.configure(screen: screen, mode: .ruler, screenImage: nil)
+            v.externalUpdate(
+                mousePoint: NSPoint(x: 200, y: CGFloat(height)),
+                isDragging: false,
+                selectionStart: nil,
+                selectionCurrent: nil
+            )
+        }
+        assert(rulerInk > 0, "Ruler overlay must render when cursor touches top edge")
+
+        let pickerInk = renderOverlayAndCountInk(inSampleRect: CGRect(x: 190, y: 100, width: 180, height: 200)) { v in
+            v.configure(screen: screen, mode: .colorPicker, screenImage: nil)
+            v.externalUpdate(
+                mousePoint: NSPoint(x: 200, y: CGFloat(height)),
+                isDragging: false,
+                selectionStart: nil,
+                selectionCurrent: nil
+            )
+        }
+        assert(pickerInk > 0, "Color picker overlay must render when cursor touches top edge")
     }
 }

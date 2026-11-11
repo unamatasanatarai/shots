@@ -1154,10 +1154,20 @@ final class RegionSelectionView: NSView {
         needsDisplay = true
     }
 
+    /// Bounds check matching `CaptureService.cgDisplayRect` containment: half-open [minX, maxX) and [minY, maxY)
+    /// in CG space, i.e. x in [minX, maxX) and y in (minY, maxY] in AppKit. The top row (CG y == 0 -> AppKit
+    /// y == bounds.maxY) is inside; the right column and bottom row belong to the neighbouring display, which
+    /// matters because a drag's current point is sent to every screen's overlay unclipped.
+    func containsPoint(_ pt: NSPoint) -> Bool {
+        !bounds.isEmpty &&
+        pt.x >= bounds.minX && pt.x < bounds.maxX &&
+        pt.y > bounds.minY && pt.y <= bounds.maxY
+    }
+
     /// Triggers a repaint of the color picker loupe and badge when the underlying live screen changes
     func refreshLiveSample() {
         guard mode == .colorPicker else { return }
-        guard let pt = currentPoint ?? currentMousePoint, bounds.contains(pt) else { return }
+        guard let pt = currentPoint ?? currentMousePoint, containsPoint(pt) else { return }
         for rect in dirtyRects() {
             setNeedsDisplay(rect)
         }
@@ -1306,7 +1316,7 @@ final class RegionSelectionView: NSView {
 
         // 2. Precision reticle crosshair cursor
         let activePoint = currentPoint ?? currentMousePoint
-        if let pt = activePoint, bounds.contains(pt) {
+        if let pt = activePoint, containsPoint(pt) {
             let ringColor = isOCR ? CGColor(red: 0.66, green: 0.33, blue: 0.97, alpha: 0.90) : nil
             drawPrecisionCrosshair(at: pt, in: context, ringColorOverride: ringColor)
 
@@ -1321,7 +1331,7 @@ final class RegionSelectionView: NSView {
 
     private func drawRuler(in context: CGContext) {
         let activePoint = currentPoint ?? currentMousePoint
-        guard let pt = activePoint, bounds.contains(pt) else { return }
+        guard let pt = activePoint, containsPoint(pt) else { return }
 
         // 1. Full-screen alignment guidelines
         context.saveGState()
@@ -1391,7 +1401,7 @@ final class RegionSelectionView: NSView {
 
     private func drawColorPicker(in context: CGContext) {
         let activePoint = currentPoint ?? currentMousePoint
-        guard let pt = activePoint, bounds.contains(pt) else { return }
+        guard let pt = activePoint, containsPoint(pt) else { return }
 
         // Center reticle ring at cursor location (9pt diameter with 1pt center hole)
         context.saveGState()

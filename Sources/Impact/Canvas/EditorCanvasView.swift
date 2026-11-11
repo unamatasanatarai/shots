@@ -24,6 +24,9 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     var hoverAlpha: CGFloat = 0.0
     private var canvasTrackingArea: NSTrackingArea?
     private var currentMouseCanvasPoint: CGPoint?
+    /// Canvas origin `currentMouseCanvasPoint` was computed against: when the elastic canvas grows left/down,
+    /// the same pointer position maps to a different canvas point
+    private var pointerCanvasOrigin: CGPoint = .zero
 
     /// The color picker follows the image pixel under the pointer (top-left origin); fires only when it changes
     public var onPointerPixelChanged: ((Int, Int) -> Void)?
@@ -121,6 +124,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     public func canvasBoundsDidChange() {
         frame = NSRect(origin: .zero, size: document.activeCanvasBounds.size)
         layoutCanvasSubviews()
+        remapPointerAfterOriginChange()
         // A crop selection never reaches past the canvas (e.g. after undo shrinks it)
         if let selection = cropSelection, cropGesture == nil {
             let clamped = selection.intersection(document.activeCanvasBounds)
@@ -128,7 +132,27 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         }
         // The elastic origin shifts when the canvas grows left/up; keep the editor on its bubble
         positionCalloutEditor()
+        // Content moved under a still pointer (e.g. undoing a crop, or a layer growing the canvas left)
+        refreshHoverState()
         needsDisplay = true
+    }
+
+    /// Re-derives the pointer's canvas point after the canvas origin moved. With a window, the live pointer is
+    /// authoritative (the scroll view may also have moved); without one, or mid-gesture, shift by the origin delta
+    private func remapPointerAfterOriginChange() {
+        let newOrigin = document.activeCanvasBounds.origin
+        defer { pointerCanvasOrigin = newOrigin }
+        guard let point = currentMouseCanvasPoint, newOrigin != pointerCanvasOrigin || window != nil else { return }
+        // Mid-gesture the pointer may be dragged past the view; mouseDragged owns the point then, so only shift it
+        if let window, !isGestureInProgress {
+            let viewPoint = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            currentMouseCanvasPoint = visibleRect.contains(viewPoint) ? canvasPoint(fromViewPoint: viewPoint) : nil
+        } else {
+            currentMouseCanvasPoint = CGPoint(
+                x: point.x + newOrigin.x - pointerCanvasOrigin.x,
+                y: point.y + newOrigin.y - pointerCanvasOrigin.y
+            )
+        }
     }
 
     /// Repaints the area of a canvas-space rect (e.g. a moving brush preview)
@@ -141,6 +165,11 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         document.onNeedsDisplay = { [weak self] in
             self?.needsDisplay = true
         }
+
+        document.onLayersChanged = { [weak self] in
+            self?.refreshHoverState()
+        }
+        pointerCanvasOrigin = document.activeCanvasBounds.origin
 
         document.onBoundsChanged = { [weak self] _ in
             self?.canvasBoundsDidChange()
@@ -361,7 +390,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         context.saveGState()
 
         // 1. Crisp hover indicator for all annotation elements (instant, no fade, razor-sharp)
-        if let target = hoverOutlineLayer, !selectedLayers.contains(where: { $0.id == target.id }) {
+        if let target = hoverOutlineLayer,
+           target.isVisible,
+           document.layers.contains(where: { $0 === target }),
+           !selectedLayers.contains(where: { $0.id == target.id }) {
             if let path = hoverPath(for: target) {
                 context.saveGState()
 
@@ -457,7 +489,10 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     // MARK: - Canvas Coordinate Mapping
 
     private func canvasPoint(from event: NSEvent) -> CGPoint {
-        let viewPoint = convert(event.locationInWindow, from: nil)
+        canvasPoint(fromViewPoint: convert(event.locationInWindow, from: nil))
+    }
+
+    private func canvasPoint(fromViewPoint viewPoint: CGPoint) -> CGPoint {
         let offsetX = -document.activeCanvasBounds.origin.x
         let offsetY = -document.activeCanvasBounds.origin.y
         return CGPoint(x: viewPoint.x - offsetX, y: viewPoint.y - offsetY)
@@ -1290,11 +1325,25 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
         let point = canvasPoint(from: event)
         moveBrushPreview(to: point)
         trackPointerPixel(at: point)
-        let newlyHovered = document.layersTopToBottom().first { layer in
+        updateHoverState(to: hoveredLayer(at: point))
+        updateCursorForPoint(point)
+    }
+
+    private func hoveredLayer(at point: CGPoint) -> AnnotationLayer? {
+        document.layersTopToBottom().first { layer in
             layer.contains(point: point) || layer.hitTestHandle(point: point) != nil
         }
-        updateHoverState(to: newlyHovered)
-        updateCursorForPoint(point)
+    }
+
+    /// Re-hit-tests hover and cursor at the resting pointer after layers or the canvas origin changed under it
+    private func refreshHoverState() {
+        guard !isGestureInProgress else { return }
+        if let point = currentMouseCanvasPoint {
+            updateHoverState(to: hoveredLayer(at: point))
+            updateCursorForPoint(point)
+        } else if hoveredLayer != nil || hoverOutlineLayer != nil {
+            clearHoverStateImmediately()
+        }
     }
 
     /// Tracks the mouse; with the pen or highlighter, repaints only the old and new brush outline areas
@@ -1313,7 +1362,7 @@ public final class EditorCanvasView: NSView, NSDraggingSource {
     }
 
     func updateHoverState(to newLayer: AnnotationLayer?) {
-        if newLayer?.id != hoveredLayer?.id {
+        if newLayer !== hoveredLayer {
             let oldOutline = hoverOutlineLayer
             hoveredLayer = newLayer
             if let filter = newLayer as? FilterLayer, filter.filterMode != .spotlight {

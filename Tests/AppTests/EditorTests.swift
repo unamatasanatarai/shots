@@ -5303,5 +5303,71 @@ public enum EditorTests {
             toolbar.performUndoAction()
             assert(doc.layers.isEmpty, "Undo from the menu undoes")
         }
+        testRunner("Arrow - Undo Clears Hover Outline And Leaves No Ghost Stroke") {
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let canvas = EditorCanvasView(document: doc)
+            canvas.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+
+            let arrow = ArrowLayer(start: CGPoint(x: 50, y: 150), end: CGPoint(x: 250, y: 150), color: "#007AFF", strokeWidth: 4)
+            doc.addLayer(arrow)
+            doc.selectLayer(arrow)
+
+            // Hovering while selected sets hoverOutlineLayer (hidden only while selected)
+            canvas.updateHoverState(to: arrow)
+            assert(canvas.hoverOutlineLayer === arrow, "Hover outline tracks the hovered arrow")
+
+            // Undoing the arrow removes it and must clear the hover outline completely
+            canvas.performUndo()
+            assert(doc.layers.isEmpty, "Undo must remove the arrow")
+            assert(canvas.hoveredLayer == nil, "Undo must clear hoveredLayer when the hovered arrow is removed")
+            assert(canvas.hoverOutlineLayer == nil, "Undo must clear hoverOutlineLayer so no outline remains")
+
+            // Rendering the canvas must produce pure white base pixels (no ghost blue outline)
+            let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds)!
+            canvas.cacheDisplay(in: canvas.bounds, to: rep)
+            var foundOutlinePixel = false
+            for y in stride(from: 130, to: 170, by: 1) where !foundOutlinePixel {
+                for x in stride(from: 45, to: 260, by: 1) {
+                    if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.redComponent < 0.9 || c.greenComponent < 0.9 {
+                        foundOutlinePixel = true
+                        break
+                    }
+                }
+            }
+            assert(!foundOutlinePixel, "Rendered canvas must not show any leftover arrow outline after Cmd+Z")
+
+            // Moving a hovered arrow and undoing must not keep the stale pre-undo instance
+            let arrow2 = ArrowLayer(start: CGPoint(x: 50, y: 80), end: CGPoint(x: 250, y: 80), color: "#FF3B30", strokeWidth: 4)
+            doc.addLayer(arrow2)
+            doc.saveSnapshot()
+            arrow2.move(by: CGPoint(x: 0, y: 60))
+            doc.selectedLayerIDs.removeAll()
+            canvas.updateHoverState(to: arrow2)
+            assert(canvas.hoverOutlineLayer === arrow2)
+            canvas.performUndo()
+            assert(doc.layers.count == 1)
+            assert(canvas.hoverOutlineLayer == nil, "Undo without cursor tracking must clear stale pre-undo hover reference")
+        }
+        testRunner("Hover - Canvas Growing Left Under A Still Pointer Re-Hit-Tests At The Shifted Point") {
+            let doc = EditorDocument(image: solidImage(400, 300))
+            let canvas = EditorCanvasView(document: doc)
+            canvas.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+
+            let arrow = ArrowLayer(start: CGPoint(x: 50, y: 150), end: CGPoint(x: 250, y: 150), color: "#007AFF", strokeWidth: 4)
+            doc.addLayer(arrow)
+            doc.selectedLayerIDs.removeAll()
+
+            // Pointer rests on the arrow (no window: the event location is the view point; canvas origin is 0, 0)
+            let move = NSEvent.mouseEvent(with: .mouseMoved, location: NSPoint(x: 150, y: 150), modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+            canvas.mouseMoved(with: move)
+            assert(canvas.hoveredLayer === arrow, "Pointer on the arrow hovers it")
+
+            // A layer far left of the image grows the canvas leftwards: the content shifts right under the still pointer
+            let farLeft = RectangleLayer(rect: CGRect(x: -300, y: 140, width: 20, height: 20), color: "#FF3B30", strokeWidth: 2)
+            doc.addLayer(farLeft)
+            doc.selectedLayerIDs.removeAll()
+            assert(doc.activeCanvasBounds.minX < -250, "Canvas grew left (minX \(doc.activeCanvasBounds.minX))")
+            assert(canvas.hoveredLayer !== arrow, "The arrow moved away from under the pointer; hover must not stick to it")
+        }
 }
 }
