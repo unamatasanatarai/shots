@@ -7,44 +7,79 @@ public final class EditorToastView: NSVisualEffectView {
     public static let sharedIdentifier = NSUserInterfaceItemIdentifier("ImpactCopiedToast")
 
     private var dismissWorkItem: DispatchWorkItem?
-    private let label: NSTextField
+    public let label: NSTextField
+    public let iconView: NSImageView
 
     public init(text: String = "Copied to Clipboard") {
         self.label = NSTextField(labelWithString: text)
-        super.init(frame: NSRect(x: 0, y: 0, width: 180, height: 34))
+        self.iconView = NSImageView()
+        super.init(frame: NSRect(x: 0, y: 0, width: 190, height: 34))
 
         identifier = EditorToastView.sharedIdentifier
-        material = .hudWindow
-        state = .active
-        wantsLayer = true
-        layer?.cornerRadius = 16
-        layer?.masksToBounds = true
-        layer?.borderWidth = 1.0
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+        applyToastPillStyle()
         translatesAutoresizingMaskIntoConstraints = false
 
-        label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        label.textColor = .white
-        label.alignment = .center
+        label.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = ImpactTheme.toastForeground
+        label.alignment = .left
+        label.isBezeled = false
+        label.drawsBackground = false
+        label.isEditable = false
+        label.isSelectable = false
         label.translatesAutoresizingMaskIntoConstraints = false
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        updateIcon(for: text)
+
+        addSubview(iconView)
         addSubview(label)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 34),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             label.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+
+        updateTheme()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateTheme()
+    }
+
+    private func updateTheme() {
+        refreshToastPillColors()
+        label.textColor = ImpactTheme.toastForeground
+    }
+
+    public func updateContent(text: String) {
+        label.stringValue = text
+        updateIcon(for: text)
+    }
+
+    private func updateIcon(for text: String) {
+        let isError = text.localizedCaseInsensitiveContains("could not") || text.localizedCaseInsensitiveContains("failed")
+        let symbolName = isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
+        let symbolColor = isError ? NSColor.systemOrange : NSColor.systemGreen
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        iconView.contentTintColor = symbolColor
+    }
+
     /// Shows or refreshes the HUD toast pill in the given container
     public static func show(in container: NSView, below anchorView: NSView? = nil, text: String = "Copied to Clipboard") {
         if let existing = container.subviews.first(where: { $0.identifier == sharedIdentifier }) as? EditorToastView {
-            existing.label.stringValue = text
+            existing.updateContent(text: text)
             existing.pulseAndResetTimer()
             return
         }

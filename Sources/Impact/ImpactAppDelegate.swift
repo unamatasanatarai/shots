@@ -106,18 +106,12 @@ public final class ImpactAppDelegate: NSObject, NSApplicationDelegate {
 
         let pill = NSVisualEffectView()
         pill.identifier = pillId
-        pill.material = .hudWindow
-        pill.state = .active
-        pill.wantsLayer = true
-        pill.layer?.cornerRadius = 16
-        pill.layer?.masksToBounds = true
-        pill.layer?.borderWidth = 1.0
-        pill.layer?.borderColor = NSColor.white.withAlphaComponent(0.2).cgColor
+        pill.applyToastPillStyle()
         pill.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: "Press ⌘Q again to quit")
-        label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        label.textColor = .white
+        label.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = ImpactTheme.toastForeground
         label.translatesAutoresizingMaskIntoConstraints = false
         pill.addSubview(label)
 

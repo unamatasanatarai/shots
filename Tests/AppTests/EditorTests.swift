@@ -1419,6 +1419,22 @@ public enum EditorTests {
             assert(toast != nil, "showCopiedToClipboardToast must present EditorToastView in contentView")
             assert(toast?.material == .hudWindow, "Toast must use .hudWindow material matching cmd+q prompt")
             assert(toast?.layer?.cornerRadius == 16, "Toast corner radius must be 16 matching cmd+q prompt")
+            assert(toast?.iconView.image != nil, "Toast must include status icon")
+            assert(toast?.maskImage != nil && toast?.layer?.masksToBounds == true,
+                   "Toast blur material must be clipped to the pill, or a square background shows behind it")
+
+            // Test light/dark mode legibility & theme contrast
+            var lightTextColor: CGFloat = 1.0
+            NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance {
+                lightTextColor = (toast?.label.textColor?.usingColorSpace(.sRGB)?.redComponent) ?? 1.0
+            }
+            assert(lightTextColor < 0.25, "In light mode, toast text must be dark charcoal/black for high contrast, not white")
+
+            var darkTextColor: CGFloat = 0.0
+            NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
+                darkTextColor = (toast?.label.textColor?.usingColorSpace(.sRGB)?.redComponent) ?? 0.0
+            }
+            assert(darkTextColor > 0.85, "In dark mode, toast text must be white for high contrast")
 
             // 3. Repeated copy pulses existing toast without duplicating
             panel.showCopiedToClipboardToast()

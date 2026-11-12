@@ -45,6 +45,11 @@ public enum ImpactTheme {
     static let pillFill = dynamic(light: .white, dark: NSColor(white: 0.22, alpha: 0.90))
     static let pillBorder = dynamic(light: NSColor(white: 0.0, alpha: 0.14), dark: NSColor(white: 1.0, alpha: 0.15))
     static let pillForeground = dynamic(light: NSColor(white: 0.12, alpha: 1.0), dark: NSColor(white: 0.90, alpha: 1.0))
+
+    // MARK: Toast / HUD Popout
+    static let toastBackground = dynamic(light: NSColor(white: 0.98, alpha: 0.92), dark: NSColor(white: 0.16, alpha: 0.88))
+    static let toastBorder = dynamic(light: NSColor(white: 0.0, alpha: 0.14), dark: NSColor(white: 1.0, alpha: 0.18))
+    static let toastForeground = dynamic(light: NSColor(white: 0.10, alpha: 1.0), dark: NSColor(white: 0.96, alpha: 1.0))
 }
 
 extension NSView {
@@ -53,6 +58,41 @@ extension NSView {
         var result = color.cgColor
         effectiveAppearance.performAsCurrentDrawingAppearance { result = color.cgColor }
         return result
+    }
+}
+
+extension NSVisualEffectView {
+    /// Styles a HUD pill (toast, ⌘Q prompt). The blur material is clipped to the rounded shape via
+    /// `maskImage` + `masksToBounds`; without both, AppKit draws the material as a full rectangle behind the pill.
+    func applyToastPillStyle(cornerRadius: CGFloat = 16) {
+        material = .hudWindow
+        state = .active
+        blendingMode = .withinWindow
+        wantsLayer = true
+        maskImage = NSVisualEffectView.roundedMask(cornerRadius: cornerRadius)
+        layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+        layer?.borderWidth = 1.0
+        refreshToastPillColors()
+    }
+
+    /// Re-resolves the dynamic layer colors; call from `viewDidChangeEffectiveAppearance`.
+    func refreshToastPillColors() {
+        layer?.backgroundColor = resolvedCGColor(ImpactTheme.toastBackground)
+        layer?.borderColor = resolvedCGColor(ImpactTheme.toastBorder)
+    }
+
+    private static func roundedMask(cornerRadius: CGFloat) -> NSImage {
+        let edge = cornerRadius * 2 + 1
+        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: cornerRadius, left: cornerRadius, bottom: cornerRadius, right: cornerRadius)
+        image.resizingMode = .stretch
+        return image
     }
 }
 
