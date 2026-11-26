@@ -1667,6 +1667,36 @@ public struct AppTests {
             let pb = NSPasteboard.general.string(forType: .string)
             assert(pb != nil && pb!.hasPrefix("#") && pb!.count == 7, "Pasteboard must contain valid #RRGGBB hex")
             assert(pickedHex == pb, "Completion handler must receive exact hex copied to pasteboard")
+
+            // 5. Safe edge sampling resilience (boundary coordinates)
+            let edgeSample = coordinator.sampleLiveColorAndPatch(at: CGPoint(x: 0, y: 0))
+            assert(edgeSample != nil, "Sampling at (0,0) must succeed without returning nil")
+            assert(edgeSample?.patch?.width == 9 && edgeSample?.patch?.height == 9, "Edge sample patch must be 9x9 pixels")
+
+            // 6. Return / Enter / Space key copy dispatch
+            coordinator.startColorPicker { result in
+                pickedHex = result
+            }
+            coordinator.currentColorPickerValue = "#ABCDEF"
+            let returnEvent = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: 36 // Return key
+            )
+            if let evt = returnEvent {
+                _ = NSApp.sendEvent(evt)
+            }
+            assert(!coordinator.isSelecting, "Return key must finish color picker session")
+            let returnPb = NSPasteboard.general.string(forType: .string)
+            assert(returnPb != nil && returnPb!.hasPrefix("#"), "Return key must copy color value")
+            assert(pickedHex != nil && pickedHex!.hasPrefix("#"), "Completion handler must receive copied hex on Return key")
         }
 
         // MARK: - System Permissions Enforcement Suite

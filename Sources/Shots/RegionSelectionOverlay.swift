@@ -165,14 +165,14 @@ public final class RegionSelectionCoordinator {
         // Install global hotkeys so Escape cancels and Tab copies color immediately without needing window focus
         installHotKeys()
 
-        // Local monitor for Escape and Tab fallback
+        // Local monitor for Escape, Tab, Return, Enter and Space
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
             if event.keyCode == 53 { // Escape
                 self.finish(with: nil)
                 return nil
             }
-            if self.activeMode == .colorPicker && event.keyCode == 48 { // Tab (kVK_Tab)
+            if self.activeMode == .colorPicker && (event.keyCode == 48 || event.keyCode == 36 || event.keyCode == 76 || event.keyCode == 49) { // Tab, Return, Enter, Space
                 self.copyCurrentColorPickerValue()
                 return nil
             }
@@ -240,6 +240,9 @@ public final class RegionSelectionCoordinator {
 
         let initialCGLocation = CGEvent(source: nil)?.location ?? CGPoint.zero
         liveCurrentPoint = initialCGLocation
+        if activeMode == .colorPicker {
+            updateLiveColorSample(at: initialCGLocation)
+        }
         updateOverlays(globalCGPoint: initialCGLocation)
 
         // Show transparent overlays without stealing key focus or deactivating frontmost app
@@ -484,9 +487,7 @@ public final class RegionSelectionCoordinator {
 
         switch type {
         case .mouseMoved:
-            if liveIsDragging {
-                liveCurrentPoint = cgPoint
-            }
+            liveCurrentPoint = cgPoint
             if !isCursorHidden {
                 hideSystemCursor()
             }
@@ -495,9 +496,7 @@ public final class RegionSelectionCoordinator {
             return true // consume
 
         case .leftMouseDragged:
-            if liveIsDragging {
-                liveCurrentPoint = cgPoint
-            }
+            liveCurrentPoint = cgPoint
             if !isCursorHidden {
                 hideSystemCursor()
             }
@@ -555,7 +554,7 @@ public final class RegionSelectionCoordinator {
                 finish(with: nil)
                 return true
             }
-            if activeMode == .colorPicker && keyCode == 48 { // Tab (kVK_Tab)
+            if activeMode == .colorPicker && (keyCode == 48 || keyCode == 36 || keyCode == 76 || keyCode == 49) { // Tab, Return, Enter, Space
                 copyCurrentColorPickerValue()
                 return true
             }
@@ -631,8 +630,38 @@ public final class RegionSelectionCoordinator {
         let centerPixelX = Self.pixelIndex(coordinate: globalCGPoint.x, origin: captureRect.origin.x, scale: scaleX, count: image.width)
         let centerPixelY = Self.pixelIndex(coordinate: globalCGPoint.y, origin: captureRect.origin.y, scale: scaleY, count: image.height)
 
-        let cropRect = CGRect(x: centerPixelX - 4, y: centerPixelY - 4, width: 9, height: 9)
-        let patch = image.cropping(to: cropRect)
+        let patchWidth = 9
+        let patchHeight = 9
+        let cropRect = CGRect(x: centerPixelX - 4, y: centerPixelY - 4, width: patchWidth, height: patchHeight)
+        let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+
+        let patch: CGImage?
+        if imageBounds.contains(cropRect) {
+            patch = image.cropping(to: cropRect)
+        } else {
+            let visible = cropRect.intersection(imageBounds)
+            if !visible.isNull, !visible.isEmpty, let croppedPart = image.cropping(to: visible),
+               let patchCtx = CGContext(
+                   data: nil,
+                   width: patchWidth,
+                   height: patchHeight,
+                   bitsPerComponent: 8,
+                   bytesPerRow: patchWidth * 4,
+                   space: Self.sRGBColorSpace,
+                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+               ) {
+                patchCtx.interpolationQuality = .none
+                patchCtx.setFillColor(CGColor(gray: 0.12, alpha: 1.0))
+                patchCtx.fill(CGRect(x: 0, y: 0, width: patchWidth, height: patchHeight))
+                let localX = visible.minX - cropRect.minX
+                let localTop = visible.minY - cropRect.minY
+                let drawY = CGFloat(patchHeight) - localTop - visible.height
+                patchCtx.draw(croppedPart, in: CGRect(x: localX, y: drawY, width: visible.width, height: visible.height))
+                patch = patchCtx.makeImage()
+            } else {
+                patch = image.cropping(to: cropRect)
+            }
+        }
 
         guard let sampled = extractColor(from: image, x: centerPixelX, y: centerPixelY) else { return nil }
 
@@ -1219,12 +1248,12 @@ final class RegionSelectionView: NSView {
 
     /// Half-extent around the active point that covers everything drawn there in each mode:
     /// area/OCR: crosshair (32pt) + number badge; ruler: pill badge (~260pt wide);
-    /// color picker: 126pt loupe + 36pt pill placed 20pt away (either side), plus shadow
+    /// color picker: 135pt loupe + 46pt badge placed 22pt away (either side), plus shadow
     static func dirtyReach(for mode: CaptureOverlayMode) -> NSSize {
         switch mode {
         case .area, .ocr: return NSSize(width: 110, height: 50)
         case .ruler: return NSSize(width: 320, height: 80)
-        case .colorPicker: return NSSize(width: 180, height: 230)
+        case .colorPicker: return NSSize(width: 220, height: 240)
         }
     }
 
@@ -1403,10 +1432,42 @@ final class RegionSelectionView: NSView {
         let activePoint = currentPoint ?? currentMousePoint
         guard let pt = activePoint, containsPoint(pt) else { return }
 
-        // Center reticle ring at cursor location (9pt diameter with 1pt center hole)
+        // 1. Precision Center Reticle at cursor location
         context.saveGState()
-        let reticleRect = CGRect(x: round(pt.x) - 4.5, y: round(pt.y) - 4.5, width: 9.0, height: 9.0)
-        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.8))
+        let r = round(pt.x)
+        let ry = round(pt.y)
+
+        // Outer subtle drop shadow for crosshair ticks
+        context.setShadow(offset: CGSize(width: 0, height: -0.5), blur: 2.0, color: CGColor(gray: 0.0, alpha: 0.75))
+
+        // Crosshair tick marks (outer dark, inner white)
+        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.85))
+        context.setLineWidth(2.5)
+        context.move(to: CGPoint(x: r - 9, y: ry))
+        context.addLine(to: CGPoint(x: r - 4, y: ry))
+        context.move(to: CGPoint(x: r + 4, y: ry))
+        context.addLine(to: CGPoint(x: r + 9, y: ry))
+        context.move(to: CGPoint(x: r, y: ry - 9))
+        context.addLine(to: CGPoint(x: r, y: ry - 4))
+        context.move(to: CGPoint(x: r, y: ry + 4))
+        context.addLine(to: CGPoint(x: r, y: ry + 9))
+        context.strokePath()
+
+        context.setStrokeColor(CGColor(gray: 1.0, alpha: 1.0))
+        context.setLineWidth(1.2)
+        context.move(to: CGPoint(x: r - 9, y: ry))
+        context.addLine(to: CGPoint(x: r - 4, y: ry))
+        context.move(to: CGPoint(x: r + 4, y: ry))
+        context.addLine(to: CGPoint(x: r + 9, y: ry))
+        context.move(to: CGPoint(x: r, y: ry - 9))
+        context.addLine(to: CGPoint(x: r, y: ry - 4))
+        context.move(to: CGPoint(x: r, y: ry + 4))
+        context.addLine(to: CGPoint(x: r, y: ry + 9))
+        context.strokePath()
+
+        // Target reticle ring around target pixel
+        let reticleRect = CGRect(x: r - 4.5, y: ry - 4.5, width: 9.0, height: 9.0)
+        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.85))
         context.setLineWidth(2.5)
         context.strokeEllipse(in: reticleRect)
         context.setStrokeColor(CGColor(gray: 1.0, alpha: 1.0))
@@ -1414,25 +1475,27 @@ final class RegionSelectionView: NSView {
         context.strokeEllipse(in: reticleRect)
         context.restoreGState()
 
-        // Calculate Loupe Position
-        let diameter: CGFloat = 126.0
-        let pillHeight: CGFloat = 36.0
+        // 2. Geometry & Dynamic Positioning
+        let diameter: CGFloat = 135.0
+        let cellSize = diameter / 9.0
+        let badgeWidth: CGFloat = 176.0
+        let badgeHeight: CGFloat = 46.0
         let gap: CGFloat = 8.0
-        let totalHeight = diameter + gap + pillHeight
-
-        let offset: CGFloat = 20.0
+        let offset: CGFloat = 22.0
         let margin: CGFloat = 12.0
 
+        let maxW = max(diameter, badgeWidth)
         var originX = pt.x + offset
         var originY = pt.y + offset
 
-        if originX + diameter > bounds.width - margin {
-            originX = pt.x - diameter - offset
+        if originX + maxW > bounds.width - margin {
+            originX = pt.x - maxW - offset
         }
         if originX < margin {
             originX = margin
         }
 
+        let totalHeight = diameter + gap + badgeHeight
         if originY + totalHeight > bounds.height - margin {
             originY = pt.y - totalHeight - offset
         }
@@ -1440,17 +1503,18 @@ final class RegionSelectionView: NSView {
             originY = margin
         }
 
-        let loupeCircleRect = CGRect(x: originX, y: originY + gap + pillHeight, width: diameter, height: diameter)
-        let pillRect = CGRect(x: originX, y: originY, width: diameter, height: pillHeight)
+        let loupeX = originX + (maxW - diameter) / 2.0
+        let loupeCircleRect = CGRect(x: loupeX, y: originY + gap + badgeHeight, width: diameter, height: diameter)
+        let badgeRect = CGRect(x: originX + (maxW - badgeWidth) / 2.0, y: originY, width: badgeWidth, height: badgeHeight)
 
-        // 1. Draw Loupe Shadow
+        // 3. Loupe Floating Drop Shadow
         context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: -4), blur: 12, color: CGColor(gray: 0, alpha: 0.55))
-        context.setFillColor(CGColor(gray: 0.12, alpha: 1.0))
+        context.setShadow(offset: CGSize(width: 0, height: -6), blur: 16, color: CGColor(gray: 0, alpha: 0.55))
+        context.setFillColor(CGColor(gray: 0.10, alpha: 1.0))
         context.fillEllipse(in: loupeCircleRect)
         context.restoreGState()
 
-        // 2. Draw Magnified 9x9 Pixel Grid (cached live sample: never capture the screen inside draw)
+        // 4. Sample Data
         var centerColor = NSColor.black
         var centerHex = "#000000"
         var centerRGB = "rgb(0, 0, 0)"
@@ -1482,6 +1546,7 @@ final class RegionSelectionView: NSView {
             patchImage = img.cropping(to: cropRect)
         }
 
+        // 5. Draw Magnified 9x9 Pixel Grid
         context.saveGState()
         context.addEllipse(in: loupeCircleRect)
         context.clip()
@@ -1495,8 +1560,7 @@ final class RegionSelectionView: NSView {
         }
 
         // Gridlines
-        let cellSize = diameter / 9.0
-        context.setStrokeColor(CGColor(gray: 1.0, alpha: 0.18))
+        context.setStrokeColor(CGColor(gray: 1.0, alpha: 0.16))
         context.setLineWidth(0.75)
         for i in 1..<9 {
             let cellOffset = CGFloat(i) * cellSize
@@ -1507,30 +1571,51 @@ final class RegionSelectionView: NSView {
         }
         context.strokePath()
 
-        // Center pixel highlight (cell 4, 4)
+        // Center pixel target highlight (cell 4, 4)
         let centerCell = CGRect(
             x: loupeCircleRect.minX + 4.0 * cellSize,
             y: loupeCircleRect.minY + 4.0 * cellSize,
             width: cellSize,
             height: cellSize
         )
-        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.65))
-        context.setLineWidth(2.2)
-        context.stroke(centerCell)
+        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.85))
+        context.setLineWidth(2.4)
+        context.stroke(centerCell.insetBy(dx: -0.5, dy: -0.5))
         context.setStrokeColor(CGColor(gray: 1.0, alpha: 1.0))
-        context.setLineWidth(1.2)
-        context.stroke(centerCell)
+        context.setLineWidth(1.4)
+        context.stroke(centerCell.insetBy(dx: 0.5, dy: 0.5))
 
+        // Specular gloss arc on upper hemisphere
+        if let glossGradient = CGGradient(
+            colorsSpace: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            colors: [CGColor(gray: 1.0, alpha: 0.16), CGColor(gray: 1.0, alpha: 0.0)] as CFArray,
+            locations: [0.0, 1.0]
+        ) {
+            context.drawLinearGradient(
+                glossGradient,
+                start: CGPoint(x: loupeCircleRect.midX, y: loupeCircleRect.maxY),
+                end: CGPoint(x: loupeCircleRect.midX, y: loupeCircleRect.midY),
+                options: []
+            )
+        }
         context.restoreGState()
 
-        // 3. Loupe Outer Ring
-        context.setStrokeColor(CGColor(gray: 1.0, alpha: 0.95))
+        // 6. Loupe Outer Bezel Rings (multi-tier precision border)
+        context.saveGState()
+        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.70))
+        context.setLineWidth(3.5)
+        context.strokeEllipse(in: loupeCircleRect.insetBy(dx: -0.75, dy: -0.75))
+        context.setStrokeColor(CGColor(gray: 1.0, alpha: 0.96))
         context.setLineWidth(2.5)
         context.strokeEllipse(in: loupeCircleRect)
+        context.setStrokeColor(CGColor(gray: 0.0, alpha: 0.25))
+        context.setLineWidth(0.8)
+        context.strokeEllipse(in: loupeCircleRect.insetBy(dx: 1.2, dy: 1.2))
+        context.restoreGState()
 
-        // 4. Color Info Pill Badge below loupe
+        // 7. Color Info Pill Badge
         drawColorPickerBadge(
-            rect: pillRect,
+            rect: badgeRect,
             color: centerColor,
             hex: centerHex,
             rgbText: centerRGB,
@@ -1877,24 +1962,31 @@ final class RegionSelectionView: NSView {
     ) {
         context.saveGState()
 
-        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
-        NSColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 0.94).setFill()
-        path.fill()
-        NSColor(white: 1.0, alpha: 0.18).setStroke()
-        path.lineWidth = 1.0
-        path.stroke()
+        // Floating Shadow
+        context.setShadow(offset: CGSize(width: 0, height: -4), blur: 14, color: CGColor(gray: 0, alpha: 0.50))
+        let badgePath = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+        NSColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 0.95).setFill()
+        badgePath.fill()
+        context.restoreGState()
 
-        let swatchRect = CGRect(x: rect.minX + 8, y: rect.minY + 8, width: 20, height: 20)
-        let swatchPath = NSBezierPath(roundedRect: swatchRect, xRadius: 4, yRadius: 4)
+        context.saveGState()
+        NSColor(white: 1.0, alpha: 0.18).setStroke()
+        badgePath.lineWidth = 1.0
+        badgePath.stroke()
+
+        // Swatch (28x28 pt, rounded)
+        let swatchRect = CGRect(x: rect.minX + 9, y: rect.minY + 9, width: 28, height: 28)
+        let swatchPath = NSBezierPath(roundedRect: swatchRect, xRadius: 6, yRadius: 6)
         color.setFill()
         swatchPath.fill()
         NSColor(white: 1.0, alpha: 0.35).setStroke()
         swatchPath.lineWidth = 1.0
         swatchPath.stroke()
 
-        let textX = swatchRect.maxX + 8
-        let hexFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .bold)
-        let rgbFont = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .regular)
+        // Text labels
+        let textX = swatchRect.maxX + 10
+        let hexFont = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .bold)
+        let rgbFont = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
 
         let hexAttr: [NSAttributedString.Key: Any] = [
             .font: hexFont,
@@ -1907,28 +1999,28 @@ final class RegionSelectionView: NSView {
 
         let hexStr = (hex as NSString)
         let rgbStr = (rgbText as NSString)
-        hexStr.draw(at: NSPoint(x: textX, y: rect.minY + 18), withAttributes: hexAttr)
-        rgbStr.draw(at: NSPoint(x: textX, y: rect.minY + 5), withAttributes: rgbAttr)
+        hexStr.draw(at: NSPoint(x: textX, y: rect.minY + 23), withAttributes: hexAttr)
+        rgbStr.draw(at: NSPoint(x: textX, y: rect.minY + 8), withAttributes: rgbAttr)
 
-        // Subtle Tab key shortcut keycap hint on the right
-        let tabKeyRect = CGRect(x: rect.maxX - 24, y: rect.minY + 19, width: 17, height: 11)
-        let tabKeyPath = NSBezierPath(roundedRect: tabKeyRect, xRadius: 2.5, yRadius: 2.5)
-        NSColor(white: 0.28, alpha: 0.90).setFill()
-        tabKeyPath.fill()
-        NSColor(white: 1.0, alpha: 0.30).setStroke()
-        tabKeyPath.lineWidth = 0.5
-        tabKeyPath.stroke()
+        // Keycap hint on the right: "⇥"
+        let keycapRect = CGRect(x: rect.maxX - 34, y: rect.minY + 14, width: 24, height: 18)
+        let keycapPath = NSBezierPath(roundedRect: keycapRect, xRadius: 4.0, yRadius: 4.0)
+        NSColor(white: 0.22, alpha: 0.95).setFill()
+        keycapPath.fill()
+        NSColor(white: 1.0, alpha: 0.25).setStroke()
+        keycapPath.lineWidth = 0.75
+        keycapPath.stroke()
 
         let tabAttr: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 7.5, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: 10.0, weight: .medium),
             .foregroundColor: NSColor(white: 0.90, alpha: 1.0)
         ]
         let tabSymbol = "⇥" as NSString
         let tabSymbolSize = tabSymbol.size(withAttributes: tabAttr)
         tabSymbol.draw(
             at: NSPoint(
-                x: tabKeyRect.midX - tabSymbolSize.width / 2.0,
-                y: tabKeyRect.midY - tabSymbolSize.height / 2.0
+                x: keycapRect.midX - tabSymbolSize.width / 2.0,
+                y: keycapRect.midY - tabSymbolSize.height / 2.0
             ),
             withAttributes: tabAttr
         )
